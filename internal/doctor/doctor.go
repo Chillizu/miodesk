@@ -131,6 +131,11 @@ func checkPort(r *Report, cfg *config.Config) {
 	}
 	ln, err := net.Listen("tcp", net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port)))
 	if err != nil {
+		if service.RunningQuick() {
+			r.add("server", StatusOK,
+				fmt.Sprintf("port %d is in use by the running miodesk service", cfg.Server.Port))
+			return
+		}
 		r.add("server", StatusWarn, fmt.Sprintf("port %d is not available: %v", cfg.Server.Port, err),
 			"stop the process using it, or run `miodesk serve --port 0`")
 		return
