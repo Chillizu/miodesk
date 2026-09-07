@@ -286,6 +286,22 @@ func setRemote(t *testing.T, mode, token string) {
 	}
 }
 
+func setServerHost(t *testing.T, host string) {
+	t.Helper()
+	path, err := config.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Server.Host = host
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestServeRefusesNonLocalWithoutAuth(t *testing.T) {
 	isolatedEnv(t)
 	ws := t.TempDir()
@@ -319,6 +335,18 @@ func TestConnectRefusesLocalRemoteMode(t *testing.T) {
 	code, _, errOut := run(t, "connect", "--provider", "custom", "--url", "https://demo.example.com", "--port", "0")
 	if code != 1 || !strings.Contains(errOut, "refuses to open an unauthenticated remote entrance") {
 		t.Errorf("connect with remote.mode=local: exit=%d stderr:\n%s", code, errOut)
+	}
+}
+
+func TestConnectRefusesNonLocalWithoutAuth(t *testing.T) {
+	isolatedEnv(t)
+	ws := t.TempDir()
+	run(t, "init", "--workspace", ws)
+	setServerHost(t, "0.0.0.0")
+
+	code, _, errOut := run(t, "connect", "--provider", "custom", "--url", "https://demo.example.com", "--port", "0")
+	if code != 1 || !strings.Contains(errOut, "without authentication") {
+		t.Errorf("connect 0.0.0.0 local mode: exit=%d stderr:\n%s", code, errOut)
 	}
 }
 

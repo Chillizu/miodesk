@@ -306,6 +306,17 @@ func TestSearchRipgrep(t *testing.T) {
 	}
 }
 
+func TestSearchOutputBufferKeepsBoundedPrefix(t *testing.T) {
+	var b searchOutputBuffer
+	b.max = 5
+	if n, err := b.Write([]byte("abcdef")); err != nil || n != 6 {
+		t.Fatalf("Write = (%d, %v)", n, err)
+	}
+	if got := b.data.String(); got != "abcde" || !b.Truncated() {
+		t.Errorf("buffer = %q, truncated=%v", got, b.Truncated())
+	}
+}
+
 func TestSearchRespectsSandbox(t *testing.T) {
 	ws, _ := newWS(t)
 	if _, err := Search(context.Background(), ws, SearchInput{Query: "x", Path: "../../etc"}); err == nil {

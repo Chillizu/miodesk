@@ -10,16 +10,13 @@ import (
 	"time"
 )
 
-// Tailscale exposes miodesk with `tailscale funnel --bg localhost:<port>`.
+// Tailscale exposes miodesk with `tailscale funnel --bg http://127.0.0.1:<port>`.
 // Funnel availability depends on the tailnet (HTTPS enabled, ACLs) and the
 // CLI syntax needs tailscale >= 1.52, so everything is probed at runtime.
 // The public URL is read from `tailscale funnel status`.
 type Tailscale struct {
 	mu   sync.Mutex
-	cmd  *exec.Cmd
-	out  bytes.Buffer
 	port string
-	done chan struct{}
 }
 
 func (t *Tailscale) Name() string { return "tailscale" }
@@ -43,7 +40,7 @@ func (t *Tailscale) Start(ctx context.Context, opts Options) (Endpoint, error) {
 	}
 
 	// --bg lets tailscaled own the funnel; miodesk tears it down in Stop.
-	config := exec.CommandContext(ctx, "tailscale", "funnel", "--bg", "localhost:"+port)
+	config := exec.CommandContext(ctx, "tailscale", "funnel", "--bg", "http://127.0.0.1:"+port)
 	var cfgErr bytes.Buffer
 	config.Stderr = &cfgErr
 	if err := config.Run(); err != nil {
@@ -52,8 +49,6 @@ func (t *Tailscale) Start(ctx context.Context, opts Options) (Endpoint, error) {
 
 	t.mu.Lock()
 	t.port = port
-	t.out.Reset()
-	t.done = make(chan struct{})
 	t.mu.Unlock()
 
 	deadline := time.After(time.Duration(Timeout(opts.TimeoutSeconds)) * time.Second)
@@ -85,7 +80,7 @@ func (t *Tailscale) Stop() error {
 	if port == "" {
 		return nil
 	}
-	if err := exec.Command("tailscale", "funnel", "localhost:"+port, "off").Run(); err != nil {
+	if err := exec.Command("tailscale", "funnel", "http://127.0.0.1:"+port, "off").Run(); err != nil {
 		return fmt.Errorf("could not disable the funnel: run `tailscale funnel reset` manually")
 	}
 	t.mu.Lock()

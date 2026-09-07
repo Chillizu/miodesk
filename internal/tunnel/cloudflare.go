@@ -1,7 +1,6 @@
 package tunnel
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -17,8 +16,54 @@ import (
 type Cloudflare struct {
 	mu   sync.Mutex
 	cmd  *exec.Cmd
-	out  bytes.Buffer
+	out  outputBuffer
 	done chan struct{}
+}
+
+// outputBuffer is a bounded, concurrency-safe writer for child-process
+// output. exec.Cmd may write stdout/stderr while Start polls the output for a
+// URL or an error, so a plain bytes.Buffer would race. Keeping the tail makes
+// the final diagnostic useful even when cloudflared is noisy.
+type outputBuffer struct {
+	mu        sync.RWMutex
+	data      []byte
+	max       int
+	truncated bool
+}
+
+const maxTunnelOutput = 64 << 10
+
+func (b *outputBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.max <= 0 {
+		b.max = maxTunnelOutput
+	}
+	if len(p) >= b.max {
+		b.data = append(b.data[:0], p[len(p)-b.max:]...)
+		b.truncated = true
+		return len(p), nil
+	}
+	if overflow := len(b.data) + len(p) - b.max; overflow > 0 {
+		copy(b.data, b.data[overflow:])
+		b.data = b.data[:len(b.data)-overflow]
+		b.truncated = true
+	}
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+func (b *outputBuffer) Reset() {
+	b.mu.Lock()
+	b.data = nil
+	b.truncated = false
+	b.mu.Unlock()
+}
+
+func (b *outputBuffer) String() string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return string(append([]byte(nil), b.data...))
 }
 
 func (c *Cloudflare) Name() string { return "cloudflare" }

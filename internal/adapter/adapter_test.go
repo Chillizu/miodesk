@@ -14,10 +14,13 @@ func TestWidgetHTMLAssembly(t *testing.T) {
 	}
 	for _, want := range []string{
 		"<style>", "</style>", "<script>", "</script>",
-		"MIODESK_ICONS",     // icon set present
-		"MIODESK_RENDERERS", // renderers present
-		"bootWidget",        // bootstrap present
-		"--miodesk-text",    // design tokens present
+		"MIODESK_ICONS",                // icon set present
+		"MIODESK_RENDERERS",            // renderers present
+		"bootWidget",                   // bootstrap present
+		"ui/initialize",                // MCP Apps handshake present
+		"appInfo",                      // MCP Apps view identity present
+		"ui/notifications/tool-result", // standard result delivery present
+		"--miodesk-text",               // design tokens present
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("assembled widget missing %q", want)

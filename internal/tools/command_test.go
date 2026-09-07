@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,14 +63,35 @@ func TestCommandCwdSubdirectory(t *testing.T) {
 
 func TestCommandRefusesSudoAndEscape(t *testing.T) {
 	ws, _ := newWS(t)
-	if _, err := Command(context.Background(), ws, CommandInput{Command: "sudo rm -rf /"}); err == nil {
-		t.Error("sudo must be refused")
+	for _, command := range []string{"sudo rm -rf /", "echo ok; sudo true", "echo $(sudo true)"} {
+		if _, err := Command(context.Background(), ws, CommandInput{Command: command}); err == nil {
+			t.Errorf("sudo must be refused in %q", command)
+		}
 	}
 	if _, err := Command(context.Background(), ws, CommandInput{Command: "pwd", CWD: "../../"}); err == nil {
 		t.Error("cwd escape must be rejected")
 	}
 	if _, err := Command(context.Background(), ws, CommandInput{Command: "   "}); err == nil {
 		t.Error("empty command must be rejected")
+	}
+}
+
+func TestCommandHonorsCallerCancellation(t *testing.T) {
+	ws, _ := newWS(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := Command(ctx, ws, CommandInput{Command: "sleep 30", Timeout: 30})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Command error = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("caller cancellation took too long: %v", elapsed)
 	}
 }
 

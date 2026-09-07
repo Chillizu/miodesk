@@ -102,6 +102,13 @@ annotations (`readOnlyHint`/`destructiveHint`/`openWorldHint`), titles, and
 invocation status labels; the server declares instructions for model guidance.
 Preview the hosted widget at `http://127.0.0.1:<port>/widget`.
 
+For ChatGPT connector setup and the security trade-offs, see
+[docs/CHATGPT.md](docs/CHATGPT.md). In short: ChatGPT needs a reachable HTTPS
+MCP endpoint; production deployments should use OpenAI's Secure MCP Tunnel or
+an OAuth 2.1-compatible authentication server. The static bearer token emitted
+by `miodesk connect` is intended for clients that can send an
+`Authorization` header and is not a documented ChatGPT connector option.
+
 ## Configuration
 
 `config.toml` lives in `$XDG_CONFIG_HOME/miodesk` (fallback `~/.config/miodesk`):

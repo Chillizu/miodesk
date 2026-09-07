@@ -63,6 +63,13 @@ func Write(ctx context.Context, ws *workspace.Workspace, in WriteInput) (*WriteO
 // crash mid-write never leaves a half-written target.
 func writeFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		// Replacing an existing file should not unexpectedly remove its
+		// executable/read-only mode bits. The rename still requires a writable
+		// parent, just like any other atomic replacement.
+		mode = fi.Mode().Perm()
+	}
 	tmp, err := os.CreateTemp(dir, ".miodesk-write-*")
 	if err != nil {
 		return err
@@ -73,10 +80,14 @@ func writeFileAtomic(path string, data []byte) error {
 		tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
+	if err := os.Chmod(tmpName, mode); err != nil {
 		return err
 	}
 	return os.Rename(tmpName, path)

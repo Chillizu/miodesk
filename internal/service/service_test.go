@@ -33,6 +33,10 @@ func TestUnitContent(t *testing.T) {
 			t.Errorf("unit missing %q:\n%s", want, content)
 		}
 	}
+	quoted := UnitContent("/opt/Mio Desk/miodesk")
+	if !strings.Contains(quoted, `ExecStart="/opt/Mio Desk/miodesk" serve`) {
+		t.Errorf("unit must quote paths with spaces:\n%s", quoted)
+	}
 }
 
 func TestWriteUnit(t *testing.T) {
@@ -50,6 +54,16 @@ func TestWriteUnit(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "ExecStart=/usr/local/bin/miodesk serve") {
 		t.Errorf("written unit:\n%s", data)
+	}
+	if fi, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	} else if fi.Mode().Perm() != 0o600 {
+		t.Errorf("unit mode = %o, want 600", fi.Mode().Perm())
+	}
+	if fi, err := os.Stat(filepath.Dir(path)); err != nil {
+		t.Fatal(err)
+	} else if fi.Mode().Perm() != 0o700 {
+		t.Errorf("unit directory mode = %o, want 700", fi.Mode().Perm())
 	}
 }
 

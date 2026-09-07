@@ -39,7 +39,20 @@ RestartSec=2
 
 [Install]
 WantedBy=default.target
-`, binPath)
+`, systemdExecArg(binPath))
+}
+
+// systemdExecArg quotes a path only when systemd's command-line parser needs
+// it and escapes percent specifiers. ExecStart is not a shell command, but an
+// unquoted path containing spaces would otherwise be split into arguments.
+func systemdExecArg(arg string) string {
+	escaped := strings.ReplaceAll(arg, "%", "%%")
+	if !strings.ContainsAny(escaped, " \t\r\n\\\"") {
+		return escaped
+	}
+	escaped = strings.ReplaceAll(escaped, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `"` + escaped + `"`
 }
 
 // Supported reports whether this platform can manage a systemd user service.
@@ -71,10 +84,35 @@ func Install() error {
 }
 
 func writeUnit(binPath, path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(UnitContent(binPath)), 0o644)
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".miodesk.service-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.WriteString(UnitContent(binPath)); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // Uninstall stops, disables, and removes the unit if present. stop/disable

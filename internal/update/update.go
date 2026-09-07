@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -40,6 +42,9 @@ func Platform() string { return runtime.GOOS + "/" + runtime.GOARCH }
 
 // Fetch downloads and parses the manifest.
 func Fetch(feedURL string) (*Manifest, error) {
+	if err := validateHTTPURL(feedURL, "release manifest"); err != nil {
+		return nil, err
+	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(feedURL)
 	if err != nil {
@@ -111,6 +116,9 @@ func Update(current, feedURL string) (*Outcome, error) {
 // replaceBinary downloads url, optionally verifies sha256, and swaps it in
 // over target via temp file + rename.
 func replaceBinary(target, url, wantSHA string) (int64, error) {
+	if err := validateHTTPURL(url, "release asset"); err != nil {
+		return 0, err
+	}
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -156,6 +164,32 @@ func replaceBinary(target, url, wantSHA string) (int64, error) {
 		return 0, err
 	}
 	return n, nil
+}
+
+// validateHTTPURL prevents a release feed or asset from silently downgrading
+// to cleartext on a remote host. Loopback HTTP remains available for local
+// development and the package's httptest coverage; production feeds/assets
+// must use HTTPS and may not embed credentials in the URL.
+func validateHTTPURL(raw, label string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil {
+		return fmt.Errorf("%s URL must be an HTTPS endpoint", label)
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return nil
+	}
+	if strings.EqualFold(u.Scheme, "http") && isLoopbackHost(u.Hostname()) {
+		return nil
+	}
+	return fmt.Errorf("%s URL must use HTTPS (HTTP is allowed only for loopback development endpoints)", label)
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // Newer reports whether latest is a strictly newer semantic version than

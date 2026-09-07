@@ -120,7 +120,7 @@ func (s *Server) bump(tool string) {
 func (s *Server) recordEdits(files []tools.EditFileResult) {
 	s.editsMu.Lock()
 	defer s.editsMu.Unlock()
-	s.edits = append([]EditRecord{{At: time.Now(), Files: files}}, s.edits...)
+	s.edits = append([]EditRecord{{At: time.Now(), Files: cloneEditFiles(files)}}, s.edits...)
 	if len(s.edits) > maxRecentEdits {
 		s.edits = s.edits[:maxRecentEdits]
 	}
@@ -129,7 +129,45 @@ func (s *Server) recordEdits(files []tools.EditFileResult) {
 func (s *Server) recentEdits() []EditRecord {
 	s.editsMu.Lock()
 	defer s.editsMu.Unlock()
-	return s.edits
+	return cloneEditRecords(s.edits)
+}
+
+// cloneEditRecords returns an immutable snapshot for JSON/API consumers. The
+// handler must release editsMu before encoding so a slow client cannot block
+// an edit call; copying nested slices also prevents later mutations from
+// changing an already-returned dashboard.
+func cloneEditRecords(src []EditRecord) []EditRecord {
+	if src == nil {
+		return nil
+	}
+	dst := make([]EditRecord, len(src))
+	for i := range src {
+		dst[i] = src[i]
+		dst[i].Files = cloneEditFiles(src[i].Files)
+	}
+	return dst
+}
+
+func cloneEditFiles(src []tools.EditFileResult) []tools.EditFileResult {
+	if src == nil {
+		return nil
+	}
+	dst := append([]tools.EditFileResult(nil), src...)
+	for i := range dst {
+		dst[i].Diff = cloneDiffGroups(src[i].Diff)
+	}
+	return dst
+}
+
+func cloneDiffGroups(src []tools.DiffGroup) []tools.DiffGroup {
+	if src == nil {
+		return nil
+	}
+	dst := append([]tools.DiffGroup(nil), src...)
+	for i := range dst {
+		dst[i].Lines = append([]tools.DiffLine(nil), src[i].Lines...)
+	}
+	return dst
 }
 
 // Dashboard is the payload the adapter's status tool serves and /api/status
@@ -335,7 +373,15 @@ func (s *Server) AccessMode() AccessMode { return s.auth.Mode() }
 // /api/status, recent edits at /api/edits, health at /healthz.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.mcp }, nil)
+	// The current MCP HTTP protocol (2026-07-28) is sessionless. JSON responses
+	// also keep the endpoint compatible with free quick tunnels that do not
+	// support server-sent events; clients still advertise both accepted media
+	// types as required by Streamable HTTP.
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.mcp }, &mcp.StreamableHTTPOptions{
+		Stateless:                  true,
+		JSONResponse:               true,
+		DisableLocalhostProtection: s.auth.Mode() != AccessLocal,
+	})
 	mux.Handle("/mcp", mcpHandler)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -374,12 +420,10 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /api/edits", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		s.editsMu.Lock()
-		edits := s.edits
+		edits := s.recentEdits()
 		if edits == nil {
 			edits = []EditRecord{}
 		}
-		s.editsMu.Unlock()
 		_ = json.NewEncoder(w).Encode(edits)
 	})
 	if static, err := fs.Sub(widget.Static, "static"); err == nil {
@@ -532,7 +576,16 @@ func (s *Server) writeState() {
 	if err != nil {
 		return
 	}
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	// The state file contains only PID/port metadata, but it is still a local
+	// control-plane detail. Repair permissions when an older installation used
+	// a permissive umask.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return
+	}
 	data, err := json.Marshal(stateFile{
 		PID:       os.Getpid(),
 		Port:      int(s.port.Load()),
@@ -540,7 +593,17 @@ func (s *Server) writeState() {
 		StartedAt: s.started.Format(time.RFC3339),
 	})
 	if err == nil {
-		_ = os.WriteFile(path, data, 0o644)
+		f, ferr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		if ferr != nil {
+			return
+		}
+		defer f.Close()
+		if ferr = f.Chmod(0o600); ferr == nil {
+			_, ferr = f.Write(data)
+		}
+		if ferr == nil {
+			ferr = f.Sync()
+		}
 	}
 }
 

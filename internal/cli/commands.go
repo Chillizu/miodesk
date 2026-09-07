@@ -34,6 +34,13 @@ func isLoopback(host string) bool {
 	return false
 }
 
+func validateBindSecurity(cfg *config.Config) error {
+	if isLoopback(cfg.Server.Host) || cfg.Remote.Mode == "token" || cfg.Remote.Mode == "unsafe" {
+		return nil
+	}
+	return fmt.Errorf("refusing to serve on %q without authentication", cfg.Server.Host)
+}
+
 func runVersion(w io.Writer) int {
 	fmt.Fprintf(w, "miodesk %s\ncommit: %s\nbuilt: %s\nplatform: %s\n",
 		buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate, buildinfo.Platform())
@@ -133,8 +140,8 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		errf(stderr, "%v", err)
 		return 1
 	}
-	if !isLoopback(cfg.Server.Host) && cfg.Remote.Mode != "token" && cfg.Remote.Mode != "unsafe" {
-		errf(stderr, "refusing to serve on %q without authentication", cfg.Server.Host)
+	if err := validateBindSecurity(cfg); err != nil {
+		errf(stderr, "%v", err)
 		hintf(stderr, "bind 127.0.0.1, or set remote.mode = \"token\" with remote.token in the config")
 		return 1
 	}
@@ -347,7 +354,7 @@ func runService(args []string, stdout, stderr io.Writer) int {
 		}
 		okf(stdout, "service installed")
 		infof(stdout, "start it now: miodesk service start")
-		infof(stdout, "it will also start at login")
+		infof(stdout, "enable at login when ready: systemctl --user enable miodesk")
 		return 0
 	case "uninstall":
 		if err := service.Uninstall(); err != nil {

@@ -31,6 +31,17 @@ func TestWriteCreateAndOverwrite(t *testing.T) {
 	if out.Created {
 		t.Error("overwrite must report created=false")
 	}
+	if err := os.Chmod(filepath.Join(root, "new.txt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Write(context.Background(), ws, WriteInput{Path: "new.txt", Content: "private"}); err != nil {
+		t.Fatalf("Write private overwrite: %v", err)
+	}
+	if fi, err := os.Stat(filepath.Join(root, "new.txt")); err != nil {
+		t.Fatal(err)
+	} else if fi.Mode().Perm() != 0o600 {
+		t.Errorf("overwrite mode = %o, want 600", fi.Mode().Perm())
+	}
 }
 
 func TestWriteRequiresCreateDirsForMissingParents(t *testing.T) {

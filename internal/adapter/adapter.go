@@ -7,6 +7,7 @@ package adapter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -211,6 +212,14 @@ func PreviewHTML(assets fs.FS, kind string) (string, error) {
 		return "", err
 	}
 	inject := "<script>" + string(mocks) + "</script>\n" +
-		"<script>window.__MIODESK_PREVIEW = \"" + kind + "\";</script>\n"
+		"<script>window.__MIODESK_PREVIEW = " + string(mustJSON(kind)) + ";</script>\n"
 	return strings.Replace(html, "</head>", inject+"</head>", 1), nil
+}
+
+func mustJSON(v string) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return []byte(`""`)
+	}
+	return b
 }

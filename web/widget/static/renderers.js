@@ -93,7 +93,7 @@ function fmtBytes(n) {
 }
 
 // showMore wraps a container and reveals rows progressively.
-function showMore(container, batchSize, total) {
+function showMore(container, batchSize) {
   const children = Array.from(container.children);
   if (children.length <= batchSize) return container;
   const hidden = children.slice(batchSize);
@@ -150,19 +150,20 @@ const MIODESK_RENDERERS = {
     }
     const groups = mEl("div", "rowlist");
     for (const [file, ms] of byFile) {
+      const group = mEl("div", "search-group");
       const row = mEl("div", "row");
       row.append(mIcon("file"), mEl("span", "name", file),
         mEl("span", "fill"), mEl("span", "meta", `${ms.length} match${ms.length === 1 ? "" : "es"}`));
-      groups.append(row);
       const detail = mEl("div", null);
       for (const m of ms) {
         const line = mEl("div", "match-line");
         line.append(mEl("span", "no", String(m.line)), mEl("span", "txt", m.text));
         detail.append(line);
       }
-      groups.append(detail);
+      group.append(row, detail);
+      groups.append(group);
     }
-    root.append(showMore(groups, 12, matches.length));
+    root.append(showMore(groups, 12));
     return root;
   },
 
@@ -185,7 +186,7 @@ const MIODESK_RENDERERS = {
       if (e.size) row.append(mEl("span", "meta", fmtBytes(e.size)));
       rows.append(row);
     }
-    root.append(showMore(rows, 60, entries.length));
+    root.append(showMore(rows, 60));
     if (data.truncated) root.append(note("Entry cap reached — raise the limit or list a subdirectory."));
     return root;
   },
@@ -306,6 +307,11 @@ function hunkBlock(file, group) {
   const prev = mEl("button", null, "↑");
   const next = mEl("button", null, "↓");
   const close = mEl("button", null, "×");
+  prev.type = next.type = close.type = "button";
+  prev.title = "previous change";
+  next.title = "next change";
+  prev.setAttribute("aria-label", "previous change");
+  next.setAttribute("aria-label", "next change");
   close.title = "hide navigation";
   close.setAttribute("aria-label", "hide navigation");
   bar.append(pos, prev, next, close);
@@ -390,6 +396,13 @@ function formatUptime(seconds) {
 
 /* ---------- dispatch ---------- */
 
+function resultRenderer(kind) {
+  if (typeof kind === "string" && Object.prototype.hasOwnProperty.call(MIODESK_RENDERERS, kind)) {
+    return MIODESK_RENDERERS[kind];
+  }
+  return MIODESK_RENDERERS.unknown;
+}
+
 function renderResult(data) {
   const host = document.getElementById("result");
   if (!host) return;
@@ -398,6 +411,5 @@ function renderResult(data) {
     host.append(emptyState("no data"));
     return;
   }
-  const renderer = MIODESK_RENDERERS[data.kind] || MIODESK_RENDERERS.unknown;
-  host.append(renderer(data));
+  host.append(resultRenderer(data.kind)(data));
 }

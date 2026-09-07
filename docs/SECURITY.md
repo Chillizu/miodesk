@@ -15,9 +15,10 @@ are bounded (depth, entry count, byte caps).
 ## Command tool
 
 `command` and `command_start` run inside the workspace with the workspace (or
-a sandboxed subdirectory) as cwd. `sudo` is refused. Output is capped. They
-can still do anything the user's account can do — treat every MCP client you
-connect as a full agent on this machine.
+a sandboxed subdirectory) as cwd. Commands containing `sudo` as a standalone
+token are conservatively refused. Output is capped. This is a guardrail, not
+an account sandbox: commands can still do anything the user's account can do —
+treat every MCP client you connect as a full agent on this machine.
 
 ## Trust levels
 

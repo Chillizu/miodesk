@@ -50,7 +50,7 @@ type CommandOutput struct {
 // Command runs a short development command inside the workspace and returns
 // stdout, stderr, the exit code, and elapsed time. sudo is refused.
 func Command(ctx context.Context, ws *workspace.Workspace, in CommandInput) (*CommandOutput, error) {
-	p, err := newProc(ws, in, maxCommandOutput)
+	p, err := newProc(ctx, ws, in, maxCommandOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -63,6 +63,9 @@ func Command(ctx context.Context, ws *workspace.Workspace, in CommandInput) (*Co
 	waitErr := waitWithTimeout(p, DefaultTimeout(in.Timeout))
 
 	timedOut := waitErr == errTimedOut
+	if !timedOut && p.ctx.Err() != nil {
+		return nil, p.ctx.Err()
+	}
 	if waitErr != nil && !timedOut {
 		var exitErr *exec.ExitError
 		if !errors.As(waitErr, &exitErr) {
@@ -122,7 +125,7 @@ func NewManager() *Manager {
 
 // Start launches a command and returns its task id immediately.
 func (m *Manager) Start(ws *workspace.Workspace, in CommandInput) (string, error) {
-	p, err := newProc(ws, in, maxLongOutput)
+	p, err := newProc(context.Background(), ws, in, maxLongOutput)
 	if err != nil {
 		return "", err
 	}
@@ -305,12 +308,12 @@ type TaskStarted struct {
 
 var errTimedOut = fmt.Errorf("command timed out")
 
-func newProc(ws *workspace.Workspace, in CommandInput, capBytes int) (*procHandle, error) {
+func newProc(parent context.Context, ws *workspace.Workspace, in CommandInput, capBytes int) (*procHandle, error) {
 	if strings.TrimSpace(in.Command) == "" {
 		return nil, fmt.Errorf("command: command must not be empty")
 	}
-	if strings.HasPrefix(strings.TrimSpace(in.Command), "sudo") {
-		return nil, fmt.Errorf("command: refusing to run sudo (escalation is never automatic)")
+	if containsSudoToken(in.Command) {
+		return nil, fmt.Errorf("command: refusing commands containing sudo (escalation is never automatic)")
 	}
 	dir, err := ws.Resolve(in.CWD)
 	if err != nil {
@@ -321,7 +324,10 @@ func newProc(ws *workspace.Workspace, in CommandInput, capBytes int) (*procHandl
 	}
 
 	shellBin, flag := shell()
-	ctx, cancel := context.WithCancel(context.Background())
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
 	cmd := exec.CommandContext(ctx, shellBin, flag, in.Command)
 	cmd.Dir = dir
 	// WaitDelay closes the pipes even when grandchildren keep them open.
@@ -342,6 +348,32 @@ func newProc(ws *workspace.Workspace, in CommandInput, capBytes int) (*procHandl
 	cmd.Stderr = &p.stderr
 	p.cmd = cmd
 	return p, nil
+}
+
+// containsSudoToken conservatively rejects a standalone sudo token anywhere
+// in the shell command, including chained commands and substitutions. It is
+// intentionally broader than a shell parser: command is arbitrary shell text,
+// so refusing a quoted mention is safer than allowing an easy bypass such as
+// `echo ok; sudo …`. This is a guardrail, not a sandbox for the user's account.
+func containsSudoToken(command string) bool {
+	const token = "sudo"
+	for i := 0; i+len(token) <= len(command); i++ {
+		if !strings.EqualFold(command[i:i+len(token)], token) {
+			continue
+		}
+		if i > 0 && isShellWordByte(command[i-1]) {
+			continue
+		}
+		if i+len(token) < len(command) && isShellWordByte(command[i+len(token)]) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func isShellWordByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_'
 }
 
 // waitWithTimeout waits for the process, killing it on timeout.
@@ -394,7 +426,7 @@ func (l *limitedBuffer) Write(p []byte) (int, error) {
 func (l *limitedBuffer) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.buf.String()
+	return string(append([]byte(nil), l.buf.Bytes()...))
 }
 
 func (l *limitedBuffer) Truncated() bool {

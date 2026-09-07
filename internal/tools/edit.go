@@ -83,6 +83,9 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 	}
 	edits := make([]fileEdit, 0, len(order))
 	for _, key := range order {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		path, err := ws.Resolve(key)
 		if err != nil {
 			return nil, err
@@ -127,6 +130,9 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 	// change are skipped.
 	out := &EditOutput{}
 	for i := range edits {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		e := &edits[i]
 		if e.old == e.new {
 			continue

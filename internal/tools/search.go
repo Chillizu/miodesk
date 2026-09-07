@@ -28,6 +28,10 @@ const (
 	// rgTimeout bounds a ripgrep run; a hung external binary must not hang
 	// the tool.
 	rgTimeout = 30 * time.Second
+	// maxSearchOutput bounds the output buffered from rg. --max-count is per
+	// file, not global, so a workspace with many matching files could otherwise
+	// make one request consume unbounded memory before result parsing.
+	maxSearchOutput = 8 << 20
 )
 
 type SearchInput struct {
@@ -105,7 +109,10 @@ func searchRipgrep(ctx context.Context, rg string, ws *workspace.Workspace, path
 	}
 	args = append(args, "-e", in.Query, path)
 
-	var stdout, stderr bytes.Buffer
+	var stdout searchOutputBuffer
+	stdout.max = maxSearchOutput
+	var stderr limitedBuffer
+	stderr.max = 64 << 10
 	cmd := exec.CommandContext(ctx, rg, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -122,7 +129,8 @@ func searchRipgrep(ctx context.Context, rg string, ws *workspace.Workspace, path
 	}
 
 	out := &SearchOutput{Kind: "search", Query: in.Query, Matches: []Match{}, Engine: "ripgrep"}
-	sc := bufio.NewScanner(&stdout)
+	out.Truncated = stdout.Truncated()
+	sc := bufio.NewScanner(&stdout.data)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		file, line, text, ok := splitRipgrepLine(sc.Text())
@@ -137,6 +145,31 @@ func searchRipgrep(ctx context.Context, rg string, ws *workspace.Workspace, path
 	}
 	return out, sc.Err()
 }
+
+// searchOutputBuffer keeps the beginning of rg output so parsed matches stay
+// deterministic when the safety cap is reached. Write reports success to let
+// the child finish and avoids an unbounded pipe/memory growth path.
+type searchOutputBuffer struct {
+	data      bytes.Buffer
+	max       int
+	truncated bool
+}
+
+func (b *searchOutputBuffer) Write(p []byte) (int, error) {
+	if room := b.max - b.data.Len(); room > 0 {
+		if len(p) > room {
+			_, _ = b.data.Write(p[:room])
+			b.truncated = true
+		} else {
+			_, _ = b.data.Write(p)
+		}
+	} else {
+		b.truncated = true
+	}
+	return len(p), nil
+}
+
+func (b *searchOutputBuffer) Truncated() bool { return b.truncated }
 
 // splitRipgrepLine parses "file:line:text" from `rg --no-heading -n` output.
 func splitRipgrepLine(s string) (file string, line int, text string, ok bool) {

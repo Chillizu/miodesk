@@ -162,3 +162,17 @@ func TestFetchErrors(t *testing.T) {
 		t.Fatal("manifest without version must error")
 	}
 }
+
+func TestRemoteUpdateURLsRequireHTTPS(t *testing.T) {
+	if _, err := Fetch("http://example.com/releases.json"); err == nil {
+		t.Fatal("remote HTTP feed must be rejected")
+	} else if !strings.Contains(err.Error(), "HTTPS") {
+		t.Errorf("error = %v", err)
+	}
+	if err := validateHTTPURL("http://127.0.0.1:1234/feed", "release manifest"); err != nil {
+		t.Errorf("loopback HTTP should remain available for local development: %v", err)
+	}
+	if err := validateHTTPURL("https://releases.example.com/feed", "release manifest"); err != nil {
+		t.Errorf("HTTPS should be accepted: %v", err)
+	}
+}

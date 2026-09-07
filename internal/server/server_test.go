@@ -103,6 +103,134 @@ func TestMCPRoundtripOverHTTP(t *testing.T) {
 	}
 }
 
+func TestMCPCurrentProtocolStatelessJSON(t *testing.T) {
+	s := newTestServer(t)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	body := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"_meta": map[string]any{
+				mcp.MetaKeyProtocolVersion:    "2026-07-28",
+				mcp.MetaKeyClientInfo:         map[string]any{"name": "miodesk-test", "version": "1"},
+				mcp.MetaKeyClientCapabilities: map[string]any{},
+			},
+			"name":      "status",
+			"arguments": map[string]any{},
+		},
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(string(payload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+	req.Header.Set("Mcp-Method", "tools/call")
+	req.Header.Set("Mcp-Name", "status")
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("current protocol status = %d, body = %s", resp.StatusCode, data)
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Errorf("current protocol content type = %q, want application/json", got)
+	}
+	var result struct {
+		Result struct {
+			StructuredContent map[string]any `json:"structuredContent"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Result.StructuredContent["kind"] != "status" {
+		t.Errorf("structured content = %v", result.Result.StructuredContent)
+	}
+}
+
+func TestMCPRemoteForwardedHost(t *testing.T) {
+	root := t.TempDir()
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	makeRequest := func(t *testing.T, endpoint string) *http.Request {
+		t.Helper()
+		body := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"_meta": map[string]any{
+					mcp.MetaKeyProtocolVersion:    "2026-07-28",
+					mcp.MetaKeyClientInfo:         map[string]any{"name": "miodesk-test", "version": "1"},
+					mcp.MetaKeyClientCapabilities: map[string]any{},
+				},
+				"name":      "status",
+				"arguments": map[string]any{},
+			},
+		}
+		payload, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(string(payload)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = "public.example"
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+		req.Header.Set("Mcp-Method", "tools/call")
+		req.Header.Set("Mcp-Name", "status")
+		return req
+	}
+
+	t.Run("local retains SDK localhost protection", func(t *testing.T) {
+		ts := httptest.NewServer(newTestServer(t).Handler())
+		defer ts.Close()
+		resp, err := ts.Client().Do(makeRequest(t, ts.URL+"/mcp"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("local forwarded host status = %d, want 403", resp.StatusCode)
+		}
+	})
+
+	t.Run("unsafe remote accepts tunnel host", func(t *testing.T) {
+		cfg := config.Default()
+		cfg.Workspace.Root = root
+		cfg.Remote.Mode = "unsafe"
+		ts := httptest.NewServer(New(cfg, ws).Handler())
+		defer ts.Close()
+		resp, err := ts.Client().Do(makeRequest(t, ts.URL+"/mcp"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			data, _ := io.ReadAll(resp.Body)
+			t.Errorf("unsafe remote forwarded host status = %d, body = %s", resp.StatusCode, data)
+		}
+	})
+}
+
 func structuredRead(t *testing.T, call *mcp.CallToolResult) tools.ReadOutput {
 	t.Helper()
 	data, err := json.Marshal(call.StructuredContent)
@@ -230,6 +358,16 @@ func TestServeWritesStateFile(t *testing.T) {
 	}
 	if st.PID != os.Getpid() || st.Port != port {
 		t.Errorf("state = %+v", st)
+	}
+	if info, err := os.Stat(path); err != nil {
+		t.Fatalf("stat state file: %v", err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Errorf("state file mode = %o, want 600", info.Mode().Perm())
+	}
+	if info, err := os.Stat(filepath.Dir(path)); err != nil {
+		t.Fatalf("stat state dir: %v", err)
+	} else if info.Mode().Perm() != 0o700 {
+		t.Errorf("state dir mode = %o, want 700", info.Mode().Perm())
 	}
 
 	cancel()

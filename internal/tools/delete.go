@@ -25,6 +25,9 @@ type DeleteOutput struct {
 // followed. Non-empty directories require Recursive=true; the workspace root
 // is never deletable.
 func Delete(ctx context.Context, ws *workspace.Workspace, in DeleteInput) (*DeleteOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	path, err := ws.ResolveParent(in.Path)
 	if err != nil {
 		return nil, err

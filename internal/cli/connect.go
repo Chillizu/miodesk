@@ -50,6 +50,11 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 		errf(stderr, "%v", err)
 		return 1
 	}
+	if err := validateBindSecurity(cfg); err != nil {
+		errf(stderr, "%v", err)
+		hintf(stderr, "bind 127.0.0.1, or set remote.mode = \"token\" with remote.token; --unsafe-remote is for short tests only")
+		return 1
+	}
 	ws, err := workspace.New(cfg.Workspace.Root)
 	if err != nil {
 		errf(stderr, "workspace: %v", err)

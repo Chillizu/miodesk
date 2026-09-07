@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -62,14 +63,14 @@ func Read(ctx context.Context, ws *workspace.Workspace, in ReadInput) (*ReadOutp
 	}
 	defer f.Close()
 
-	// Read at most MaxReadBytes+1 so the extra byte marks truncation.
-	buf := make([]byte, MaxReadBytes+1)
-	n, err := f.Read(buf)
-	if err != nil && n == 0 {
+	// Read at most MaxReadBytes+1 so the extra byte marks truncation. ReadAll
+	// is used instead of one File.Read call: regular files usually fill a
+	// buffer, but the io contract does not require a single read to do so.
+	data, err := io.ReadAll(io.LimitReader(f, MaxReadBytes+1))
+	if err != nil {
 		return nil, err
 	}
-	data := buf[:n]
-	truncated := n > MaxReadBytes
+	truncated := len(data) > MaxReadBytes
 	if truncated {
 		data = data[:MaxReadBytes]
 	}
