@@ -174,6 +174,20 @@ func TestStatusWithoutServer(t *testing.T) {
 	}
 }
 
+func TestNormalizeJournalTime(t *testing.T) {
+	for input, want := range map[string]string{
+		"10m":   "10 minutes ago",
+		"2h":    "2 hours ago",
+		"3d":    "3 days ago",
+		"45s":   "45 seconds ago",
+		"today": "today",
+	} {
+		if got := normalizeJournalTime(input); got != want {
+			t.Errorf("normalizeJournalTime(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs("../..")

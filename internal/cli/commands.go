@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"miodesk/internal/buildinfo"
 	"miodesk/internal/config"
@@ -470,10 +471,10 @@ func runLogs(args []string, stdout, stderr io.Writer) int {
 		journalArgs = append(journalArgs, "-o", "short-iso")
 	}
 	if *since != "" {
-		journalArgs = append(journalArgs, "--since", *since)
+		journalArgs = append(journalArgs, "--since", normalizeJournalTime(*since))
 	}
 	if *until != "" {
-		journalArgs = append(journalArgs, "--until", *until)
+		journalArgs = append(journalArgs, "--until", normalizeJournalTime(*until))
 	}
 	if *grep != "" {
 		journalArgs = append(journalArgs, "-g", *grep)
@@ -493,10 +494,36 @@ func runLogs(args []string, stdout, stderr io.Writer) int {
 		cmd.Stderr = redactingWriter{w: stderr, secret: secret}
 	}
 	if err := cmd.Run(); err != nil {
-		errf(stderr, "journalctl: %v (is the systemd user session available?)")
+		errf(stderr, "journalctl: %v (is the systemd user session available?)", err)
 		return 1
 	}
 	return 0
+}
+
+// normalizeJournalTime makes the convenient CLI form "10m" work with
+// journalctl, whose relative-time grammar expects "10 minutes ago".
+func normalizeJournalTime(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return value
+	}
+	if strings.HasSuffix(value, "d") {
+		if n, err := strconv.Atoi(strings.TrimSuffix(value, "d")); err == nil && n > 0 {
+			return fmt.Sprintf("%d days ago", n)
+		}
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return value
+	}
+	switch {
+	case duration%time.Hour == 0:
+		return fmt.Sprintf("%d hours ago", int(duration/time.Hour))
+	case duration%time.Minute == 0:
+		return fmt.Sprintf("%d minutes ago", int(duration/time.Minute))
+	default:
+		return fmt.Sprintf("%d seconds ago", int(duration/time.Second))
+	}
 }
 
 func configureLogging(cfg *config.Config, stderr io.Writer) {
