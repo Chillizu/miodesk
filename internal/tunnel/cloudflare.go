@@ -80,6 +80,7 @@ var cloudflaredURL = regexp.MustCompile(`https://[a-z0-9-]+\.trycloudflare\.com`
 
 func (c *Cloudflare) Start(ctx context.Context, opts Options) (Endpoint, error) {
 	cmd := exec.CommandContext(ctx, "cloudflared", "tunnel", "--url", opts.LocalURL)
+	configureProcess(cmd)
 	// Bound the pipe drain: a killed process's grandchildren can hold the
 	// stdout pipe open for a long time, which would stall Wait forever.
 	cmd.WaitDelay = 3 * time.Second
@@ -104,6 +105,9 @@ func (c *Cloudflare) Start(ctx context.Context, opts Options) (Endpoint, error) 
 	defer tick.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			c.Stop()
+			return Endpoint{}, ctx.Err()
 		case <-deadline:
 			c.Stop()
 			return Endpoint{}, fmt.Errorf("cloudflared did not report a trycloudflare URL within %ds (run with MIODESK_LOG=debug to inspect its output)", Timeout(opts.TimeoutSeconds))
@@ -130,8 +134,11 @@ func (c *Cloudflare) Stop() error {
 	case <-done:
 		return nil
 	default:
-		_ = cmd.Process.Kill()
-		<-done
+		stopProcess(cmd)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
 	}
 	return nil
 }

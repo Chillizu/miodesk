@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
-	"miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/workspace"
 )
 
 const (
@@ -17,10 +18,8 @@ const (
 )
 
 // EditInput is a batch of operations: every operation is validated against
-// in-memory copies before anything is written, so a failed validation leaves
-// every file untouched. Each file write itself is atomic (temp + rename);
-// if the filesystem fails between per-file writes, earlier files may already
-// have been updated.
+// in-memory copies before anything is written, and the commit phase rolls back
+// already-installed files when a later filesystem operation fails.
 type EditInput struct {
 	Operations []EditOperation `json:"operations" jsonschema:"operations applied atomically; a failed batch leaves every file untouched"`
 }
@@ -50,9 +49,11 @@ type EditOutput struct {
 	Files   []EditFileResult `json:"files"`
 }
 
-// Edit applies exact-replace and guarded range operations atomically. All
-// operations are validated against in-memory copies first; only when every
-// operation succeeds are the files written (temp + rename per file).
+// Edit applies exact-replace and guarded range operations as one transaction.
+// All operations are validated against in-memory copies first; the commit
+// stages every changed file and restores prior contents if a later rename
+// fails. As with any filesystem transaction without a journal, a sudden power
+// loss during the commit cannot provide database-level crash atomicity.
 func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutput, error) {
 	if len(in.Operations) == 0 {
 		return nil, fmt.Errorf("edit: no operations")
@@ -75,13 +76,7 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 	}
 
 	// Phase 1: validate and compute every new content in memory.
-	type fileEdit struct {
-		path   string // resolved
-		old    string
-		new    string
-		result EditFileResult
-	}
-	edits := make([]fileEdit, 0, len(order))
+	edits := make([]preparedEdit, 0, len(order))
 	for _, key := range order {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -114,10 +109,11 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 				return nil, err
 			}
 		}
-		edits = append(edits, fileEdit{
+		edits = append(edits, preparedEdit{
 			path: path,
 			old:  string(data),
 			new:  content,
+			mode: fi.Mode().Perm(),
 			result: EditFileResult{
 				Path:  ws.Rel(path),
 				Bytes: len(content),
@@ -126,19 +122,15 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 		})
 	}
 
-	// Phase 2: everything validated — write. Files whose content did not
-	// change are skipped.
+	// Phase 2: everything validated — commit all changed files together.
+	if err := commitEdits(ctx, edits); err != nil {
+		return nil, err
+	}
 	out := &EditOutput{}
 	for i := range edits {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		e := &edits[i]
 		if e.old == e.new {
 			continue
-		}
-		if err := writeFileAtomic(e.path, []byte(e.new)); err != nil {
-			return nil, fmt.Errorf("edit: write %s: %w", ws.Rel(e.path), err)
 		}
 		e.result.Diff = DiffLines(e.old, e.new)
 		out.Files = append(out.Files, e.result)
@@ -146,6 +138,200 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 	out.Kind = "edit"
 	out.Applied = len(in.Operations)
 	return out, nil
+}
+
+type preparedEdit struct {
+	path   string // resolved
+	old    string
+	new    string
+	mode   os.FileMode
+	result EditFileResult
+}
+
+type stagedEdit struct {
+	preparedEdit
+	staged    string
+	backup    string
+	backedUp  bool
+	installed bool
+}
+
+// commitEdits provides process-level rollback across multiple files. Every
+// staged file lives beside its target, so each rename remains on one
+// filesystem and is atomic on the platforms miodesk supports.
+func commitEdits(ctx context.Context, edits []preparedEdit) error {
+	staged := make([]stagedEdit, 0, len(edits))
+	cleanup := func() {
+		for i := range staged {
+			if staged[i].staged != "" {
+				_ = os.Remove(staged[i].staged)
+			}
+			if staged[i].backup != "" && !staged[i].backedUp {
+				_ = os.Remove(staged[i].backup)
+			}
+		}
+	}
+
+	for _, edit := range edits {
+		if edit.old == edit.new {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			cleanup()
+			return err
+		}
+		stage, err := stageEditFile(edit.path, []byte(edit.new), edit.mode)
+		if err != nil {
+			cleanup()
+			return fmt.Errorf("edit: stage %s: %w", edit.path, err)
+		}
+		staged = append(staged, stagedEdit{preparedEdit: edit, staged: stage})
+	}
+
+	rollback := func() error {
+		var firstErr error
+		for i := len(staged) - 1; i >= 0; i-- {
+			e := &staged[i]
+			if e.installed {
+				if err := os.Remove(e.path); err != nil && !os.IsNotExist(err) && firstErr == nil {
+					firstErr = err
+				}
+			}
+			if e.backedUp {
+				if err := os.Rename(e.backup, e.path); err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		return firstErr
+	}
+
+	for i := range staged {
+		if err := ctx.Err(); err != nil {
+			rollbackErr := rollback()
+			cleanup()
+			if rollbackErr != nil {
+				return fmt.Errorf("edit: commit cancelled and rollback failed: %w (original: %v)", rollbackErr, err)
+			}
+			return err
+		}
+
+		e := &staged[i]
+		current, err := os.Lstat(e.path)
+		if err != nil {
+			rollbackErr := rollback()
+			cleanup()
+			if rollbackErr != nil {
+				return fmt.Errorf("edit: target disappeared and rollback failed: %w", rollbackErr)
+			}
+			return fmt.Errorf("edit: target changed before commit: %w", err)
+		}
+		if !current.Mode().IsRegular() {
+			rollbackErr := rollback()
+			cleanup()
+			if rollbackErr != nil {
+				return fmt.Errorf("edit: target changed type and rollback failed: %w", rollbackErr)
+			}
+			return fmt.Errorf("edit: target changed type before commit: %s", e.path)
+		}
+		data, err := os.ReadFile(e.path)
+		if err != nil || string(data) != e.old {
+			rollbackErr := rollback()
+			cleanup()
+			if rollbackErr != nil {
+				return fmt.Errorf("edit: target changed and rollback failed: %w", rollbackErr)
+			}
+			if err != nil {
+				return fmt.Errorf("edit: reread target before commit: %w", err)
+			}
+			return fmt.Errorf("edit: target changed before commit: %s", e.path)
+		}
+
+		backup, err := makeEditBackup(e.path)
+		if err != nil {
+			rollbackErr := rollback()
+			cleanup()
+			if rollbackErr != nil {
+				return fmt.Errorf("edit: prepare rollback and rollback failed: %w", rollbackErr)
+			}
+			return fmt.Errorf("edit: prepare rollback for %s: %w", e.path, err)
+		}
+		e.backup = backup
+		if err := os.Rename(e.path, e.backup); err != nil {
+			rollbackErr := rollback()
+			cleanup()
+			if rollbackErr != nil {
+				return fmt.Errorf("edit: backup %s and rollback failed: %w", e.path, rollbackErr)
+			}
+			return fmt.Errorf("edit: backup %s: %w", e.path, err)
+		}
+		e.backedUp = true
+		if err := os.Rename(e.staged, e.path); err != nil {
+			rollbackErr := rollback()
+			cleanup()
+			if rollbackErr != nil {
+				return fmt.Errorf("edit: install %s and rollback failed: %w", e.path, rollbackErr)
+			}
+			return fmt.Errorf("edit: install %s: %w", e.path, err)
+		}
+		e.staged = ""
+		e.installed = true
+	}
+
+	for i := range staged {
+		if staged[i].backup != "" {
+			_ = os.Remove(staged[i].backup)
+		}
+	}
+	cleanup()
+	return nil
+}
+
+func stageEditFile(path string, data []byte, mode os.FileMode) (string, error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".miodesk-edit-*")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	remove := true
+	defer func() {
+		if remove {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	remove = false
+	return tmpName, nil
+}
+
+func makeEditBackup(path string) (string, error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".miodesk-edit-backup-*")
+	if err != nil {
+		return "", err
+	}
+	name := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := os.Remove(name); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 func applyOperation(ws *workspace.Workspace, path, content string, op EditOperation) (string, error) {

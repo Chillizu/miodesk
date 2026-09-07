@@ -22,6 +22,7 @@
   --miodesk-info-soft: rgba(13, 13, 13, 0.05);
   --miodesk-radius: 10px;
   --miodesk-gap: 12px;
+  --miodesk-content-max: 760px;
   --miodesk-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --miodesk-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -79,15 +80,23 @@
 
 body {
   margin: 0;
-  padding: var(--miodesk-gap);
-  padding-left: max(var(--miodesk-gap), env(safe-area-inset-left));
-  padding-right: max(var(--miodesk-gap), env(safe-area-inset-right));
-  padding-top: max(var(--miodesk-gap), env(safe-area-inset-top));
-  padding-bottom: max(var(--miodesk-gap), env(safe-area-inset-bottom));
   background: var(--miodesk-bg);
   color: var(--miodesk-text);
   font: 13px/1.5 var(--miodesk-font);
   -webkit-font-smoothing: antialiased;
+}
+
+#result {
+  width: 100%;
+  max-width: calc(var(--miodesk-content-max) + 2 * var(--miodesk-gap));
+  margin-inline: auto;
+  padding-top: max(var(--miodesk-gap), env(safe-area-inset-top));
+  padding-right: max(var(--miodesk-gap), env(safe-area-inset-right));
+  padding-bottom: max(var(--miodesk-gap), env(safe-area-inset-bottom));
+  padding-left: max(var(--miodesk-gap), env(safe-area-inset-left));
+  min-width: 0;
+  container-type: inline-size;
+  container-name: widget;
 }
 
 :focus-visible {
@@ -123,9 +132,13 @@ button:disabled { opacity: 0.4; cursor: default; background: transparent; }
 .result {
   display: grid;
   gap: 10px;
-  max-width: 760px;
+  max-width: var(--miodesk-content-max);
   margin: 0 auto;
+  min-width: 0;
 }
+
+.stack,
+section { min-width: 0; }
 
 .stack { display: grid; gap: 18px; }
 
@@ -159,16 +172,20 @@ button:disabled { opacity: 0.4; cursor: default; background: transparent; }
   min-width: 0;
   font-family: var(--miodesk-mono);
   font-size: 12px;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .rhead .meta {
   flex: none;
+  min-width: 0;
   margin-left: auto;
   color: var(--miodesk-muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .section-h {
@@ -187,6 +204,9 @@ button:disabled { opacity: 0.4; cursor: default; background: transparent; }
   gap: 6px;
   font-size: 12px;
   font-weight: 500;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 
 .state .ic { width: 14px; height: 14px; }
@@ -210,6 +230,15 @@ button:disabled { opacity: 0.4; cursor: default; background: transparent; }
   min-width: 0;
 }
 
+/* Line-numbered source keeps its formatting, but owns its horizontal scroll
+   instead of widening the page when a line is longer than the widget. */
+.code--lines {
+  max-width: 100%;
+  max-height: 320px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
 .code pre {
   margin: 0;
   padding: 10px 12px;
@@ -227,12 +256,15 @@ button:disabled { opacity: 0.4; cursor: default; background: transparent; }
   gap: 6px;
   padding: 5px 8px;
   border-bottom: 1px solid var(--miodesk-border);
+  min-width: 0;
 }
 
 .code .code__bar .label {
   margin-right: auto;
+  min-width: 0;
   font-size: 11px;
   color: var(--miodesk-muted);
+  overflow-wrap: break-word;
 }
 
 /* key/value rows */
@@ -250,7 +282,8 @@ button:disabled { opacity: 0.4; cursor: default; background: transparent; }
   min-width: 0;
   font-family: var(--miodesk-mono);
   font-size: 12px;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 /* row lists (search groups, list entries) */
@@ -280,7 +313,8 @@ button:disabled { opacity: 0.4; cursor: default; background: transparent; }
 .rowlist .row .name {
   font-family: var(--miodesk-mono);
   font-size: 12px;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
   min-width: 0;
 }
 
@@ -306,7 +340,8 @@ button:disabled { opacity: 0.4; cursor: default; background: transparent; }
 .match-line .txt {
   font: 12px/1.5 var(--miodesk-mono);
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
   min-width: 0;
 }
 .match-line mark {
@@ -343,7 +378,8 @@ button:disabled { opacity: 0.4; cursor: default; background: transparent; }
   font-family: var(--miodesk-mono);
   font-size: 12px;
   font-weight: 600;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .diff__stat {
@@ -434,16 +470,31 @@ button:disabled { opacity: 0.4; cursor: default; background: transparent; }
 
 .result { container-type: inline-size; container-name: result; }
 
+@container widget (max-width: 480px) {
+  .stack { gap: 12px; }
+  .result,
+  .subresult { gap: 8px; }
+}
+
 @container result (max-width: 480px) {
   .rhead { flex-wrap: wrap; }
   .rhead .target { flex-basis: 100%; order: 3; }
-  .rhead .meta { margin-left: 0; }
+  .rhead .meta {
+    flex: 1 1 auto;
+    margin-left: auto;
+    max-width: 100%;
+    text-align: right;
+    white-space: normal;
+  }
+  .code pre {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
   .kv { grid-template-columns: max-content 1fr; }
 }
 
 @container result (max-width: 320px) {
-  body { font-size: 13px; }
   .kv { grid-template-columns: 1fr; gap: 0 0; }
   .kv dt { margin-top: 6px; }
-  .rhead .meta { white-space: normal; }
 }

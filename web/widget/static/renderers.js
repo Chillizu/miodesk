@@ -371,7 +371,7 @@ function lineRow(line) {
 // lineNumbers renders content with a gutter; startLine is the payload's
 // 1-based offset so numbers stay true to the source file.
 function lineNumbers(content, startLine) {
-  const box = mEl("div", "code");
+  const box = mEl("div", "code code--lines");
   const wrap = mEl("div", "dlines");
   const lines = content.replace(/\n$/, "").split("\n");
   lines.forEach((text, i) => {

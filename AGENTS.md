@@ -1,6 +1,6 @@
 # AGENTS.md — miodesk
 
-Status: milestones 1–3 implemented — all seven file/command tools, diff viewer, token stats, systemd service, `miodesk connect` with pluggable tunnel providers (local/cloudflare/ngrok/tailscale/custom, auto-detect + graceful degradation), `tunnel list/doctor`, self-update via release manifest (`update --from`), and `scripts/build-release.sh` packaging. ChatGPT/MCP-Apps adaptation is in `internal/adapter`: every result tool declares the shared widget resource (`ui://miodesk/status.html`) via `_meta.ui` + ChatGPT aliases, tool results carry a `kind` discriminator, and the widget renders context-aware per-kind results (read/search/list/write/edit+diff/delete/command lifecycle/status) in a ChatGPT-native visual language — the `/preview` route shows all renderers with mocks. Remote access has a three-tier trust model (`internal/server/security.go`: local / token / unsafe; connect defaults to auto-generated bearer tokens and refuses unauthenticated entrances; Origin validation per the MCP transport spec). Remaining polish: full MCP Apps `ui/initialize` bridge (Claude/VS Code hosting), OAuth 2.1 for ChatGPT connectors, Windows service/paths. Tunnel provider CLI behavior and ChatGPT field names are documented from official sources in docs/REFERENCES.md — re-verify there before changing provider commands or widget meta.
+Status: milestones 1–3 implemented — all seven file/command tools, diff viewer, token stats, systemd service, new-device `setup`, OpenAI Secure MCP Tunnel as the default connection, custom endpoint compatibility, `tunnel list/doctor`, self-update via release manifest (`update --from`), and `scripts/build-release.sh` packaging. ChatGPT/MCP-Apps adaptation is in `internal/adapter`: the diagnostics/status tool and long-command lifecycle opt into the shared widget resource (`ui://miodesk/status-v4.html`) via `_meta.ui` + ChatGPT aliases, while regular file and short-command tools stay Native-first; tool results carry a `kind` discriminator, and the widget renders context-aware per-kind results (read/search/list/write/edit+diff/delete/command lifecycle/status) in a ChatGPT-native visual language — the `/preview` route shows all renderers with mocks. Remote access has a three-tier trust model (`internal/server/security.go`: local / token / unsafe; OpenAI Tunnel keeps the local server on loopback, while token/unsafe modes remain for custom or legacy public entrances; Origin validation follows the MCP transport spec). Remaining polish: full MCP Apps `ui/initialize` bridge (Claude/VS Code hosting), OAuth 2.1 for custom ChatGPT connectors, Windows service/paths. Tunnel-client commands and ChatGPT field names are documented from official sources in docs/REFERENCES.md — re-verify there before changing provider commands or widget meta.
 
 ## What this is
 
@@ -31,14 +31,14 @@ docs/
 ```
 
 - **Transports** (stdio, Streamable HTTP) ≠ **adapters** (mcp, chatgpt, future) ≠ **core tools** (read, search, list, write, edit, delete, command). Tools must not know about ChatGPT-specific metadata; host workarounds stay in the host's adapter.
-- **Tunnel is pluggable**: providers `local`, `cloudflare`, `ngrok`, `tailscale`, `custom`. Core never hard-depends on a provider and never contains provider-specific URLs/params. Missing tunnel binary → `[WARN]` + alternative, not a broken server. `--provider custom --url ...` means miodesk does NOT own/build the public endpoint.
+- **Tunnel is pluggable**: OpenAI Secure MCP Tunnel is the default remote path; `custom` remains available for an operator-owned HTTPS endpoint, and older provider values remain readable for compatibility. Core never hard-depends on a provider and never contains provider-specific URLs/params. `--provider custom --url ...` means miodesk does NOT own/build the public endpoint.
 - **Workspace is the security boundary.** All file tools are sandboxed to the workspace root. Validate on canonical/resolved paths (`filepath.EvalSymlinks`) — never string-prefix checks. Must block: `../` escape, absolute-path escape, symlink escape, writes outside workspace. Large ops need limit/offset/depth/truncation.
 - **`command` tool**: cwd defaults to workspace; never sudo, never auto-escalate, never install deps silently; return stdout/stderr/exit code/elapsed. Long-running commands use a start/poll/cancel lifecycle — no HTTP request hangs forever. `edit` batches are atomic: any failed op ⇒ zero partial writes.
 - **Config**: XDG dirs (`$XDG_CONFIG_HOME/miodesk`, data/state/cache likewise; fallback `~/.config/miodesk` etc.), file `config.toml`. Runtime state never goes into config.toml.
 
 ## CLI contract
 
-Subcommands: `init`, `serve`, `connect`, `status`, `doctor`, `config`, `workspace`, `tunnel`, `service`, `logs`, `update`, `version`. Style: fast, quiet, predictable. `[OK] / [WARN] / [INFO]` prefixes. Errors explain what/why/how to fix, e.g.:
+Subcommands: `setup`, `init`, `serve`, `connect`, `status`, `doctor`, `config`, `workspace`, `tunnel`, `service`, `logs`, `update`, `version`. Fresh `setup` defaults to a loopback server plus OpenAI Secure MCP Tunnel; it does not install dependencies or start daemons silently. Style: fast, quiet, predictable. `[OK] / [WARN] / [INFO]` prefixes. Errors explain what/why/how to fix, e.g.:
 
 ```
 Error: port 8787 is already in use
@@ -52,10 +52,11 @@ Hint: use `miodesk serve --port 0`
 Standard Go toolchain (no Makefile yet):
 
 ```sh
-gofmt -w .
-go vet ./...
-go test ./...
-go build ./cmd/miodesk
+gofmt -w $(git ls-files '*.go')
+go vet -all ./...
+go test -vet=all ./...
+go build -buildvcs=false ./cmd/miodesk
+scripts/release-check.sh
 ```
 
 Definition of done: implemented + formatted + tested + **actually executed** — CLI really run, server really started, a request really made, clean exit. "The code looks correct" is not done.
@@ -71,9 +72,7 @@ Never implement protocol details from model memory or old blog posts. Check offi
 - MCP spec (2026-07-28): https://modelcontextprotocol.io/specification/2026-07-28/index.md — index: https://modelcontextprotocol.io/llms.txt
 - Official Go MCP SDK — use it, don't re-implement JSON-RPC/MCP: https://github.com/modelcontextprotocol/go-sdk
 - OpenAI/ChatGPT MCP & UI: https://developers.openai.com/llms.txt
-- Cloudflare Tunnel: https://developers.cloudflare.com/llms.txt
-- ngrok CLI: https://ngrok.com/docs/llms.txt
-- Tailscale Funnel: https://tailscale.com/docs/features/tailscale-funnel (detect capability at runtime; don't assume availability)
+- OpenAI Secure MCP Tunnel: https://developers.openai.com/api/docs/guides/secure-mcp-tunnels (default remote path; keep the local MCP server on loopback)
 - XDG base dirs: https://specifications.freedesktop.org/basedir-spec/latest/
 
 Record confirmed findings (topic, official URL, version, relevant module, decision, checked date) in `docs/REFERENCES.md` so later agents don't re-search.

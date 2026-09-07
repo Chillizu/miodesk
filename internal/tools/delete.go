@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/workspace"
 )
 
 // DeleteInput removes one file, symlink, or directory inside the workspace.

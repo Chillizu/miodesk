@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        shell: bash
+        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+
+      - name: Vet
+        run: go vet -all ./...
+
+      - name: Compile with vet enabled
+        run: go test -vet=all -run=^$ ./...
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Test with race detector
+        run: go test -race ./...
+
+      - name: Build
+        run: go build -buildvcs=false ./cmd/miodesk

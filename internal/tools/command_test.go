@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -63,9 +64,9 @@ func TestCommandCwdSubdirectory(t *testing.T) {
 
 func TestCommandRefusesSudoAndEscape(t *testing.T) {
 	ws, _ := newWS(t)
-	for _, command := range []string{"sudo rm -rf /", "echo ok; sudo true", "echo $(sudo true)"} {
+	for _, command := range []string{"sudo rm -rf /", "echo ok; sudo true", "echo $(sudo true)", "doas true", "/usr/bin/sudoedit file", "pkexec true", "su -", "runuser -u root true", "runas.exe cmd"} {
 		if _, err := Command(context.Background(), ws, CommandInput{Command: command}); err == nil {
-			t.Errorf("sudo must be refused in %q", command)
+			t.Errorf("privilege escalation must be refused in %q", command)
 		}
 	}
 	if _, err := Command(context.Background(), ws, CommandInput{Command: "pwd", CWD: "../../"}); err == nil {
@@ -190,5 +191,35 @@ func TestManagerLifecycle(t *testing.T) {
 	// Cancelling a finished task is a no-op.
 	if _, err := m.Cancel(id2); err != nil {
 		t.Errorf("cancel of finished task: %v", err)
+	}
+}
+
+func TestManagerCapsConcurrentTasks(t *testing.T) {
+	ws, _ := newWS(t)
+	m := NewManager()
+
+	// Fill the manager with synthetic running handles so the cap can be tested
+	// without spawning dozens of real child processes.
+	m.mu.Lock()
+	for i := 0; i < maxRunningProcs; i++ {
+		id := "task-synthetic-" + strconv.Itoa(i)
+		m.procs[id] = &procHandle{doneCh: make(chan struct{})}
+		m.order = append(m.order, id)
+	}
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		for _, p := range m.procs {
+			select {
+			case <-p.doneCh:
+			default:
+				close(p.doneCh)
+			}
+		}
+		m.mu.Unlock()
+	}()
+
+	if _, err := m.Start(ws, CommandInput{Command: "true"}); err == nil || !strings.Contains(err.Error(), "cap") {
+		t.Fatalf("Start beyond cap error = %v", err)
 	}
 }

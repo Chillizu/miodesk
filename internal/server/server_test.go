@@ -21,11 +21,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"miodesk/internal/adapter"
-	"miodesk/internal/config"
-	"miodesk/internal/logging"
-	"miodesk/internal/tools"
-	"miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/adapter"
+	"github.com/Chillizu/miodesk/internal/config"
+	"github.com/Chillizu/miodesk/internal/logging"
+	"github.com/Chillizu/miodesk/internal/tools"
+	"github.com/Chillizu/miodesk/internal/workspace"
 )
 
 func newTestServer(t *testing.T) *Server {
@@ -44,6 +44,7 @@ func newTestServer(t *testing.T) *Server {
 	}
 	cfg := config.Default()
 	cfg.Workspace.Root = root
+	cfg.Server.Port = 0
 	return New(cfg, ws)
 }
 
@@ -723,8 +724,21 @@ func TestMCPAppsDashboard(t *testing.T) {
 	if !strings.Contains(rc.Text, "<style>") || !strings.Contains(rc.Text, "MIODESK_RENDERERS") {
 		t.Error("resource text should be the assembled dashboard HTML")
 	}
-	if ui, ok := rc.Meta["ui"].(map[string]any); !ok || ui["prefersBorder"] != false {
+	if ui, ok := rc.Meta["ui"].(map[string]any); !ok || ui["prefersBorder"] != true {
 		t.Errorf("contents _meta.ui = %v", rc.Meta)
+	}
+	for _, legacyURI := range []string{
+		"ui://miodesk/status.html",
+		"ui://miodesk/status-v2.html",
+		"ui://miodesk/status-v3.html",
+	} {
+		legacyRead, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: legacyURI})
+		if err != nil {
+			t.Fatalf("legacy resources/read %q: %v", legacyURI, err)
+		}
+		if len(legacyRead.Contents) != 1 || legacyRead.Contents[0].URI != legacyURI || legacyRead.Contents[0].Text != rc.Text {
+			t.Errorf("legacy resource %q was not served as the current widget", legacyURI)
+		}
 	}
 
 	// The status tool declares the UI via the shared MCP Apps field plus the
@@ -765,6 +779,21 @@ func TestMCPAppsDashboard(t *testing.T) {
 	}
 	if read2.Title != "Read file" {
 		t.Errorf("read title = %q", read2.Title)
+	}
+
+	richUI := map[string]bool{
+		"command_start":  true,
+		"command_poll":   true,
+		"command_cancel": true,
+		"status":         true,
+	}
+	for _, tl := range listed.Tools {
+		_, hasUI := tl.Meta["ui"]
+		_, hasTemplate := tl.Meta["openai/outputTemplate"]
+		wantUI := richUI[tl.Name]
+		if hasUI != wantUI || hasTemplate != wantUI {
+			t.Errorf("%s UI metadata present = (%v, %v), want = %v; meta = %v", tl.Name, hasUI, hasTemplate, wantUI, tl.Meta)
+		}
 	}
 
 	// Calling the dashboard tool returns the full status payload.

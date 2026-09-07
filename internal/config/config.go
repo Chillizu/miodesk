@@ -10,14 +10,23 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"miodesk/internal/xdg"
+	"github.com/Chillizu/miodesk/internal/xdg"
+)
+
+const (
+	// DefaultPort is intentionally stable: the OpenAI tunnel-client profile
+	// points at the local MCP endpoint and should survive restarts unchanged.
+	DefaultPort = 8787
+	// DefaultOpenAIProfile is the profile name used by `miodesk setup`.
+	DefaultOpenAIProfile = "miodesk"
 )
 
 type Server struct {
 	// Host to bind. "127.0.0.1" keeps the MCP server local; use 0.0.0.0 only
 	// when a tunnel or reverse proxy fronts it.
 	Host string `toml:"host"`
-	// Port 0 means "pick a random free port on each start".
+	// Port 0 means "pick a random free port on each start". A fixed default
+	// keeps the OpenAI tunnel-client's local MCP target stable across restarts.
 	Port int `toml:"port"`
 }
 
@@ -27,8 +36,22 @@ type Workspace struct {
 }
 
 type Tunnel struct {
-	// Provider is one of: auto, local, cloudflare, ngrok, tailscale, custom.
-	Provider string `toml:"provider"`
+	// Provider is openai by default. The legacy providers remain accepted for
+	// existing configurations, but are intentionally not part of the primary
+	// onboarding path.
+	Provider string       `toml:"provider"`
+	OpenAI   OpenAITunnel `toml:"openai"`
+}
+
+// OpenAITunnel contains non-secret references used to prepare the external
+// tunnel-client. The runtime API key itself stays in RuntimeKeyFile and is
+// never copied into this config or passed as a literal argument.
+type OpenAITunnel struct {
+	TunnelID       string `toml:"tunnel_id"`
+	RuntimeKeyFile string `toml:"runtime_key_file"`
+	Profile        string `toml:"profile"`
+	ProfileDir     string `toml:"profile_dir"`
+	ClientPath     string `toml:"client_path"`
 }
 
 type Widget struct {
@@ -71,9 +94,9 @@ type Config struct {
 func Default() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
-		Server:    Server{Host: "127.0.0.1", Port: 0},
+		Server:    Server{Host: "127.0.0.1", Port: DefaultPort},
 		Workspace: Workspace{Root: home},
-		Tunnel:    Tunnel{Provider: "auto"},
+		Tunnel:    Tunnel{Provider: "openai", OpenAI: OpenAITunnel{Profile: DefaultOpenAIProfile}},
 		Widget:    Widget{Theme: "auto"},
 		Logging:   Logging{Level: "info", Format: "text"},
 	}
@@ -178,6 +201,9 @@ func (c *Config) applyDefaults() {
 	if c.Tunnel.Provider == "" {
 		c.Tunnel.Provider = def.Tunnel.Provider
 	}
+	if c.Tunnel.OpenAI.Profile == "" {
+		c.Tunnel.OpenAI.Profile = def.Tunnel.OpenAI.Profile
+	}
 	if c.Widget.Theme == "" {
 		c.Widget.Theme = def.Widget.Theme
 	}
@@ -218,9 +244,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("remote.mode is %q but remote.token is empty", c.Remote.Mode)
 	}
 	switch c.Tunnel.Provider {
-	case "auto", "local", "cloudflare", "ngrok", "tailscale", "custom":
+	case "openai", "auto", "local", "cloudflare", "ngrok", "tailscale", "custom":
 	default:
-		return fmt.Errorf("tunnel.provider %q must be one of auto, local, cloudflare, ngrok, tailscale, custom", c.Tunnel.Provider)
+		return fmt.Errorf("tunnel.provider %q must be openai, auto, local, cloudflare, ngrok, tailscale, or custom", c.Tunnel.Provider)
 	}
 	return nil
 }

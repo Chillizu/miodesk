@@ -12,10 +12,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"miodesk/internal/config"
-	"miodesk/internal/server"
-	"miodesk/internal/tunnel"
-	"miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/config"
+	"github.com/Chillizu/miodesk/internal/server"
+	"github.com/Chillizu/miodesk/internal/tunnel"
+	"github.com/Chillizu/miodesk/internal/workspace"
 )
 
 // runConnect starts the local MCP server and exposes it through a tunnel
@@ -23,15 +23,21 @@ import (
 // alternatives — a tunnel is never a hidden requirement.
 func runConnect(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("connect", stderr)
-	providerFlag := fs.String("provider", "", "tunnel provider: auto, local, cloudflare, ngrok, tailscale, custom (default: from config)")
+	providerFlag := fs.String("provider", "", "connection mode: openai (default) or custom endpoint")
 	urlFlag := fs.String("url", "", "public endpoint URL (required for --provider custom)")
-	portFlag := fs.Int("port", -1, "local listen port (default: from config, 0 = random)")
+	portFlag := fs.Int("port", 0, "local listen port (default: from config, 0 = random)")
 	timeoutFlag := fs.Int("timeout", 30, "seconds to wait for the public endpoint")
 	unsafeFlag := fs.Bool("unsafe-remote", false, "EXPLICIT: expose the MCP endpoint without authentication (development only)")
-	if err := fs.Parse(args); err != nil {
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
 		hintf(stderr, "run `miodesk connect -h`")
 		return 2
 	}
+	if !requireNoPositional(fs, stderr) {
+		return 2
+	}
+	portSet := flagWasSet(fs, "port")
 
 	cfg, _, ok := loadConfig(stderr)
 	if !ok {
@@ -42,9 +48,24 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 		providerName = cfg.Tunnel.Provider
 	}
 	if providerName == "" {
-		providerName = "auto"
+		providerName = "openai"
 	}
-	if *portFlag >= 0 {
+	if *urlFlag != "" && providerName != "custom" {
+		errf(stderr, "--url is only valid with --provider custom")
+		hintf(stderr, "use `miodesk connect --provider custom --url https://…`")
+		return 2
+	}
+	if providerName == "custom" && *urlFlag == "" {
+		errf(stderr, "custom provider requires --url")
+		hintf(stderr, "use `miodesk connect --provider custom --url https://…`")
+		return 2
+	}
+	if providerName == "openai" && *unsafeFlag {
+		errf(stderr, "--unsafe-remote is not used with the OpenAI Secure MCP Tunnel")
+		hintf(stderr, "the OpenAI tunnel supplies the remote boundary; omit --unsafe-remote")
+		return 2
+	}
+	if portSet {
 		cfg.Server.Port = *portFlag
 	}
 	if err := cfg.Validate(); err != nil {
@@ -62,6 +83,11 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 		errf(stderr, "workspace: %v", err)
 		hintf(stderr, "create the directory or run `miodesk init --workspace …`")
 		return 1
+	}
+	if providerName == "openai" {
+		// An explicit port override changes the tunnel-client's local target;
+		// refresh the externally-owned profile in that case.
+		return runOpenAIConnect(cfg, ws, stdout, stderr, portSet)
 	}
 
 	// A tunnel is by definition a remote entrance: it must never open
@@ -108,7 +134,7 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		ln.Close()
 		errf(stderr, "%v", err)
-		hintf(stderr, "check `miodesk tunnel doctor`, or try another provider: miodesk tunnel list")
+		hintf(stderr, "check `miodesk tunnel doctor`, or provide your own HTTPS endpoint with `--provider custom --url https://…`")
 		return 1
 	}
 	slog.Info("tunnel_ready", "provider", ep.Provider, "endpoint", ep.URL)
@@ -147,24 +173,33 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 // entrance is never unauthenticated without an explicit unsafe opt-in; with
 // no configuration it generates a token and persists it.
 func resolveRemoteAuth(cfg *config.Config, unsafe bool) (string, error) {
-	mode := cfg.Remote.Mode
 	if unsafe {
 		return "unsafe", nil
 	}
-	switch mode {
+	switch cfg.Remote.Mode {
 	case "unsafe":
 		return "unsafe", nil
 	case "local":
-		return "", fmt.Errorf("remote.mode is %q: miodesk refuses to open an unauthenticated remote entrance", mode)
-	default: // "" or "token"
+		return "", fmt.Errorf("remote.mode is %q: miodesk refuses to open an unauthenticated remote entrance", cfg.Remote.Mode)
+	case "token":
+		return "token", nil
+	default: // empty mode: adopt a legacy token or generate a new one.
+		changed := false
 		if cfg.Remote.Token == "" {
 			cfg.Remote.Token = generateToken()
+			changed = true
+		}
+		if cfg.Remote.Mode != "token" {
 			cfg.Remote.Mode = "token"
-			path, perr := config.Path()
-			if perr == nil {
-				if serr := cfg.Save(path); serr != nil {
-					return "", fmt.Errorf("persist generated token: %w", serr)
-				}
+			changed = true
+		}
+		if changed {
+			path, err := config.Path()
+			if err != nil {
+				return "", fmt.Errorf("resolve config path for remote token: %w", err)
+			}
+			if err := cfg.Save(path); err != nil {
+				return "", fmt.Errorf("persist remote token mode: %w", err)
 			}
 		}
 		return "token", nil
@@ -180,49 +215,72 @@ func generateToken() string {
 }
 
 func runTunnel(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
+	fs := newFlagSet("tunnel", stderr)
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
+		hintf(stderr, "run `miodesk tunnel -h`")
+		return 2
+	}
+	if fs.NArg() == 0 {
 		errf(stderr, "missing subcommand")
 		hintf(stderr, "use: miodesk tunnel <list|doctor>")
 		return 2
 	}
-	switch args[0] {
+	if fs.NArg() > 1 {
+		errf(stderr, "unexpected positional arguments after tunnel subcommand")
+		hintf(stderr, "use: miodesk tunnel <list|doctor>")
+		return 2
+	}
+	switch fs.Arg(0) {
 	case "list":
-		for _, d := range tunnel.DetectAll() {
-			if d.Available {
-				okf(stdout, "%s", d.Name)
-			} else {
-				warnf(stdout, "%s: %s", d.Name, d.Reason)
-			}
-		}
-		infof(stdout, "use: miodesk connect --provider <name>")
+		okf(stdout, "default connection: OpenAI Secure MCP Tunnel")
+		infof(stdout, "the local MCP server stays on 127.0.0.1; tunnel-client opens outbound HTTPS to OpenAI")
+		infof(stdout, "custom endpoint: use `miodesk connect --provider custom --url https://…`")
 		return 0
 	case "doctor":
 		return tunnelDoctor(stdout, stderr)
 	default:
-		errf(stderr, "unknown tunnel subcommand %q", args[0])
+		errf(stderr, "unknown tunnel subcommand %q", fs.Arg(0))
 		hintf(stderr, "use: miodesk tunnel <list|doctor>")
 		return 2
 	}
 }
 
 func tunnelDoctor(stdout, stderr io.Writer) int {
-	code := 0
-	for _, d := range tunnel.DetectAll() {
-		switch {
-		case d.Available && (d.Name == "local" || d.Name == "custom"):
-			// Always available by design; not worth a line unless asked.
-		case d.Available:
-			okf(stdout, "%s: available", d.Name)
-		default:
-			warnf(stdout, "%s: %s", d.Name, d.Reason)
-			code = 0 // unavailability is a warning, not an error
-		}
-	}
 	cfg, _, ok := loadConfig(stderr)
 	if !ok {
 		return 1
 	}
-	infof(stdout, "configured provider: %s", cfg.Tunnel.Provider)
-	infof(stdout, "remote clients such as ChatGPT require HTTPS; local MCP clients need none")
-	return code
+	if cfg.Tunnel.Provider == "openai" {
+		if cfg.Tunnel.OpenAI.TunnelID == "" {
+			warnf(stdout, "OpenAI Secure MCP Tunnel is not configured")
+			hintf(stdout, "run `miodesk setup --tunnel-id tunnel_… --runtime-key-file <file>`")
+			return 0
+		}
+		settings, err := openAISettingsFromConfig(cfg, true)
+		if err != nil {
+			warnf(stdout, "%v", err)
+			return 0
+		}
+		if _, err := os.Stat(openAIProfilePath(settings)); err != nil {
+			warnf(stdout, "tunnel-client profile is missing: %s", openAIProfilePath(settings))
+			hintf(stdout, "run `miodesk setup --tunnel-id %s --runtime-key-file %s`", settings.TunnelID, settings.KeyFile)
+			return 0
+		}
+		okf(stdout, "OpenAI tunnel-client profile: %s", openAIProfilePath(settings))
+		infof(stdout, "tunnel id: %s", settings.TunnelID)
+		infof(stdout, "local MCP target: %s", openAILocalMCPURL(cfg.Server.Port))
+		infof(stdout, "run `tunnel-client doctor --profile %s --explain` for control-plane readiness", settings.Profile)
+		return 0
+	}
+	if cfg.Tunnel.Provider == "custom" {
+		infof(stdout, "custom endpoint mode: miodesk does not create or list a public endpoint")
+	} else if cfg.Tunnel.Provider == "local" {
+		infof(stdout, "local mode: no remote endpoint")
+	} else {
+		infof(stdout, "legacy connection mode preserved: %s", cfg.Tunnel.Provider)
+	}
+	infof(stdout, "remote clients require an HTTPS endpoint; local MCP clients need none")
+	return 0
 }

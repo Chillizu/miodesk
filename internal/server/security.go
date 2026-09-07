@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"miodesk/internal/logging"
+	"github.com/Chillizu/miodesk/internal/logging"
 )
 
 // AccessMode is miodesk's three-tier trust model. Local trusted usage stays

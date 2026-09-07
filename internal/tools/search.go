@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/workspace"
 )
 
 const (
@@ -173,10 +173,17 @@ func (b *searchOutputBuffer) Truncated() bool { return b.truncated }
 
 // splitRipgrepLine parses "file:line:text" from `rg --no-heading -n` output.
 func splitRipgrepLine(s string) (file string, line int, text string, ok bool) {
-	i := strings.Index(s, ":")
-	if i < 0 {
+	// On Windows an absolute path starts with a drive-letter colon. Skip that
+	// delimiter before looking for ripgrep's file:line:text separator.
+	start := 0
+	if len(s) >= 2 && isASCIIAlpha(s[0]) && s[1] == ':' {
+		start = 2
+	}
+	separator := strings.Index(s[start:], ":")
+	if separator < 0 {
 		return "", 0, "", false
 	}
+	i := start + separator
 	file, rest := s[:i], s[i+1:]
 	j := strings.Index(rest, ":")
 	if j < 0 {
@@ -190,6 +197,10 @@ func splitRipgrepLine(s string) (file string, line int, text string, ok bool) {
 		n = n*10 + int(r-'0')
 	}
 	return file, n, rest[j+1:], true
+}
+
+func isASCIIAlpha(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
 
 func searchBuiltin(ctx context.Context, ws *workspace.Workspace, path string, in SearchInput, limit int) (*SearchOutput, error) {

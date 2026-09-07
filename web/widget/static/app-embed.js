@@ -58,7 +58,7 @@ function startMCPAppsBridge() {
     method: "ui/initialize",
     params: {
       protocolVersion: MIODESK_MCP_APPS_VERSION,
-      appInfo: { name: "miodesk", version: "0.1.0" },
+      appInfo: { name: "miodesk", version: "0.2.0" },
       appCapabilities: { availableDisplayModes: ["inline"] },
     },
   }, "*");

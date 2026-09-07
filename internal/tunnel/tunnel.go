@@ -91,7 +91,7 @@ func Get(name string) (Provider, error) {
 	case "":
 		return nil, fmt.Errorf("no provider given")
 	default:
-		return nil, fmt.Errorf("unknown provider %q (known: %s)", name, strings.Join(Names(), ", "))
+		return nil, fmt.Errorf("unknown provider %q (use openai, local, or custom)", name)
 	}
 }
 
@@ -163,7 +163,7 @@ func (e *AutoDetectError) Error() string {
 }
 
 func (e *AutoDetectError) Hint() string {
-	return "install cloudflared for a zero-config quick tunnel, or expose your own endpoint: miodesk connect --provider custom --url https://example.com"
+	return "use the default OpenAI Secure MCP Tunnel, or expose your own endpoint: miodesk connect --provider custom --url https://example.com"
 }
 
 func unavailableError(name string, reason error, tried []Detection) error {
@@ -189,16 +189,10 @@ func (e *ProviderUnavailableError) Hint() string {
 // suggestAlternatives names other usable tunnel providers, or the custom
 // escape hatch (which needs a URL, so it is phrased accordingly).
 func suggestAlternatives(name string) string {
-	var alts []string
-	for _, p := range DetectAll() {
-		if p.Available && p.Name != name && p.Name != "local" && p.Name != "custom" {
-			alts = append(alts, p.Name)
-		}
+	if name == "openai" {
+		return "install tunnel-client, then run `miodesk setup`"
 	}
-	if len(alts) > 0 {
-		return "install it, or use an available provider: miodesk connect --provider " + alts[0]
-	}
-	return "install it, or expose your own endpoint: miodesk connect --provider custom --url https://example.com"
+	return "use the default OpenAI Secure MCP Tunnel, or expose your own endpoint: miodesk connect --provider custom --url https://example.com"
 }
 
 // local + custom ------------------------------------------------------------
@@ -227,10 +221,21 @@ func (Custom) Start(ctx context.Context, opts Options) (Endpoint, error) {
 		return Endpoint{}, fmt.Errorf("custom provider needs a URL")
 	}
 	u, err := url.Parse(opts.CustomURL)
-	if err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" {
-		return Endpoint{}, fmt.Errorf("custom URL %q is not a valid http(s) endpoint", opts.CustomURL)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return Endpoint{}, fmt.Errorf("custom URL %q is not a valid HTTPS endpoint", opts.CustomURL)
+	}
+	if !strings.EqualFold(u.Scheme, "https") && !(strings.EqualFold(u.Scheme, "http") && isLoopbackHost(u.Hostname())) {
+		return Endpoint{}, fmt.Errorf("custom URL %q must use HTTPS (HTTP is allowed only for loopback development endpoints)", opts.CustomURL)
 	}
 	return Endpoint{Provider: "custom", URL: strings.TrimRight(u.String(), "/")}, nil
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // plumbing ------------------------------------------------------------------

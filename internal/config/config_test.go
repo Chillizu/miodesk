@@ -11,14 +11,17 @@ import (
 func TestDefault(t *testing.T) {
 	t.Setenv("HOME", "/home/u")
 	cfg := Default()
-	if cfg.Server.Host != "127.0.0.1" || cfg.Server.Port != 0 {
+	if cfg.Server.Host != "127.0.0.1" || cfg.Server.Port != DefaultPort {
 		t.Errorf("server defaults = %+v", cfg.Server)
 	}
 	if cfg.Workspace.Root != "/home/u" {
 		t.Errorf("workspace root = %q, want /home/u", cfg.Workspace.Root)
 	}
-	if cfg.Tunnel.Provider != "auto" {
+	if cfg.Tunnel.Provider != "openai" {
 		t.Errorf("tunnel provider = %q", cfg.Tunnel.Provider)
+	}
+	if cfg.Tunnel.OpenAI.Profile != DefaultOpenAIProfile {
+		t.Errorf("OpenAI profile = %q", cfg.Tunnel.OpenAI.Profile)
 	}
 	if cfg.Widget.Theme != "auto" {
 		t.Errorf("widget theme = %q", cfg.Widget.Theme)
@@ -95,8 +98,8 @@ func TestLoadMissingFile(t *testing.T) {
 	if err != nil || existed {
 		t.Fatalf("LoadOrDefault on missing file: existed=%v err=%v", existed, err)
 	}
-	if cfg.Server.Port != 0 {
-		t.Errorf("port = %d, want default 0", cfg.Server.Port)
+	if cfg.Server.Port != DefaultPort {
+		t.Errorf("port = %d, want default %d", cfg.Server.Port, DefaultPort)
 	}
 }
 

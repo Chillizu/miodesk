@@ -115,6 +115,11 @@ func (w *Workspace) contains(resolved string) bool {
 func resolveExisting(p string) (string, error) {
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		return r, nil
+	} else if !os.IsNotExist(err) {
+		// Only a missing path may be reconstructed from its resolved parent.
+		// Treat permission, loop, and other filesystem errors as failures instead
+		// of accidentally treating an existing symlink as a lexical path.
+		return "", err
 	}
 	parent := filepath.Clean(filepath.Dir(p))
 	if parent == p {

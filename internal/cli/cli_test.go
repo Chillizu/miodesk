@@ -9,13 +9,15 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"miodesk/internal/config"
+	"github.com/Chillizu/miodesk/internal/config"
+	"github.com/Chillizu/miodesk/internal/xdg"
 )
 
 // isolatedEnv points every XDG directory at per-test temp dirs so tests never
@@ -82,6 +84,169 @@ func TestInitThenDoctor(t *testing.T) {
 	}
 }
 
+func TestSetupDefaultsToCurrentDirectoryAndOpenAI(t *testing.T) {
+	isolatedEnv(t)
+	ws := t.TempDir()
+	t.Chdir(ws)
+
+	code, out, errOut := run(t, "setup")
+	if code != 0 {
+		t.Fatalf("setup exit = %d\nstdout:\n%s\nstderr:\n%s", code, out, errOut)
+	}
+	cfgPath, err := config.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Workspace.Root != ws {
+		t.Errorf("workspace = %q, want %q", cfg.Workspace.Root, ws)
+	}
+	if cfg.Server.Port != config.DefaultPort {
+		t.Errorf("port = %d, want %d", cfg.Server.Port, config.DefaultPort)
+	}
+	if cfg.Tunnel.Provider != "openai" || cfg.Tunnel.OpenAI.Profile != config.DefaultOpenAIProfile {
+		t.Errorf("OpenAI defaults = %+v", cfg.Tunnel.OpenAI)
+	}
+	if !strings.Contains(out, "OpenAI Secure MCP Tunnel is the default") {
+		t.Errorf("setup should explain the default connection:\n%s", out)
+	}
+}
+
+func TestSetupHelpIsUsable(t *testing.T) {
+	isolatedEnv(t)
+	code, _, errOut := run(t, "setup", "-h")
+	if code != 0 {
+		t.Fatalf("setup help exit = %d\nstderr:\n%s", code, errOut)
+	}
+	for _, want := range []string{"Usage: miodesk setup", "-workspace", "-tunnel-id", "-runtime-key-file"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("setup help missing %q:\n%s", want, errOut)
+		}
+	}
+}
+
+func TestInteractiveSetupCollectsValues(t *testing.T) {
+	isolatedEnv(t)
+	workspaceRoot := t.TempDir()
+	key := filepath.Join(t.TempDir(), "runtime-key")
+	cfg := config.Default()
+	cfg.Workspace.Root = workspaceRoot
+	input := strings.NewReader("\n9900\ny\ntunnel_0123456789abcdef0123456789abcdef\n" + key + "\n")
+	var output bytes.Buffer
+
+	choices, err := interactiveSetup(input, &output, cfg, workspaceRoot, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if choices.Workspace != workspaceRoot || choices.Port != 9900 || !choices.ConfigureOpenAI {
+		t.Errorf("choices = %+v", choices)
+	}
+	if choices.TunnelID == "" || choices.RuntimeKeyFile != key || choices.Force {
+		t.Errorf("OpenAI choices = %+v", choices)
+	}
+	for _, want := range []string{"Workspace root", "Local MCP port", "Configure OpenAI Secure MCP Tunnel now"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("interactive output missing %q:\n%s", want, output.String())
+		}
+	}
+}
+
+func TestInteractiveSetupFreshDoesNotAskForWorkspaceConfirmation(t *testing.T) {
+	isolatedEnv(t)
+	workspaceRoot := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace.Root = filepath.Join(t.TempDir(), "old-workspace")
+	input := strings.NewReader(workspaceRoot + "\n8787\nn\n")
+	var output bytes.Buffer
+
+	choices, err := interactiveSetup(input, &output, cfg, workspaceRoot, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if choices.Workspace != workspaceRoot || choices.Port != 8787 || choices.ConfigureOpenAI || choices.Force {
+		t.Errorf("fresh choices = %+v", choices)
+	}
+	if strings.Contains(output.String(), "Change the existing workspace root") {
+		t.Errorf("fresh setup should not ask for existing-root confirmation:\n%s", output.String())
+	}
+}
+
+func TestSetupGeneratesOpenAIProfileWithoutPrintingKey(t *testing.T) {
+	isolatedEnv(t)
+	ws := t.TempDir()
+	legacy := config.Default()
+	legacy.Workspace.Root = ws
+	legacy.Remote.Mode = "token"
+	legacy.Remote.Token = "legacy-token-that-must-not-survive-openai-setup"
+	configPath, err := config.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Save(configPath); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(t.TempDir(), "runtime-key")
+	if err := os.WriteFile(key, []byte("secret-runtime-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profileDir := filepath.Join(t.TempDir(), "tunnel-client")
+	stub := filepath.Join(t.TempDir(), "tunnel-client")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nmkdir -p \"$MIODESK_TEST_PROFILE_DIR\"\nprintf '%s\\n' stub > \"$MIODESK_TEST_PROFILE_DIR/miodesk.yaml\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MIODESK_TEST_PROFILE_DIR", profileDir)
+
+	code, out, errOut := run(t, "setup", "--workspace", ws,
+		"--tunnel-id", "tunnel_0123456789abcdef0123456789abcdef",
+		"--runtime-key-file", key,
+		"--profile-dir", profileDir,
+		"--tunnel-client", stub)
+	if code != 0 {
+		t.Fatalf("setup with OpenAI profile exit = %d\nstdout:\n%s\nstderr:\n%s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(profileDir, "miodesk.yaml")); err != nil {
+		t.Fatalf("profile not generated: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		profileInfo, err := os.Stat(filepath.Join(profileDir, "miodesk.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := profileInfo.Mode().Perm(); got != 0o600 {
+			t.Errorf("profile mode = %o, want 600", got)
+		}
+	}
+	if strings.Contains(out+errOut, "secret-runtime-key") {
+		t.Error("setup output must not contain the runtime key")
+	}
+	cfgPath, _ := config.Path()
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tunnel.OpenAI.TunnelID == "" || cfg.Tunnel.OpenAI.RuntimeKeyFile != key {
+		t.Errorf("saved OpenAI config = %+v", cfg.Tunnel.OpenAI)
+	}
+	if cfg.Remote.Mode != "" || cfg.Remote.Token != "" {
+		t.Errorf("legacy remote credentials must be cleared for OpenAI setup: %+v", cfg.Remote)
+	}
+}
+
+func TestSetupRejectsInsecureRuntimeKey(t *testing.T) {
+	isolatedEnv(t)
+	key := filepath.Join(t.TempDir(), "runtime-key")
+	if err := os.WriteFile(key, []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := run(t, "setup", "--tunnel-id", "tunnel_0123456789abcdef0123456789abcdef", "--runtime-key-file", key)
+	if code != 1 || !strings.Contains(errOut, "group/world accessible") {
+		t.Errorf("insecure key: exit=%d stderr:\n%s", code, errOut)
+	}
+}
+
 func TestInitWorkspaceOverrideRequiresForce(t *testing.T) {
 	isolatedEnv(t)
 	run(t, "init")
@@ -107,11 +272,76 @@ func TestDoctorJSON(t *testing.T) {
 	}
 }
 
+func TestDoctorValidatesConfigSemantics(t *testing.T) {
+	isolatedEnv(t)
+	run(t, "init")
+	setRemote(t, "not-a-mode", "")
+	code, out, _ := run(t, "doctor")
+	if code != 1 || !strings.Contains(out, "[ERROR] config") || !strings.Contains(out, "remote.mode") {
+		t.Errorf("doctor should reject invalid semantic config: exit=%d output=%q", code, out)
+	}
+}
+
 func TestUnknownCommand(t *testing.T) {
 	isolatedEnv(t)
 	code, _, errOut := run(t, "frobnicate")
 	if code != 2 || !strings.Contains(errOut, "unknown command") || !strings.Contains(errOut, "miodesk help") {
 		t.Errorf("unknown command: exit=%d stderr:\n%s", code, errOut)
+	}
+}
+
+func TestCommandsRejectUnexpectedPositionalArgs(t *testing.T) {
+	isolatedEnv(t)
+	cases := [][]string{
+		{"version", "extra"},
+		{"setup", "extra"},
+		{"init", "extra"},
+		{"serve", "extra"},
+		{"doctor", "extra"},
+		{"status", "extra"},
+		{"connect", "extra"},
+		{"tunnel", "list", "extra"},
+		{"service", "status", "extra"},
+		{"config", "extra"},
+		{"workspace", "extra"},
+		{"update", "extra"},
+		{"logs", "extra"},
+	}
+	for _, args := range cases {
+		code, _, errOut := run(t, args...)
+		if code != 2 || !strings.Contains(errOut, "unexpected positional argument") {
+			t.Errorf("args=%v: exit=%d stderr=%q", args, code, errOut)
+		}
+	}
+}
+
+func TestConnectRejectsIncompatibleFlags(t *testing.T) {
+	isolatedEnv(t)
+	if code, _, errOut := run(t, "connect", "--url", "https://example.com"); code != 2 || !strings.Contains(errOut, "only valid") {
+		t.Errorf("OpenAI --url: exit=%d stderr=%q", code, errOut)
+	}
+	if code, _, errOut := run(t, "connect", "--provider", "custom"); code != 2 || !strings.Contains(errOut, "requires --url") {
+		t.Errorf("custom without --url: exit=%d stderr=%q", code, errOut)
+	}
+	if code, _, errOut := run(t, "connect", "--unsafe-remote"); code != 2 || !strings.Contains(errOut, "not used") {
+		t.Errorf("OpenAI --unsafe-remote: exit=%d stderr=%q", code, errOut)
+	}
+}
+
+func TestRedactingWriterHandlesSplitSecret(t *testing.T) {
+	var out bytes.Buffer
+	r := &redactingWriter{w: &out, secret: "secret-token"}
+	if _, err := r.Write([]byte("before secret-")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Write([]byte("token after")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "secret-token") || !strings.Contains(out.String(), "[redacted]") {
+		t.Errorf("redacted output = %q", out.String())
 	}
 }
 
@@ -174,6 +404,29 @@ func TestStatusWithoutServer(t *testing.T) {
 	}
 }
 
+func TestStatusJSONRemovesStaleState(t *testing.T) {
+	isolatedEnv(t)
+	dir, err := xdg.StateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "server.json")
+	if err := os.WriteFile(path, []byte(`{"pid":1,"port":1,"url":"http://127.0.0.1:1","started_at":"old"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, _ := run(t, "status", "--json")
+	if code != 0 || !strings.Contains(out, `"running":false`) {
+		t.Errorf("stale status: exit=%d output=%q", code, out)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("stale state should be removed, stat error=%v", err)
+	}
+}
+
 func TestNormalizeJournalTime(t *testing.T) {
 	for input, want := range map[string]string{
 		"10m":   "10 minutes ago",
@@ -195,7 +448,7 @@ func buildBinary(t *testing.T) string {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(t.TempDir(), "miodesk")
-	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", bin, "miodesk/cmd/miodesk")
+	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", bin, "github.com/Chillizu/miodesk/cmd/miodesk")
 	cmd.Dir = root
 	cmd.Env = buildEnv(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -236,6 +489,9 @@ func TestBinaryServeStdio(t *testing.T) {
 	if code, out, _ := run(t, "init", "--workspace", ws); code != 0 {
 		t.Fatalf("init:\n%s", out)
 	}
+	// A network bind setting must not affect the stdio transport: no TCP
+	// listener is created in this mode.
+	setServerHost(t, "0.0.0.0")
 	hello := filepath.Join(ws, "hello.txt")
 	if err := os.WriteFile(hello, []byte("from the binary\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -380,6 +636,24 @@ func TestResolveRemoteAuth(t *testing.T) {
 	data, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(data), cfg.Remote.Token) {
 		t.Error("generated token should be persisted to the config")
+	}
+
+	// A legacy config may already have a token while its mode is empty. Adopt
+	// token mode before starting a public entrance; otherwise the server would
+	// accidentally run local/no-auth despite having credentials on disk.
+	legacy := config.Default()
+	legacy.Remote.Token = "legacy-token-that-must-become-token-mode"
+	mode, err = resolveRemoteAuth(legacy, false)
+	if err != nil || mode != "token" || legacy.Remote.Mode != "token" {
+		t.Fatalf("legacy token mode: %q %+v %v", mode, legacy.Remote, err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read persisted legacy token config: %v", err)
+	}
+	persisted, err := config.Load(path)
+	if err != nil || persisted.Remote.Mode != "token" || persisted.Remote.Token != legacy.Remote.Token {
+		t.Errorf("legacy token mode should be persisted to the config: err=%v data=%q", err, data)
 	}
 
 	// Explicit unsafe wins.

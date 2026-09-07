@@ -27,7 +27,12 @@ func (t *Tailscale) Available() error {
 	}
 	// `funnel status` fails when tailscaled is not running or the version
 	// predates funnel support; either way this provider is unusable now.
-	if err := exec.Command("tailscale", "funnel", "status").Run(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "tailscale", "funnel", "status").Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("tailscale funnel status timed out")
+		}
 		return fmt.Errorf("funnel not available on this tailnet (needs HTTPS enabled and tailscale >= 1.52)")
 	}
 	return nil
@@ -41,6 +46,7 @@ func (t *Tailscale) Start(ctx context.Context, opts Options) (Endpoint, error) {
 
 	// --bg lets tailscaled own the funnel; miodesk tears it down in Stop.
 	config := exec.CommandContext(ctx, "tailscale", "funnel", "--bg", "http://127.0.0.1:"+port)
+	configureProcess(config)
 	var cfgErr bytes.Buffer
 	config.Stderr = &cfgErr
 	if err := config.Run(); err != nil {
@@ -53,13 +59,17 @@ func (t *Tailscale) Start(ctx context.Context, opts Options) (Endpoint, error) {
 
 	deadline := time.After(time.Duration(Timeout(opts.TimeoutSeconds)) * time.Second)
 	tick := time.NewTicker(400 * time.Millisecond)
+	defer tick.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			t.Stop()
+			return Endpoint{}, ctx.Err()
 		case <-deadline:
 			t.Stop()
 			return Endpoint{}, fmt.Errorf("tailscale funnel status did not show a URL within %ds", Timeout(opts.TimeoutSeconds))
 		case <-tick.C:
-			out, err := exec.Command("tailscale", "funnel", "status").Output()
+			out, err := exec.CommandContext(ctx, "tailscale", "funnel", "status").Output()
 			if err != nil {
 				continue
 			}
@@ -80,7 +90,9 @@ func (t *Tailscale) Stop() error {
 	if port == "" {
 		return nil
 	}
-	if err := exec.Command("tailscale", "funnel", "http://127.0.0.1:"+port, "off").Run(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "tailscale", "funnel", "http://127.0.0.1:"+port, "off").Run(); err != nil {
 		return fmt.Errorf("could not disable the funnel: run `tailscale funnel reset` manually")
 	}
 	t.mu.Lock()

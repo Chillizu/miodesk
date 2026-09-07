@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"miodesk/internal/cli"
+	"github.com/Chillizu/miodesk/internal/cli"
 )
 
 func main() {

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/workspace"
 )
 
 const (

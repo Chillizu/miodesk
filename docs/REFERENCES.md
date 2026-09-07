@@ -47,6 +47,11 @@ Format: topic → URL → version → used by → decision → checked.
   documented connector authentication choice.
 - Checked: 2026-09-07
 
+Public onboarding intentionally exposes OpenAI Secure MCP Tunnel as the
+default connection. The legacy provider implementations listed below remain
+for compatibility and tests; they are not enumerated by the primary setup
+flow.
+
 ## XDG Base Directory Specification
 
 - URL: https://specifications.freedesktop.org/basedir-spec/latest/
@@ -86,7 +91,13 @@ Format: topic → URL → version → used by → decision → checked.
   specifiers (%h etc.) are ever added.
 - Checked: 2026-09-06 (live install/status/uninstall on linux)
 
-## Cloudflare Tunnel (quick tunnel)
+## Legacy public tunnel adapters
+
+The following implementation references are retained for compatibility with
+older configurations and tests. They are not part of the public default setup
+or the primary CLI's connection discovery.
+
+### Cloudflare Tunnel (quick tunnel)
 
 - URL: https://developers.cloudflare.com/tunnel/setup/index.md (found via https://developers.cloudflare.com/tunnel/llms.txt)
 - Version: current docs, checked 2026-09-06
@@ -94,7 +105,7 @@ Format: topic → URL → version → used by → decision → checked.
 - Decision: quick tunnel = `cloudflared tunnel --url http://localhost:<port>` — no account, prints a random `https://<rand>.trycloudflare.com` URL which miodesk parses from output. Documented limits: 200 concurrent requests, no SSE. Named tunnels are out of scope for v1.
 - Checked: 2026-09-06
 
-## ngrok agent
+### ngrok agent
 
 - URLs: https://ngrok.com/docs/share-localhost/quickstart.md , https://ngrok.com/docs/gateway/agent/config/v3/ (found via https://ngrok.com/docs/llms.txt)
 - Version: current docs, checked 2026-09-06
@@ -102,7 +113,7 @@ Format: topic → URL → version → used by → decision → checked.
 - Decision: `ngrok http <port>` requires an authtoken (`ngrok config check` is the availability probe). Public URL comes from the local web interface/API: `web_addr` is documented as "Network address to bind on for serving the local web interface and api" (default 127.0.0.1:4040) — miodesk binds it to a private port via CLI flags mirroring the documented config keys (`--log stdout --log-format=json --web-addr 127.0.0.1:<free>`) and polls `<web_addr>/api/tunnels` for `public_url`.
 - Checked: 2026-09-06
 
-## Tailscale Funnel
+### Tailscale Funnel
 
 - URL: https://tailscale.com/docs/reference/tailscale-cli/funnel (found via https://tailscale.com/docs/features/tailscale-funnel)
 - Version: CLI syntax ≥1.52, checked 2026-09-07
@@ -157,10 +168,10 @@ Format: topic → URL → version → used by → decision → checked.
   SHOULD implement authentication. miodesk's model: local (loopback, no
   token) / token (bearer, constant-time compare, token never printed) /
   unsafe (explicit opt-in via `--unsafe-remote` or remote.mode="unsafe",
-  Origin checks disabled and documented as part of the risk). Token mode is
-  the connect default with an auto-generated 256-bit token. The MCP SDK owns
-  Streamable HTTP negotiation; raw transport behavior is tested with current
-  protocol headers.
+  Origin checks disabled and documented as part of the risk). OpenAI Secure
+  MCP Tunnel is the default remote path; token mode is retained for custom or
+  legacy public ingress. The MCP SDK owns Streamable HTTP negotiation; raw
+  transport behavior is tested with current protocol headers.
 - Checked: 2026-09-07
 
 ## ChatGPT connector authentication options

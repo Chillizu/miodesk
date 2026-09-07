@@ -23,8 +23,10 @@ func TestNewer(t *testing.T) {
 		{"1.0", "0.9.9", true},
 		{"v0.3.0", "0.2.5", true},
 		{"0.2.0-rc1", "0.1.9", true},  // suffix ignored, 0.2.0 > 0.1.9
-		{"0.2.0-rc1", "0.2.0", false}, // equal base → not newer
-		{"banana", "0.1.0", false},    // unparseable → never newer
+		{"0.2.0", "0.2.0-dev", true},  // release is newer than same-base dev build
+		{"0.2.0-rc1", "0.2.0", false}, // a pre-release is not newer than release
+		{"0.2.0+build1", "0.2.0", false},
+		{"banana", "0.1.0", false}, // unparseable → never newer
 		{"0.1.0", "banana", false},
 		{"", "0.1.0", false},
 	}
@@ -93,13 +95,33 @@ func TestReplaceBinaryChecksumMismatch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := replaceBinary(target, srv.URL, "deadbeef")
+	_, err := replaceBinary(target, srv.URL, strings.Repeat("0", 64))
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("error = %v, want checksum mismatch", err)
 	}
 	got, _ := os.ReadFile(target)
 	if string(got) != "OLD" {
 		t.Errorf("target must be untouched on mismatch, got %q", got)
+	}
+}
+
+func TestReplaceBinaryRequiresChecksum(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "miodesk")
+	if err := os.WriteFile(target, []byte("OLD"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("NEW"))
+	}))
+	defer srv.Close()
+
+	if _, err := replaceBinary(target, srv.URL, ""); err == nil || !strings.Contains(err.Error(), "64-character") {
+		t.Fatalf("missing checksum error = %v", err)
+	}
+	got, _ := os.ReadFile(target)
+	if string(got) != "OLD" {
+		t.Errorf("target must be untouched when checksum is missing, got %q", got)
 	}
 }
 
@@ -142,6 +164,52 @@ func TestUpdateMissingPlatformAsset(t *testing.T) {
 		t.Fatal("missing platform asset must error")
 	} else if !strings.Contains(err.Error(), "no asset for") {
 		t.Errorf("error = %v", err)
+	}
+}
+
+func TestUpdateRequiresChecksum(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m := Manifest{Version: "9.9.9", Assets: map[string]Asset{
+			Platform(): {URL: "http://127.0.0.1:1/miodesk"},
+		}}
+		json.NewEncoder(w).Encode(m)
+	}))
+	defer srv.Close()
+
+	if _, err := Update("0.1.0", srv.URL); err == nil || !strings.Contains(err.Error(), "64-character") {
+		t.Fatalf("missing asset checksum error = %v", err)
+	}
+}
+
+func TestFetchRejectsOversizedManifest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", maxManifestBytes+1)))
+	}))
+	defer srv.Close()
+
+	if _, err := Fetch(srv.URL); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized manifest error = %v", err)
+	}
+}
+
+func TestReplaceBinaryRejectsOversizedDownload(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "miodesk")
+	if err := os.WriteFile(target, []byte("OLD"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "67108865")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if _, err := replaceBinary(target, srv.URL, strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized download error = %v", err)
+	}
+	got, _ := os.ReadFile(target)
+	if string(got) != "OLD" {
+		t.Errorf("target must be untouched for oversized download, got %q", got)
 	}
 }
 

@@ -1,30 +1,32 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"miodesk/internal/buildinfo"
-	"miodesk/internal/config"
-	"miodesk/internal/doctor"
-	"miodesk/internal/logging"
-	"miodesk/internal/server"
-	"miodesk/internal/service"
-	"miodesk/internal/update"
-	"miodesk/internal/workspace"
-	"miodesk/internal/xdg"
+	"github.com/Chillizu/miodesk/internal/buildinfo"
+	"github.com/Chillizu/miodesk/internal/config"
+	"github.com/Chillizu/miodesk/internal/doctor"
+	"github.com/Chillizu/miodesk/internal/logging"
+	"github.com/Chillizu/miodesk/internal/server"
+	"github.com/Chillizu/miodesk/internal/service"
+	"github.com/Chillizu/miodesk/internal/update"
+	"github.com/Chillizu/miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/xdg"
 )
 
 // isLoopback reports whether a bind host keeps the server local.
@@ -43,8 +45,18 @@ func validateBindSecurity(cfg *config.Config) error {
 	return fmt.Errorf("refusing to serve on %q without authentication", cfg.Server.Host)
 }
 
-func runVersion(w io.Writer) int {
-	fmt.Fprintf(w, "miodesk %s\ncommit: %s\nbuilt: %s\nplatform: %s\n",
+func runVersion(args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("version", stderr)
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
+		hintf(stderr, "run `miodesk version -h`")
+		return 2
+	}
+	if !requireNoPositional(fs, stderr) {
+		return 2
+	}
+	fmt.Fprintf(stdout, "miodesk %s\ncommit: %s\nbuilt: %s\nplatform: %s\n",
 		buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate, buildinfo.Platform())
 	return 0
 }
@@ -53,8 +65,13 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("init", stderr)
 	wsFlag := fs.String("workspace", "", "workspace root to record in the config")
 	force := fs.Bool("force", false, "with --workspace, update an existing config")
-	if err := fs.Parse(args); err != nil {
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
 		hintf(stderr, "run `miodesk init -h`")
+		return 2
+	}
+	if !requireNoPositional(fs, stderr) {
 		return 2
 	}
 
@@ -70,16 +87,13 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	created := !existed
+	updated := false
 	switch {
-	case !existed:
+	case created:
 		if *wsFlag != "" {
 			cfg.Workspace.Root = *wsFlag
 		}
-		if err := cfg.Save(path); err != nil {
-			errf(stderr, "write config: %v", err)
-			return 1
-		}
-		okf(stdout, "configuration created: %s", path)
 	case *wsFlag != "" && cfg.Workspace.Root != *wsFlag:
 		if !*force {
 			warnf(stdout, "configuration already exists: %s", path)
@@ -87,13 +101,7 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		cfg.Workspace.Root = *wsFlag
-		if err := cfg.Save(path); err != nil {
-			errf(stderr, "write config: %v", err)
-			return 1
-		}
-		okf(stdout, "configuration updated: %s", path)
-	default:
-		okf(stdout, "configuration already exists: %s", path)
+		updated = true
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -101,13 +109,31 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		hintf(stderr, "fix the values in %s", path)
 		return 1
 	}
+	if created || updated {
+		if err := cfg.Save(path); err != nil {
+			errf(stderr, "write config: %v", err)
+			return 1
+		}
+		if created {
+			okf(stdout, "configuration created: %s", path)
+		} else {
+			okf(stdout, "configuration updated: %s", path)
+		}
+	} else {
+		okf(stdout, "configuration already exists: %s", path)
+	}
 	if _, err := workspace.New(cfg.Workspace.Root); err != nil {
 		warnf(stdout, "workspace: %v", err)
 		hintf(stdout, "create the directory before running `miodesk serve`")
 	} else {
 		okf(stdout, "workspace: %s", cfg.Workspace.Root)
 	}
-	infof(stdout, "port %d (0 = random free port on each start)", cfg.Server.Port)
+	infof(stdout, "local MCP port %d (use --port 0 only for an ephemeral local test)", cfg.Server.Port)
+	if cfg.Tunnel.Provider == "openai" {
+		infof(stdout, "connection: OpenAI Secure MCP Tunnel")
+	} else {
+		infof(stdout, "connection mode preserved: %s", cfg.Tunnel.Provider)
+	}
 	okf(stdout, "platform: %s", buildinfo.Platform())
 
 	fmt.Fprintln(stdout, "\nNext:\n\n  miodesk serve\n  miodesk doctor")
@@ -116,12 +142,23 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 
 func runServe(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("serve", stderr)
-	portFlag := fs.Int("port", -1, "listen port (default: from config, 0 = random)")
+	portFlag := fs.Int("port", 0, "listen port (default: from config, 0 = random)")
 	hostFlag := fs.String("host", "", "listen host (default: from config)")
 	wsFlag := fs.String("workspace", "", "workspace root override")
 	stdioFlag := fs.Bool("stdio", false, "serve MCP over stdin/stdout for local clients")
-	if err := fs.Parse(args); err != nil {
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
 		hintf(stderr, "run `miodesk serve -h`")
+		return 2
+	}
+	if !requireNoPositional(fs, stderr) {
+		return 2
+	}
+	portSet := flagWasSet(fs, "port")
+	if *stdioFlag && (portSet || *hostFlag != "") {
+		errf(stderr, "--stdio cannot be combined with --port or --host")
+		hintf(stderr, "use `miodesk serve --stdio --workspace …` for a local stdio server")
 		return 2
 	}
 
@@ -129,7 +166,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 1
 	}
-	if *portFlag >= 0 {
+	if portSet {
 		cfg.Server.Port = *portFlag
 	}
 	if *hostFlag != "" {
@@ -143,10 +180,14 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	configureLogging(cfg, stderr)
-	if err := validateBindSecurity(cfg); err != nil {
-		errf(stderr, "%v", err)
-		hintf(stderr, "bind 127.0.0.1, or set remote.mode = \"token\" with remote.token in the config")
-		return 1
+	// Stdio has no network listener, so a configured non-loopback host is
+	// irrelevant to this transport. Keep the network bind guard for HTTP only.
+	if !*stdioFlag {
+		if err := validateBindSecurity(cfg); err != nil {
+			errf(stderr, "%v", err)
+			hintf(stderr, "bind 127.0.0.1, or set remote.mode = \"token\" with remote.token in the config")
+			return 1
+		}
 	}
 	ws, err := workspace.New(cfg.Workspace.Root)
 	if err != nil {
@@ -203,8 +244,13 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 func runDoctor(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("doctor", stderr)
 	jsonFlag := fs.Bool("json", false, "print machine-readable JSON")
-	if err := fs.Parse(args); err != nil {
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
 		hintf(stderr, "run `miodesk doctor -h`")
+		return 2
+	}
+	if !requireNoPositional(fs, stderr) {
 		return 2
 	}
 
@@ -268,8 +314,13 @@ type serverState struct {
 func runStatus(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("status", stderr)
 	jsonFlag := fs.Bool("json", false, "print machine-readable JSON")
-	if err := fs.Parse(args); err != nil {
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
 		hintf(stderr, "run `miodesk status -h`")
+		return 2
+	}
+	if !requireNoPositional(fs, stderr) {
 		return 2
 	}
 	dir, err := xdg.StateDir()
@@ -294,25 +345,26 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 	}
 	var st serverState
 	if err := json.Unmarshal(data, &st); err != nil {
+		removeStateIfMatches(path, data)
+		if *jsonFlag {
+			_ = json.NewEncoder(stdout).Encode(map[string]any{"running": false})
+			return 0
+		}
 		warnf(stdout, "unreadable server state at %s", path)
-		_ = os.Remove(path)
 		hintf(stdout, "start a fresh server: miodesk serve")
 		return 0
 	}
 
-	// On Windows, Signal(0) is unsupported; liveness checking there waits
-	// for the milestone-3 service work.
-	alive := true
-	if runtime.GOOS != "windows" {
-		if p, perr := os.FindProcess(st.PID); perr != nil {
-			alive = false
-		} else if serr := p.Signal(syscall.Signal(0)); serr != nil {
-			alive = false
-		}
-	}
+	// The state file's PID can be reused by an unrelated process (and is not
+	// probeable on Windows). The local health endpoint is the authoritative
+	// liveness check for the recorded server.
+	alive := st.PID > 0 && serverHealth(st.URL)
 	remote := "local"
 	if cfg, _, ok := loadConfig(stderr); ok && cfg.Remote.Mode != "" {
 		remote = cfg.Remote.Mode
+	}
+	if !alive {
+		removeStateIfMatches(path, data)
 	}
 	if *jsonFlag {
 		_ = json.NewEncoder(stdout).Encode(map[string]any{
@@ -329,27 +381,69 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 		okf(stdout, "server running (pid %d): %s", st.PID, st.URL)
 		infof(stdout, "remote access: %s", remote)
 	} else {
-		warnf(stdout, "stale state: process %d is gone", st.PID)
-		_ = os.Remove(path)
+		warnf(stdout, "stale or unreachable state: server at %s is not responding", st.URL)
 		hintf(stdout, "start a fresh server: miodesk serve")
 	}
 	return 0
 }
 
+func removeStateIfMatches(path string, expected []byte) {
+	current, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(current, expected) {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+func serverHealth(baseURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || u.Scheme != "http" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !isLoopback(u.Hostname()) {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(u.String(), "/")+"/healthz", nil)
+	if err != nil {
+		return false
+	}
+	client := &http.Client{
+		Timeout: time.Second,
+		Transport: &http.Transport{
+			Proxy: nil,
+		},
+		// The state file is local metadata; a health probe must never follow a
+		// redirect to another host or leak into a proxy-visible request.
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
 func runService(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("service", stderr)
-	if err := fs.Parse(args); err != nil {
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
 		hintf(stderr, "run `miodesk service -h`")
 		return 2
-	}
-	if !service.Supported() {
-		errf(stderr, "the systemd user service is only available on Linux (this is %s)", buildinfo.Platform())
-		return 1
 	}
 	if fs.NArg() == 0 {
 		errf(stderr, "missing verb")
 		hintf(stderr, "use: miodesk service <install|start|stop|restart|status|uninstall>")
 		return 2
+	}
+	if fs.NArg() > 1 {
+		errf(stderr, "unexpected positional arguments after service verb")
+		hintf(stderr, "use: miodesk service <install|start|stop|restart|status|uninstall>")
+		return 2
+	}
+	if !service.Supported() {
+		errf(stderr, "the systemd user service is only available on Linux (this is %s)", buildinfo.Platform())
+		return 1
 	}
 	verb := fs.Arg(0)
 	switch verb {
@@ -404,8 +498,13 @@ func runUpdate(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("update", stderr)
 	from := fs.String("from", "", "release manifest URL (JSON: {version, assets: {\"os/arch\": {url, sha256}}})")
 	checkOnly := fs.Bool("check", false, "report the available version without replacing anything")
-	if err := fs.Parse(args); err != nil {
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
 		hintf(stderr, "run `miodesk update -h`")
+		return 2
+	}
+	if !requireNoPositional(fs, stderr) {
 		return 2
 	}
 	if *from == "" {
@@ -454,8 +553,18 @@ func runLogs(args []string, stdout, stderr io.Writer) int {
 	since := fs.String("since", "", "journal start time, e.g. 10m or today")
 	until := fs.String("until", "", "journal end time")
 	grep := fs.String("grep", "", "journal message pattern to filter")
-	if err := fs.Parse(args); err != nil {
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
 		hintf(stderr, "run `miodesk logs -h`")
+		return 2
+	}
+	if !requireNoPositional(fs, stderr) {
+		return 2
+	}
+	if *n < 0 {
+		errf(stderr, "logs line count must not be negative")
+		hintf(stderr, "use `miodesk logs -n 0` for no historical lines")
 		return 2
 	}
 	if !service.Supported() || !service.Installed() {
@@ -482,19 +591,46 @@ func runLogs(args []string, stdout, stderr io.Writer) int {
 	if *follow {
 		journalArgs = append(journalArgs, "--follow")
 	}
-	cmd := exec.Command("journalctl", journalArgs...)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	var ctx context.Context
+	var stop context.CancelFunc
+	if *follow {
+		ctx, stop = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	} else {
+		ctx, stop = context.WithTimeout(context.Background(), 30*time.Second)
+	}
+	defer stop()
+	cmd := exec.CommandContext(ctx, "journalctl", journalArgs...)
+	stdoutRedactor := &redactingWriter{w: stdout}
+	stderrRedactor := &redactingWriter{w: stderr}
+	cmd.Stdout = stdoutRedactor
+	cmd.Stderr = stderrRedactor
 
 	// Defense in depth: the token never reaches the terminal, even if
 	// something logged it.
 	if cfg, _, ok := loadConfig(stderr); ok && cfg.Remote.Token != "" {
 		secret := cfg.Remote.Token
-		cmd.Stdout = redactingWriter{w: stdout, secret: secret}
-		cmd.Stderr = redactingWriter{w: stderr, secret: secret}
+		stdoutRedactor.secret = secret
+		stderrRedactor.secret = secret
 	}
 	if err := cmd.Run(); err != nil {
+		_ = stdoutRedactor.Flush()
+		_ = stderrRedactor.Flush()
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return 0
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			errf(stderr, "journalctl timed out after 30s")
+			return 1
+		}
 		errf(stderr, "journalctl: %v (is the systemd user session available?)", err)
+		return 1
+	}
+	if err := stdoutRedactor.Flush(); err != nil {
+		errf(stderr, "write logs: %v", err)
+		return 1
+	}
+	if err := stderrRedactor.Flush(); err != nil {
+		errf(stderr, "write log diagnostics: %v", err)
 		return 1
 	}
 	return 0
@@ -541,18 +677,60 @@ func configureLogging(cfg *config.Config, stderr io.Writer) {
 }
 
 type redactingWriter struct {
-	w      io.Writer
-	secret string
+	w       io.Writer
+	secret  string
+	pending string
 }
 
-func (r redactingWriter) Write(p []byte) (int, error) {
-	if strings.Contains(string(p), r.secret) {
-		p = []byte(strings.ReplaceAll(string(p), r.secret, "[redacted]"))
+func (r *redactingWriter) Write(p []byte) (int, error) {
+	if r.secret == "" {
+		return r.w.Write(p)
 	}
-	return r.w.Write(p)
+	combined := r.pending + string(p)
+	safeLen := len(combined)
+	// Retain only a suffix that could become the beginning of the secret in
+	// the next write. Complete occurrences are safe to emit now.
+	firstCandidate := len(combined) - len(r.secret) + 1
+	if firstCandidate < 0 {
+		firstCandidate = 0
+	}
+	for i := firstCandidate; i < len(combined); i++ {
+		suffix := combined[i:]
+		if len(suffix) < len(r.secret) && strings.HasPrefix(r.secret, suffix) {
+			safeLen = i
+			break
+		}
+	}
+	emit := combined[:safeLen]
+	r.pending = combined[safeLen:]
+	if emit == "" {
+		return len(p), nil
+	}
+	_, err := io.WriteString(r.w, strings.ReplaceAll(emit, r.secret, "[redacted]"))
+	return len(p), err
 }
 
-func runConfigPath(stdout, stderr io.Writer) int {
+func (r *redactingWriter) Flush() error {
+	if r.pending == "" {
+		return nil
+	}
+	pending := strings.ReplaceAll(r.pending, r.secret, "[redacted]")
+	r.pending = ""
+	_, err := io.WriteString(r.w, pending)
+	return err
+}
+
+func runConfigPath(args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("config", stderr)
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
+		hintf(stderr, "run `miodesk config -h`")
+		return 2
+	}
+	if !requireNoPositional(fs, stderr) {
+		return 2
+	}
 	path, err := config.Path()
 	if err != nil {
 		errf(stderr, "%v", err)
@@ -562,7 +740,17 @@ func runConfigPath(stdout, stderr io.Writer) int {
 	return 0
 }
 
-func runWorkspace(stdout, stderr io.Writer) int {
+func runWorkspace(args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("workspace", stderr)
+	if help, err := parseFlags(fs, args); help {
+		return 0
+	} else if err != nil {
+		hintf(stderr, "run `miodesk workspace -h`")
+		return 2
+	}
+	if !requireNoPositional(fs, stderr) {
+		return 2
+	}
 	cfg, _, ok := loadConfig(stderr)
 	if !ok {
 		return 1

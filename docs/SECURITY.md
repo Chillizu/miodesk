@@ -15,17 +15,19 @@ are bounded (depth, entry count, byte caps).
 ## Command tool
 
 `command` and `command_start` run inside the workspace with the workspace (or
-a sandboxed subdirectory) as cwd. Commands containing `sudo` as a standalone
-token are conservatively refused. Output is capped. This is a guardrail, not
-an account sandbox: commands can still do anything the user's account can do —
-treat every MCP client you connect as a full agent on this machine.
+a sandboxed subdirectory) as cwd. Common privilege-escalation commands
+(`sudo`, `doas`, `su`, `pkexec`, `runuser`, and `runas`) are conservatively
+refused, and at most 32 long-running tasks may be active at once. Output is
+capped. These are guardrails, not an account sandbox: commands can still do
+anything the user's account can do — treat every MCP client you connect as a
+full agent on this machine.
 
 ## Trust levels
 
 | mode (`[remote]` in config.toml) | who can reach the tools | when to use |
 | -------------------------------- | ----------------------- | ----------- |
 | `""` / `local` (default)         | local processes only    | stdio clients, local MCP hosts, the local widget |
-| `token`                          | anyone presenting the bearer token | remote access via `miodesk connect` |
+| `token`                          | anyone presenting the bearer token | custom or legacy public ingress |
 | `unsafe`                         | anyone with the URL     | short-lived debugging, explicitly requested |
 
 ### Local trusted access
@@ -37,18 +39,28 @@ every request (the DNS-rebinding defense the MCP Streamable HTTP spec
 requires), so web pages cannot reach the local server from a victim's
 browser.
 
+### OpenAI Secure MCP Tunnel
+
+The default `miodesk connect` path is OpenAI Secure MCP Tunnel. It keeps the
+server on loopback and lets the official local `tunnel-client` make an outbound
+HTTPS connection. This is not a public listener on the configured local port;
+the tunnel ID, runtime key, workspace association, and control-plane policy
+are managed by OpenAI and the external client. See `docs/SETUP.md` for the
+setup sequence.
+
 ### Remote authenticated access
 
-`miodesk connect` opens a public entrance by definition, so it requires
-token authentication: a 256-bit token is generated automatically, stored in
-`config.toml`, and printed once. Clients must send
-`Authorization: Bearer <token>` on every request. If `[remote].mode` is
-explicitly set to `"local"`, connect refuses to open a remote entrance at all.
+An operator-owned public ingress, such as `miodesk connect --provider custom`,
+is a remote entrance and requires token authentication by default: a 256-bit
+token is generated automatically, stored in `config.toml`, and printed once.
+Clients must send `Authorization: Bearer <token>` on every request. If
+`[remote].mode` is explicitly set to `"local"`, connect refuses to open a
+remote entrance at all.
 
 Note: ChatGPT connectors do not currently accept static bearer tokens (their
-documented options are `noauth` and `oauth2`). For ChatGPT-specific testing,
-see unsafe mode below; prefer OAuth-based flows for real deployments
-(or OpenAI Secure MCP Tunnel, which keeps the server private).
+documented options are `noauth` and `oauth2`). For a ChatGPT connection use
+OpenAI Secure MCP Tunnel, or configure OAuth/no-auth explicitly on a
+user-managed HTTPS ingress. See unsafe mode below only for short local tests.
 
 ### Unsafe development mode
 

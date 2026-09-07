@@ -11,7 +11,7 @@ import (
 	"os"
 	"strings"
 
-	"miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/workspace"
 )
 
 const (

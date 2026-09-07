@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/workspace"
 )
 
 // MaxWriteBytes caps one write call.

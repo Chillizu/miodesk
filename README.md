@@ -1,166 +1,232 @@
 # miodesk
 
-A small · fast · elegant · portable · predictable **local AI / MCP tool bridge**.
+A small, fast, portable local AI / MCP tool bridge.
 
-miodesk lets ChatGPT, MCP clients, IDE agents, and coding agents safely access
-your workspace, files, and dev tools — from one static binary with zero runtime
-dependencies. Local access is zero-config; remote entrances require token
-authentication. See [docs/SECURITY.md](docs/SECURITY.md).
+miodesk lets ChatGPT, MCP clients, IDE agents, and coding agents work with a
+chosen workspace and its development tools through one static binary. The
+workspace is the security boundary: file tools stay inside it, commands run
+there by default, and the local server binds to loopback unless you explicitly
+choose another access mode.
 
-## Quick start
+## Install
+
+For normal use, download the binary for your platform from a tagged GitHub
+release and put it on `PATH`. A source install is also available when Go
+1.26.6 or newer is installed:
 
 ```sh
-miodesk init      # create the default config
-miodesk serve     # run the local MCP server + widget
-miodesk doctor    # check your installation
+go install github.com/Chillizu/miodesk/cmd/miodesk@latest
 ```
 
-Add to an MCP client (stdio, local):
+No Node, Python, Rust, package manager, or runtime service is required by the
+released binary. The optional OpenAI connection uses the separately installed
+official `tunnel-client`.
 
-```json
-{ "command": "miodesk", "args": ["serve", "--stdio"] }
+## First run
+
+Run setup from the directory that should be accessible to the agent:
+
+```sh
+cd /absolute/path/to/workspace
+miodesk setup
+miodesk doctor
+miodesk serve
 ```
 
-Or point a remote client at the Streamable HTTP endpoint:
+`setup` is safe to rerun. On a new configuration it records the current
+directory as an absolute workspace root, uses local port `8787`, keeps the
+server on `127.0.0.1`, and selects [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+as the default remote path. It does not install software, guess credentials,
+start a daemon, or print secrets.
 
+In a real terminal, running `miodesk setup` without arguments opens a small
+interactive wizard for the workspace, port, and optional OpenAI tunnel values.
+Use `miodesk setup --interactive` to request the wizard explicitly. The
+flag-based form remains available for scripts and CI; non-interactive stdin
+never waits for prompts.
+
+To choose another local port, use a fixed value and rerun setup:
+
+```sh
+miodesk setup --workspace /absolute/path/to/workspace --port 9900
 ```
-http://127.0.0.1:<port>/mcp
+
+Port `0` is reserved for local ephemeral tests. OpenAI tunnel profiles need a
+fixed local target so the profile continues to point at the same endpoint.
+
+## Connect ChatGPT
+
+The recommended remote path is OpenAI Secure MCP Tunnel. The MCP server stays
+private on loopback; the local `tunnel-client` opens an outbound HTTPS
+connection. There is no public URL to copy and no need to expose the local
+port.
+
+After creating a tunnel in OpenAI Platform and obtaining its runtime key file:
+
+```sh
+miodesk setup \
+  --workspace /absolute/path/to/workspace \
+  --tunnel-id tunnel_… \
+  --runtime-key-file /absolute/path/to/openai-runtime-key
+miodesk doctor
+miodesk connect
 ```
+
+The setup command asks `tunnel-client` to create or refresh the `miodesk`
+profile. The key is referenced by file and is never copied into
+`config.toml`, the repository, or command output. In ChatGPT, select the
+corresponding Tunnel in Developer Mode/connector settings. See
+[docs/SETUP.md](docs/SETUP.md) and [docs/CHATGPT.md](docs/CHATGPT.md) for the
+credential, workspace association, and troubleshooting details.
+
+On Linux, the local server can be kept running by the user service:
+
+```sh
+miodesk service install
+miodesk service start
+miodesk connect       # keeps the OpenAI tunnel in the foreground
+```
+
+Without a running service, `miodesk connect` starts both the local server and
+the OpenAI tunnel in the foreground. Press `Ctrl-C` to stop both.
 
 ## Commands
 
-| command     | purpose                                          |
-| ----------- | ------------------------------------------------ |
-| `init`      | create the default configuration                 |
-| `serve`     | run the MCP server (HTTP + widget, or `--stdio`) |
-| `connect`   | run the server and expose it via a tunnel        |
-| `tunnel`    | `list` / `doctor` for tunnel providers           |
-| `status`    | is the local server running? (`--json`)          |
-| `logs`      | show server logs from the systemd journal        |
-| `doctor`    | check config, workspace, ports, providers        |
-| `service`   | manage the systemd user service (Linux)          |
-| `config`    | print the config file path                       |
-| `workspace` | print the workspace root                         |
-| `update`    | check a release feed and replace the binary      |
-| `version`   | build information                                |
+| command     | purpose                                                      |
+| ----------- | ------------------------------------------------------------ |
+| `setup`     | configure a new device, workspace, port, and OpenAI profile |
+| `init`      | create or update the low-level configuration                 |
+| `serve`     | run the local MCP server and widget                          |
+| `connect`   | run/reuse the server and connect through the default tunnel  |
+| `tunnel`    | inspect the default connection with `list` or `doctor`      |
+| `status`    | show whether the local server is running (`--json`)         |
+| `doctor`    | check configuration, workspace, connection, and ports       |
+| `logs`      | show collected systemd records or foreground guidance       |
+| `service`   | manage the Linux systemd user service                       |
+| `config`    | print the configuration file path                           |
+| `workspace` | print the configured workspace root                         |
+| `update`    | verify and atomically apply a release manifest              |
+| `version`   | print build information                                     |
 
-## Public endpoints (miodesk connect)
+For local MCP hosts, stdio avoids networking entirely:
 
-`miodesk connect` starts the server and exposes it through a pluggable tunnel
-provider. Detection order for `provider = "auto"`: cloudflare → ngrok →
-tailscale. A missing binary is never fatal — you get a warning and
-alternatives.
-
-```sh
-miodesk connect                                     # auto-detect a provider
-miodesk connect --provider cloudflare               # quick tunnel (no account)
-miodesk connect --provider ngrok                    # requires authtoken
-miodesk connect --provider tailscale                # requires Funnel enabled
-miodesk connect --provider custom --url https://you.example.com
-miodesk tunnel list && miodesk tunnel doctor
+```json
+{
+  "mcpServers": {
+    "miodesk": {
+      "command": "/absolute/path/to/miodesk",
+      "args": ["serve", "--stdio"]
+    }
+  }
+}
 ```
 
-Inspect recent service records, follow live traffic, or emit structured JSON
-for troubleshooting:
+## Custom HTTPS endpoint
+
+OpenAI Secure MCP Tunnel is the default and the only connection path shown by
+the primary onboarding flow. If an operator already owns a reverse proxy or
+another HTTPS ingress, the advanced custom mode is available:
 
 ```sh
-miodesk logs
-miodesk logs --follow
-miodesk logs --json --since 10m
-miodesk logs --grep 'auth_denied'
+miodesk connect --provider custom --url https://mcp.example.com
 ```
+
+This does not create, secure, or verify the public endpoint; it only tells
+miodesk which endpoint the operator has prepared. A public connector must use
+an authentication mode supported by that connector, normally OAuth 2.1 or an
+explicit no-auth test. The static bearer token used by miodesk's legacy remote
+mode is not a documented ChatGPT connector option. Keep the custom endpoint
+behind a properly configured proxy and use `docs/SECURITY.md` as the checklist.
 
 ## Tools
 
-All file tools are sandboxed inside the configured `workspace.root`. Paths are
-validated on canonical, symlink-resolved locations — `../`, absolute paths,
-and symlink escapes are rejected.
+All file tools are sandboxed inside `workspace.root`. Paths are validated on
+canonical, symlink-resolved locations — `../`, absolute-path escapes, and
+symlink escapes are rejected.
 
 - **read** — bounded text reads with `offset`/`limit` (512 KiB cap per call)
 - **search** — text search; ripgrep when installed, built-in engine otherwise
 - **list** — directory entries with bounded depth and count
 - **write** — create or overwrite; parent directories only with `create_dirs`
-- **edit** — exact-replace and guarded range edits; every operation is
-  validated before anything is written and each file write is atomic
-  (temp + rename); returns structured diffs
-- **delete** — files, symlinks (unlinked, never followed), and directories
-  (non-empty requires `recursive`)
-- **command** — short commands with stdout/stderr/exit code/elapsed time;
-  sudo is refused
-- **command_start / command_poll / command_cancel** — long-running tasks with
-  a start/poll/cancel lifecycle, so no request ever hangs
+- **edit** — validated atomic edits with structured diffs
+- **delete** — guarded file, symlink, and recursive-directory deletion
+- **command** — bounded command execution with stdout, stderr, exit code, and elapsed time
+- **command_start / command_poll / command_cancel** — lifecycle for long tasks
 
-## Widget
+## ChatGPT UI
 
-`miodesk serve` also serves a small status widget at `http://127.0.0.1:<port>/`:
-tool cards with real call counts, a usage strip (`ƒ` tool calls), a diff viewer
-for recent edits (change groups, prev/next navigation, closable inline toolbar,
-container-query reflow), and light/dark/auto theming — plain HTML/CSS/JS
-embedded in the binary via `go:embed`. No Node, no bundler.
-
-### ChatGPT / MCP Apps
-
-miodesk speaks the ChatGPT Apps UI conventions and the MCP Apps extension out
-of the box. A read-only `status` tool returns the dashboard payload and
-declares its UI via `_meta.ui.resourceUri` (`ui://miodesk/status.html`, with
-the `openai/outputTemplate` compatibility alias); hosts fetch the
-`text/html;profile=mcp-app` resource — a fully self-contained page (no
-external origins, `prefersBorder: false`) that renders from the tool's
-`structuredContent` via `window.openai.toolOutput` or the
-`ui/notifications/tool-result` notification. All 11 tools carry explicit
-annotations (`readOnlyHint`/`destructiveHint`/`openWorldHint`), titles, and
-invocation status labels; the server declares instructions for model guidance.
-Preview the hosted widget at `http://127.0.0.1:<port>/widget`.
-
-For ChatGPT connector setup and the security trade-offs, see
-[docs/CHATGPT.md](docs/CHATGPT.md). In short: ChatGPT needs a reachable HTTPS
-MCP endpoint; production deployments should use OpenAI's Secure MCP Tunnel or
-an OAuth 2.1-compatible authentication server. The static bearer token emitted
-by `miodesk connect` is intended for clients that can send an
-`Authorization` header and is not a documented ChatGPT connector option.
-
-The server emits request IDs and structured events for HTTP requests,
-authentication denials, MCP tool completion/errors, startup, and shutdown. It
-never logs file contents, command lines, bearer tokens, or Authorization
-headers. With the systemd user service, records go to the user journal.
+miodesk is Native-first. Regular file and short-command results remain useful
+in the host's native tool view and do not create an extra widget. Only status
+and long-running command lifecycle results opt into the optional embedded MCP
+Apps widget. The widget is plain embedded HTML/CSS/JavaScript, has no external
+origin, supports light/dark/auto themes, and uses container-aware responsive
+layout for narrow ChatGPT views. Preview it at `/widget` while a local server
+is running.
 
 ## Configuration
 
-`config.toml` lives in `$XDG_CONFIG_HOME/miodesk` (fallback `~/.config/miodesk`):
+The configuration is stored at `$XDG_CONFIG_HOME/miodesk/config.toml`, falling
+back to `~/.config/miodesk/config.toml`:
 
 ```toml
 [server]
 host = "127.0.0.1"
-port = 0            # 0 = random free port on each start
+port = 8787
 
 [workspace]
-root = "/home/you"
+root = "/absolute/path/to/workspace"
 
 [tunnel]
-provider = "auto"   # auto | local | cloudflare | ngrok | tailscale | custom
+provider = "openai"
+
+[tunnel.openai]
+profile = "miodesk"
+# tunnel_id, runtime_key_file, profile_dir, and client_path are optional
+# until OpenAI Secure MCP Tunnel is configured.
 
 [widget]
 theme = "auto"      # auto | light | dark
 
 [logging]
-level = "info"       # debug | info | warn | error
-format = "text"      # text | json; JSON is useful for journal queries
+level = "info"      # debug | info | warn | error
+format = "text"     # text | json
 ```
 
-## Development
+The runtime key is a file reference, not a TOML secret. Keep the key file
+user-readable only (`chmod 600` on Unix). `miodesk doctor` checks the path,
+permissions, client, profile, fixed port, and local server without displaying
+the key.
+
+## Logs and diagnostics
 
 ```sh
-gofmt -w .
-go vet ./...
-go test ./...
-go build -buildvcs=false -o miodesk ./cmd/miodesk
-scripts/build-release.sh 0.3.0   # cross-compile dist/ + checksums
+miodesk doctor
+miodesk tunnel doctor
+miodesk logs --follow --json
 ```
 
-Releases are plain binaries plus a JSON manifest
-(`{"version": "...", "assets": {"linux/amd64": {"url": "...", "sha256": "..."}}}`),
-which `miodesk update --from <manifest-url>` consumes for safe self-updates.
+The server emits request IDs and structured events for HTTP requests,
+authentication denials, MCP tool completion/errors, startup, and shutdown. It
+does not log file contents, command lines, bearer tokens, or Authorization
+headers. On Linux, the user service sends these records to journald.
 
-See [AGENTS.md](AGENTS.md) for architecture rules and
-[docs/REFERENCES.md](docs/REFERENCES.md) for the official documentation used
-by each module.
+## Development and release
+
+```sh
+gofmt -w $(git ls-files '*.go')
+go vet -all ./...
+go test -vet=all ./...
+go test -race ./...
+go build -buildvcs=false -o miodesk ./cmd/miodesk
+scripts/release-check.sh
+scripts/build-release.sh 0.2.0
+```
+
+The release script produces platform binaries, `checksums.txt`, and a
+`manifest.json` consumable by `miodesk update --from <manifest-url>`. The
+release checklist is in [docs/RELEASE.md](docs/RELEASE.md).
+
+See [docs/SECURITY.md](docs/SECURITY.md) for the threat model and
+[docs/REFERENCES.md](docs/REFERENCES.md) for the official protocol and
+platform sources used by the implementation. The repository is licensed
+under [MPL-2.0](LICENSE).

@@ -6,15 +6,17 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 
-	"miodesk/internal/config"
-	"miodesk/internal/server"
-	"miodesk/internal/service"
-	"miodesk/internal/tunnel"
-	"miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/config"
+	"github.com/Chillizu/miodesk/internal/server"
+	"github.com/Chillizu/miodesk/internal/service"
+	"github.com/Chillizu/miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/xdg"
 )
 
 type Status string
@@ -64,6 +66,14 @@ func Run(cfgPath string, cfg *config.Config, cfgErr error) Report {
 			"fix the file, or delete it and run `miodesk init`")
 		return r
 	}
+	if cfg == nil {
+		r.add("config", StatusError, "configuration is empty", "run `miodesk init`")
+		return r
+	}
+	if err := cfg.Validate(); err != nil {
+		r.add("config", StatusError, err.Error(), "fix the values in config.toml")
+		return r
+	}
 	r.add("config", StatusOK, cfgPath)
 
 	ws, err := workspace.New(cfg.Workspace.Root)
@@ -99,7 +109,7 @@ func Run(cfgPath string, cfg *config.Config, cfgErr error) Report {
 	checkPort(&r, cfg)
 
 	checkRemoteSecurity(&r, cfg)
-	checkTunnel(&r, cfg.Tunnel.Provider)
+	checkTunnel(&r, cfg)
 	checkService(&r)
 
 	r.add("platform", StatusOK, runtime.GOOS+"/"+runtime.GOARCH)
@@ -166,40 +176,98 @@ func checkRemoteSecurity(r *Report, cfg *config.Config) {
 	}
 }
 
-func checkTunnel(r *Report, provider string) {
-	var available []string
-	for _, d := range tunnel.DetectAll() {
-		if d.Name == "local" || d.Name == "custom" {
-			continue // available by design
-		}
-		if d.Available {
-			available = append(available, d.Name)
-			r.add("tunnel", StatusInfo, d.Name+" available")
-		} else {
-			r.add("tunnel", StatusWarn, d.Reason,
-				"see `miodesk tunnel doctor` for provider details")
-		}
-	}
-
-	switch provider {
+func checkTunnel(r *Report, cfg *config.Config) {
+	switch cfg.Tunnel.Provider {
+	case "openai":
+		checkOpenAITunnel(r, cfg)
 	case "custom":
 		r.add("tunnel", StatusInfo,
-			"custom endpoint: miodesk will not create a public URL",
-			"point it at your endpoint with `miodesk connect --provider custom --url https://…`")
+			"custom endpoint: miodesk will not create or verify a public URL",
+			"use `miodesk connect --provider custom --url https://…`")
 	case "local":
-		r.add("tunnel", StatusInfo, "local mode: no public endpoint")
+		r.add("tunnel", StatusInfo, "local mode: no remote endpoint")
 	default:
-		if len(available) == 0 {
-			r.add("tunnel", StatusWarn, "no tunnel provider available",
-				"install cloudflared for a zero-config quick tunnel, or expose your own endpoint with `miodesk connect --provider custom --url https://…`")
-		} else if provider != "auto" {
-			r.add("tunnel", StatusInfo, "configured provider: "+provider)
-		}
+		// Keep old provider configurations working, but do not make their
+		// machine-specific availability part of the primary doctor output.
+		r.add("tunnel", StatusInfo, "legacy connection mode preserved: "+cfg.Tunnel.Provider,
+			"use `miodesk setup --tunnel-id tunnel_…` to switch to OpenAI Secure MCP Tunnel")
 	}
 
 	r.add("endpoint", StatusInfo,
-		"remote clients such as ChatGPT require HTTPS; local MCP clients need none",
-		"run `miodesk connect` only when a public endpoint is needed")
+		"the local MCP server stays on loopback; OpenAI Secure MCP Tunnel is the default remote path",
+		"run `miodesk connect` only when a remote OpenAI connection is needed")
+}
+
+func checkOpenAITunnel(r *Report, cfg *config.Config) {
+	if cfg.Tunnel.OpenAI.TunnelID == "" {
+		r.add("tunnel", StatusInfo, "OpenAI Secure MCP Tunnel is not configured yet",
+			"run `miodesk setup --tunnel-id tunnel_… --runtime-key-file <file>`")
+		return
+	}
+	if !strings.HasPrefix(cfg.Tunnel.OpenAI.TunnelID, "tunnel_") {
+		r.add("tunnel", StatusWarn, "configured OpenAI tunnel id is malformed",
+			"check tunnel.openai.tunnel_id in config.toml")
+		return
+	}
+	if cfg.Server.Port == 0 {
+		r.add("tunnel", StatusWarn, "OpenAI tunnel target uses an ephemeral port",
+			"set server.port to a fixed unused port, normally 8787")
+	}
+
+	client := cfg.Tunnel.OpenAI.ClientPath
+	if client == "" {
+		client = "tunnel-client"
+	}
+	if _, err := exec.LookPath(client); err != nil {
+		r.add("tunnel", StatusWarn, "tunnel-client is not available",
+			"install tunnel-client, then rerun `miodesk setup`")
+		return
+	}
+
+	keyFile := cfg.Tunnel.OpenAI.RuntimeKeyFile
+	if keyFile == "" {
+		if dir, err := xdg.ConfigDir(); err == nil {
+			keyFile = filepath.Join(dir, "openai-runtime-key")
+		}
+	}
+	if info, err := os.Stat(keyFile); err != nil {
+		r.add("tunnel", StatusWarn, "OpenAI runtime key file is missing",
+			"create the key file at "+keyFile+" and rerun `miodesk setup`")
+		return
+	} else if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		r.add("tunnel", StatusWarn, "OpenAI runtime key file is group/world accessible",
+			"run `chmod 600 "+keyFile+"`")
+		return
+	}
+
+	profileDir := cfg.Tunnel.OpenAI.ProfileDir
+	if profileDir == "" {
+		if dir, err := xdg.ConfigDir(); err == nil {
+			profileDir = filepath.Join(filepath.Dir(dir), "tunnel-client")
+		}
+	}
+	profile := cfg.Tunnel.OpenAI.Profile
+	if profile == "" {
+		profile = config.DefaultOpenAIProfile
+	}
+	profilePath := filepath.Join(profileDir, profile+".yaml")
+	profileInfo, err := os.Stat(profilePath)
+	if err != nil {
+		r.add("tunnel", StatusWarn, "OpenAI tunnel-client profile is missing",
+			"run `miodesk setup` again to generate "+profilePath)
+		return
+	}
+	if profileInfo.IsDir() || !profileInfo.Mode().IsRegular() {
+		r.add("tunnel", StatusWarn, "OpenAI tunnel-client profile is not a regular file",
+			"remove or replace "+profilePath+" and rerun `miodesk setup`")
+		return
+	}
+	if runtime.GOOS != "windows" && profileInfo.Mode().Perm()&0o077 != 0 {
+		r.add("tunnel", StatusWarn, "OpenAI tunnel-client profile is group/world accessible",
+			"run `chmod 600 "+profilePath+"`")
+		return
+	}
+	r.add("tunnel", StatusOK, "OpenAI Secure MCP Tunnel is configured")
 }
 
 func checkWritable(root string) error {

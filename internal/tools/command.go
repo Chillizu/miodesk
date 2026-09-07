@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/workspace"
 )
 
 const (
@@ -24,8 +24,13 @@ const (
 	maxCommandOutput = 256 << 10
 	// maxLongOutput caps captured output for long-running tasks.
 	maxLongOutput = 1 << 20
+	// maxRunningProcs prevents a client from exhausting the host by creating
+	// unbounded long-running tasks. Finished tasks are retained separately.
+	maxRunningProcs = 32
 	// maxFinishedProcs bounds remembered completed long tasks.
 	maxFinishedProcs = 50
+	// commandShutdownTimeout prevents a stuck child from blocking server exit.
+	commandShutdownTimeout = 5 * time.Second
 )
 
 type CommandInput struct {
@@ -48,7 +53,8 @@ type CommandOutput struct {
 }
 
 // Command runs a short development command inside the workspace and returns
-// stdout, stderr, the exit code, and elapsed time. sudo is refused.
+// stdout, stderr, the exit code, and elapsed time. Privilege escalation tools
+// are refused.
 func Command(ctx context.Context, ws *workspace.Workspace, in CommandInput) (*CommandOutput, error) {
 	p, err := newProc(ctx, ws, in, maxCommandOutput)
 	if err != nil {
@@ -129,12 +135,18 @@ func (m *Manager) Start(ws *workspace.Workspace, in CommandInput) (string, error
 	if err != nil {
 		return "", err
 	}
+
+	m.mu.Lock()
+	if m.runningCountLocked() >= maxRunningProcs {
+		m.mu.Unlock()
+		p.cancel()
+		return "", fmt.Errorf("command_start: already running %d long commands (cap %d); poll or cancel an existing task first", maxRunningProcs, maxRunningProcs)
+	}
 	if err := p.cmd.Start(); err != nil {
+		m.mu.Unlock()
 		p.cancel()
 		return "", fmt.Errorf("command_start: %w", err)
 	}
-
-	m.mu.Lock()
 	m.next++
 	p.id = "task-" + strconv.Itoa(m.next)
 	m.procs[p.id] = p
@@ -149,6 +161,20 @@ func (m *Manager) Start(ws *workspace.Workspace, in CommandInput) (string, error
 		close(p.doneCh)
 	}()
 	return p.id, nil
+}
+
+// runningCountLocked counts tasks whose completion channel is still open.
+// Callers must hold m.mu.
+func (m *Manager) runningCountLocked() int {
+	count := 0
+	for _, p := range m.procs {
+		select {
+		case <-p.doneCh:
+		default:
+			count++
+		}
+	}
+	return count
 }
 
 // Poll returns the accumulated status and output of one task.
@@ -214,7 +240,12 @@ func (m *Manager) Shutdown() {
 		case <-p.doneCh:
 		default:
 			p.cancel()
-			<-p.doneCh
+			select {
+			case <-p.doneCh:
+			case <-time.After(commandShutdownTimeout):
+				// The process is expected to be gone after group cancellation;
+				// do not make server shutdown hang forever if the OS refuses it.
+			}
 		}
 	}
 }
@@ -253,6 +284,12 @@ func (m *Manager) evictLocked() {
 			return
 		}
 		delete(m.procs, oldestDone)
+		for i, id := range m.order {
+			if id == oldestDone {
+				m.order = append(m.order[:i], m.order[i+1:]...)
+				break
+			}
+		}
 	}
 }
 
@@ -312,8 +349,8 @@ func newProc(parent context.Context, ws *workspace.Workspace, in CommandInput, c
 	if strings.TrimSpace(in.Command) == "" {
 		return nil, fmt.Errorf("command: command must not be empty")
 	}
-	if containsSudoToken(in.Command) {
-		return nil, fmt.Errorf("command: refusing commands containing sudo (escalation is never automatic)")
+	if containsPrivilegeEscalation(in.Command) {
+		return nil, fmt.Errorf("command: refusing privilege escalation commands (sudo/doas/su/pkexec/runas)")
 	}
 	dir, err := ws.Resolve(in.CWD)
 	if err != nil {
@@ -329,6 +366,7 @@ func newProc(parent context.Context, ws *workspace.Workspace, in CommandInput, c
 	}
 	ctx, cancel := context.WithCancel(parent)
 	cmd := exec.CommandContext(ctx, shellBin, flag, in.Command)
+	configureProcess(cmd)
 	cmd.Dir = dir
 	// WaitDelay closes the pipes even when grandchildren keep them open.
 	cmd.WaitDelay = 3 * time.Second
@@ -350,24 +388,25 @@ func newProc(parent context.Context, ws *workspace.Workspace, in CommandInput, c
 	return p, nil
 }
 
-// containsSudoToken conservatively rejects a standalone sudo token anywhere
-// in the shell command, including chained commands and substitutions. It is
-// intentionally broader than a shell parser: command is arbitrary shell text,
-// so refusing a quoted mention is safer than allowing an easy bypass such as
-// `echo ok; sudo …`. This is a guardrail, not a sandbox for the user's account.
-func containsSudoToken(command string) bool {
-	const token = "sudo"
-	for i := 0; i+len(token) <= len(command); i++ {
-		if !strings.EqualFold(command[i:i+len(token)], token) {
-			continue
+// containsPrivilegeEscalation conservatively rejects common privilege
+// escalation commands anywhere in arbitrary shell text, including chained
+// commands and substitutions. It is intentionally broader than a shell
+// parser: refusing a quoted mention is safer than allowing an easy bypass.
+// This is a guardrail, not a sandbox for the user's account.
+func containsPrivilegeEscalation(command string) bool {
+	for _, token := range []string{"sudoedit", "sudo", "doas", "pkexec", "runuser", "runas", "su"} {
+		for i := 0; i+len(token) <= len(command); i++ {
+			if !strings.EqualFold(command[i:i+len(token)], token) {
+				continue
+			}
+			if i > 0 && isShellWordByte(command[i-1]) {
+				continue
+			}
+			if i+len(token) < len(command) && isShellWordByte(command[i+len(token)]) {
+				continue
+			}
+			return true
 		}
-		if i > 0 && isShellWordByte(command[i-1]) {
-			continue
-		}
-		if i+len(token) < len(command) && isShellWordByte(command[i+len(token)]) {
-			continue
-		}
-		return true
 	}
 	return false
 }

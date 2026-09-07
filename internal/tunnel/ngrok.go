@@ -27,7 +27,12 @@ func (n *Ngrok) Available() error {
 	if _, err := lookPath("ngrok"); err != nil {
 		return fmt.Errorf("ngrok not found")
 	}
-	if err := exec.Command("ngrok", "config", "check").Run(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "ngrok", "config", "check").Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("ngrok config check timed out")
+		}
 		return fmt.Errorf("authtoken not configured (run: ngrok config add-authtoken <token>)")
 	}
 	return nil
@@ -46,6 +51,7 @@ func (n *Ngrok) Start(ctx context.Context, opts Options) (Endpoint, error) {
 	cmd := exec.CommandContext(ctx, "ngrok", "http", port,
 		"--log", "stdout", "--log-format", "json",
 		"--web-addr", "127.0.0.1:"+portString(apiPort))
+	configureProcess(cmd)
 	cmd.WaitDelay = 3 * time.Second
 
 	n.mu.Lock()
@@ -79,6 +85,8 @@ func (n *Ngrok) awaitURL(ctx context.Context, done <-chan struct{}, timeoutSecs 
 	client := &http.Client{Timeout: 2 * time.Second}
 	for {
 		select {
+		case <-ctx.Done():
+			return Endpoint{}, ctx.Err()
 		case <-deadline:
 			return Endpoint{}, fmt.Errorf("ngrok did not report a tunnel URL within %ds", timeoutSecs)
 		case <-done:
@@ -108,8 +116,11 @@ func (n *Ngrok) Stop() error {
 	case <-done:
 		return nil
 	default:
-		_ = cmd.Process.Kill()
-		<-done
+		stopProcess(cmd)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
 	}
 	return nil
 }
@@ -128,5 +139,5 @@ func getJSON(ctx context.Context, client *http.Client, url string) ([]byte, erro
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 }

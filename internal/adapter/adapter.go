@@ -19,7 +19,17 @@ import (
 // WidgetURI is the shared result widget resource. The URI doubles as the
 // host's cache key: bump the version segment whenever the embedded
 // HTML/CSS/JS change in a user-visible way.
-const WidgetURI = "ui://miodesk/status.html"
+const WidgetURI = "ui://miodesk/status-v4.html"
+
+// legacyWidgetURIs keeps previously advertised template URIs readable while
+// ChatGPT connector metadata catches up. The current tools always advertise
+// WidgetURI; these aliases only prevent cached clients from getting a 400 when
+// they fetch an older template.
+var legacyWidgetURIs = []string{
+	"ui://miodesk/status.html",
+	"ui://miodesk/status-v2.html",
+	"ui://miodesk/status-v3.html",
+}
 
 // WidgetMIMEType is the MCP Apps UI resource media type.
 const WidgetMIMEType = "text/html;profile=mcp-app"
@@ -28,28 +38,20 @@ const WidgetMIMEType = "text/html;profile=mcp-app"
 // the tools' structuredContent (with its "kind" discriminator).
 type Data func(context.Context) (any, error)
 
-// resultToolNames are the tools whose results render in the shared widget,
-// with their ≤64-char ChatGPT invocation labels.
-var resultToolNames = map[string]struct{ invoking, invoked string }{
-	"read":           {"Reading file…", "Read."},
-	"search":         {"Searching workspace…", "Search complete."},
-	"list":           {"Listing directory…", "Listed."},
-	"write":          {"Writing file…", "Written."},
-	"edit":           {"Editing file…", "Edited."},
-	"delete":         {"Deleting…", "Deleted."},
-	"command":        {"Running command…", "Command finished."},
+// richUIToolNames is the opt-in allowlist for the shared widget. Data-first
+// tools stay native in ChatGPT unless their result represents an ongoing task
+// or a diagnostics view worth keeping visible.
+var richUIToolNames = map[string]struct{ invoking, invoked string }{
 	"command_start":  {"Starting command…", "Command started."},
 	"command_poll":   {"Checking task…", "Task status."},
 	"command_cancel": {"Cancelling task…", "Task cancelled."},
 	"status":         {"Reading miodesk status…", "Status loaded."},
 }
 
-// ResultToolMeta returns the MCP Apps / ChatGPT _meta for a result-bearing
-// tool: the shared widget resource plus invocation labels. Server applies it
-// to each registered tool; core tools stay host-agnostic. Unknown names
-// return nil.
-func ResultToolMeta(name string) map[string]any {
-	labels, ok := resultToolNames[name]
+// RichUIToolMeta returns the MCP Apps / ChatGPT _meta for a tool selected for
+// the optional rich UI. Native-first tools and unknown names return nil.
+func RichUIToolMeta(name string) map[string]any {
+	labels, ok := richUIToolNames[name]
 	if !ok {
 		return nil
 	}
@@ -81,26 +83,32 @@ func Attach(s *mcp.Server, assets fs.FS, data Data) error {
 		return &mcp.CallToolResult{StructuredContent: out}, nil
 	})
 
-	resource := &mcp.Resource{
-		URI:         WidgetURI,
-		Name:        "miodesk result view",
-		Title:       "miodesk result view",
-		Description: "Interactive view for miodesk tool results: file reads, searches, diffs, command output, and server status. Rendered as an MCP App.",
-		MIMEType:    WidgetMIMEType,
+	registerWidget := func(uri string) {
+		resource := &mcp.Resource{
+			URI:         uri,
+			Name:        "miodesk result view",
+			Title:       "miodesk result view",
+			Description: "Interactive view for miodesk tool results: file reads, searches, diffs, command output, and server status. Rendered as an MCP App.",
+			MIMEType:    WidgetMIMEType,
+		}
+		resource.SetMeta(map[string]any{
+			"ui": map[string]any{"prefersBorder": true},
+		})
+		s.AddResource(resource, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{
+				Contents: []*mcp.ResourceContents{{
+					URI:      uri,
+					MIMEType: WidgetMIMEType,
+					Text:     html,
+					Meta:     map[string]any{"ui": map[string]any{"prefersBorder": true}},
+				}},
+			}, nil
+		})
 	}
-	resource.SetMeta(map[string]any{
-		"ui": map[string]any{"prefersBorder": false},
-	})
-	s.AddResource(resource, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-		return &mcp.ReadResourceResult{
-			Contents: []*mcp.ResourceContents{{
-				URI:      WidgetURI,
-				MIMEType: WidgetMIMEType,
-				Text:     html,
-				Meta:     map[string]any{"ui": map[string]any{"prefersBorder": false}},
-			}},
-		}, nil
-	})
+	registerWidget(WidgetURI)
+	for _, uri := range legacyWidgetURIs {
+		registerWidget(uri)
+	}
 	return nil
 }
 
@@ -138,16 +146,7 @@ func dashboardTool() *mcp.Tool {
 			},
 		},
 	}
-	tool.SetMeta(map[string]any{
-		"ui": map[string]any{
-			"resourceUri": WidgetURI,
-			"visibility":  []string{"model", "app"},
-		},
-		// ChatGPT compatibility alias for _meta.ui.resourceUri.
-		"openai/outputTemplate":          WidgetURI,
-		"openai/toolInvocation/invoking": "Reading miodesk status…",
-		"openai/toolInvocation/invoked":  "Status loaded.",
-	})
+	tool.SetMeta(RichUIToolMeta("status"))
 	return tool
 }
 

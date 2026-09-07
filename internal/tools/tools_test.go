@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/workspace"
 )
 
 func newWS(t *testing.T) (*workspace.Workspace, string) {
@@ -314,6 +314,22 @@ func TestSearchOutputBufferKeepsBoundedPrefix(t *testing.T) {
 	}
 	if got := b.data.String(); got != "abcde" || !b.Truncated() {
 		t.Errorf("buffer = %q, truncated=%v", got, b.Truncated())
+	}
+}
+
+func TestSplitRipgrepLineHandlesWindowsDrive(t *testing.T) {
+	cases := []struct {
+		input, file, text string
+		line              int
+	}{
+		{input: "relative.txt:12:hello:world", file: "relative.txt", line: 12, text: "hello:world"},
+		{input: `C:\workspace\file.txt:7:match`, file: `C:\workspace\file.txt`, line: 7, text: "match"},
+	}
+	for _, tc := range cases {
+		file, line, text, ok := splitRipgrepLine(tc.input)
+		if !ok || file != tc.file || line != tc.line || text != tc.text {
+			t.Errorf("splitRipgrepLine(%q) = (%q, %d, %q, %v)", tc.input, file, line, text, ok)
+		}
 	}
 }
 

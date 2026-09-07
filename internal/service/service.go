@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,11 @@ import (
 
 // Name is the unit name (miodesk.service).
 const Name = "miodesk"
+
+const (
+	systemctlTimeout = 30 * time.Second
+	probeTimeout     = 5 * time.Second
+)
 
 // UnitPath returns the user-unit file location:
 // $XDG_CONFIG_HOME/systemd/user/miodesk.service (fallback ~/.config/...).
@@ -153,10 +159,15 @@ func Status() (string, error) {
 }
 
 func systemctl(args ...string) error {
-	cmd := exec.Command("systemctl", append([]string{"--user"}, args...)...)
+	ctx, cancel := context.WithTimeout(context.Background(), systemctlTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "systemctl", append([]string{"--user"}, args...)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("systemctl --user %s timed out after %s", strings.Join(args, " "), systemctlTimeout)
+		}
 		return fmt.Errorf("systemctl --user %s: %w (is systemd user session available?)",
 			strings.Join(args, " "), err)
 	}
@@ -164,11 +175,18 @@ func systemctl(args ...string) error {
 }
 
 func quietSystemctl(args ...string) {
-	_ = exec.Command("systemctl", append([]string{"--user"}, args...)...).Run()
+	ctx, cancel := context.WithTimeout(context.Background(), systemctlTimeout)
+	defer cancel()
+	_ = exec.CommandContext(ctx, "systemctl", append([]string{"--user"}, args...)...).Run()
 }
 
 func output(args ...string) (string, error) {
-	out, err := exec.Command("systemctl", append([]string{"--user"}, args...)...).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "systemctl", append([]string{"--user"}, args...)...).Output()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
 	return strings.TrimSpace(string(out)), err
 }
 
@@ -191,17 +209,10 @@ func RunningQuick() bool {
 	if !Supported() {
 		return false
 	}
-	done := make(chan bool, 1)
-	go func() {
-		cmd := exec.Command("systemctl", "--user", "is-active", "--quiet", Name)
-		done <- cmd.Run() == nil
-	}()
-	select {
-	case r := <-done:
-		return r
-	case <-time.After(2 * time.Second):
-		return false
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "systemctl", "--user", "is-active", "--quiet", Name)
+	return cmd.Run() == nil && ctx.Err() == nil
 }
 
 func configHome() (string, error) {

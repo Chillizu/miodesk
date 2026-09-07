@@ -218,6 +218,28 @@ func TestEditBatchIsAtomic(t *testing.T) {
 	}
 }
 
+func TestEditMultiFileCommit(t *testing.T) {
+	ws, root := newWS(t)
+	writeFile(t, root, "a.txt", "aaa\n")
+	writeFile(t, root, "b.txt", "bbb\n")
+
+	if _, err := Edit(context.Background(), ws, EditInput{Operations: []EditOperation{
+		{Path: "a.txt", Old: "aaa", New: "AAA"},
+		{Path: "b.txt", Old: "bbb", New: "BBB"},
+	}}); err != nil {
+		t.Fatalf("multi-file edit: %v", err)
+	}
+	for path, want := range map[string]string{"a.txt": "AAA\n", "b.txt": "BBB\n"} {
+		data, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != want {
+			t.Errorf("%s = %q, want %q", path, data, want)
+		}
+	}
+}
+
 func TestEditErrors(t *testing.T) {
 	ws, root := newWS(t)
 	writeFile(t, root, "f.txt", "one\ntwo\n")

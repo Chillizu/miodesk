@@ -23,14 +23,14 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"miodesk/internal/adapter"
-	"miodesk/internal/buildinfo"
-	"miodesk/internal/config"
-	"miodesk/internal/logging"
-	"miodesk/internal/tools"
-	"miodesk/internal/workspace"
-	"miodesk/internal/xdg"
-	widget "miodesk/web/widget"
+	"github.com/Chillizu/miodesk/internal/adapter"
+	"github.com/Chillizu/miodesk/internal/buildinfo"
+	"github.com/Chillizu/miodesk/internal/config"
+	"github.com/Chillizu/miodesk/internal/logging"
+	"github.com/Chillizu/miodesk/internal/tools"
+	"github.com/Chillizu/miodesk/internal/workspace"
+	"github.com/Chillizu/miodesk/internal/xdg"
+	widget "github.com/Chillizu/miodesk/web/widget"
 )
 
 // Server hosts miodesk's MCP tools for HTTP and stdio clients.
@@ -238,9 +238,10 @@ func registerTools(s *Server) {
 	// how to frame tool calls.
 	readOnly := ann(true, false, false, true)
 
-	// UI metadata comes from the adapter; tools stay host-agnostic.
+	// Optional rich UI metadata comes from the adapter; tools stay
+	// host-agnostic. Native-first tools receive no template metadata.
 	declared := func(name string, t *mcp.Tool) *mcp.Tool {
-		if meta := adapter.ResultToolMeta(name); meta != nil {
+		if meta := adapter.RichUIToolMeta(name); meta != nil {
 			t.SetMeta(meta)
 		}
 		return t
@@ -710,25 +711,51 @@ func (s *Server) writeState() {
 		PID:       os.Getpid(),
 		Port:      int(s.port.Load()),
 		URL:       s.URL(),
-		StartedAt: s.started.Format(time.RFC3339),
+		StartedAt: s.started.UTC().Format(time.RFC3339Nano),
 	})
 	if err == nil {
-		f, ferr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		f, ferr := os.CreateTemp(dir, ".server.json-*")
 		if ferr != nil {
 			return
 		}
-		defer f.Close()
+		tmpName := f.Name()
+		defer os.Remove(tmpName)
 		if ferr = f.Chmod(0o600); ferr == nil {
 			_, ferr = f.Write(data)
 		}
 		if ferr == nil {
 			ferr = f.Sync()
 		}
+		if ferr == nil {
+			ferr = f.Close()
+		} else {
+			_ = f.Close()
+		}
+		if ferr == nil {
+			ferr = os.Rename(tmpName, path)
+		}
 	}
 }
 
 func (s *Server) clearState() {
-	if path, err := s.statePath(); err == nil {
-		_ = os.Remove(path)
+	path, err := s.statePath()
+	if err != nil {
+		return
 	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var current stateFile
+	if err := json.Unmarshal(data, &current); err != nil {
+		return
+	}
+	// A newer server may have taken ownership of the shared convenience state
+	// file while this instance was shutting down. Only remove our own record;
+	// an unmatched or malformed record is safer to leave for `status` to report.
+	if current.PID != os.Getpid() || current.Port != int(s.port.Load()) ||
+		current.StartedAt != s.started.UTC().Format(time.RFC3339Nano) {
+		return
+	}
+	_ = os.Remove(path)
 }

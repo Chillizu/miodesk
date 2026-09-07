@@ -65,10 +65,13 @@ func TestCustomValidation(t *testing.T) {
 	if _, err := c.Start(ctx, Options{}); err == nil {
 		t.Error("missing URL must error")
 	}
-	for _, bad := range []string{"ftp://x", "not a url", "https://"} {
+	for _, bad := range []string{"ftp://x", "http://demo.example.com", "https://user:pass@demo.example.com", "https://demo.example.com?token=secret", "https://demo.example.com/#fragment", "not a url", "https://"} {
 		if _, err := c.Start(ctx, Options{CustomURL: bad}); err == nil {
 			t.Errorf("invalid custom URL %q must error", bad)
 		}
+	}
+	if _, err := c.Start(ctx, Options{CustomURL: "http://127.0.0.1:8787"}); err != nil {
+		t.Errorf("loopback HTTP should remain available for local development: %v", err)
 	}
 	ep, err := c.Start(ctx, Options{CustomURL: "https://demo.example.com/"})
 	if err != nil {
