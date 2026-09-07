@@ -6,10 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 
 	"miodesk/internal/config"
+	"miodesk/internal/logging"
 )
 
 const usage = `miodesk — a local AI / MCP tool bridge
@@ -32,13 +32,22 @@ Commands:
   version    print build information
 
 Run ` + "`miodesk <command> -h`" + ` for command flags.
-Set MIODESK_LOG=debug for verbose logging on stderr.
+Set MIODESK_LOG=debug for verbose logging, or MIODESK_LOG_FORMAT=json for
+machine-readable diagnostic records on stderr.
 `
 
 // Run executes one command and returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
-	if os.Getenv("MIODESK_LOG") == "debug" {
-		slog.SetDefault(slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	settings := logging.Settings{Level: "info", Format: "text"}
+	if value := os.Getenv("MIODESK_LOG"); value != "" {
+		settings.Level = value
+	}
+	if value := os.Getenv("MIODESK_LOG_FORMAT"); value != "" {
+		settings.Format = value
+	}
+	if err := logging.Configure(settings, stderr); err != nil {
+		fmt.Fprintf(stderr, "Warning: %v\n", err)
+		_ = logging.Configure(logging.Settings{Level: "info", Format: "text"}, stderr)
 	}
 
 	cmd := "help"

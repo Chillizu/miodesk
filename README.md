@@ -60,6 +60,16 @@ miodesk connect --provider custom --url https://you.example.com
 miodesk tunnel list && miodesk tunnel doctor
 ```
 
+Inspect recent service records, follow live traffic, or emit structured JSON
+for troubleshooting:
+
+```sh
+miodesk logs
+miodesk logs --follow
+miodesk logs --json --since 10m
+miodesk logs --grep 'auth_denied'
+```
+
 ## Tools
 
 All file tools are sandboxed inside the configured `workspace.root`. Paths are
@@ -109,6 +119,11 @@ an OAuth 2.1-compatible authentication server. The static bearer token emitted
 by `miodesk connect` is intended for clients that can send an
 `Authorization` header and is not a documented ChatGPT connector option.
 
+The server emits request IDs and structured events for HTTP requests,
+authentication denials, MCP tool completion/errors, startup, and shutdown. It
+never logs file contents, command lines, bearer tokens, or Authorization
+headers. With the systemd user service, records go to the user journal.
+
 ## Configuration
 
 `config.toml` lives in `$XDG_CONFIG_HOME/miodesk` (fallback `~/.config/miodesk`):
@@ -126,6 +141,10 @@ provider = "auto"   # auto | local | cloudflare | ngrok | tailscale | custom
 
 [widget]
 theme = "auto"      # auto | light | dark
+
+[logging]
+level = "info"       # debug | info | warn | error
+format = "text"      # text | json; JSON is useful for journal queries
 ```
 
 ## Development

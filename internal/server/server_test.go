@@ -2,11 +2,13 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +23,7 @@ import (
 
 	"miodesk/internal/adapter"
 	"miodesk/internal/config"
+	"miodesk/internal/logging"
 	"miodesk/internal/tools"
 	"miodesk/internal/workspace"
 )
@@ -157,6 +160,95 @@ func TestMCPCurrentProtocolStatelessJSON(t *testing.T) {
 	}
 	if result.Result.StructuredContent["kind"] != "status" {
 		t.Errorf("structured content = %v", result.Result.StructuredContent)
+	}
+}
+
+func TestHandlerLogsRequestsAndToolsWithoutPayloads(t *testing.T) {
+	previous := slog.Default()
+	defer slog.SetDefault(previous)
+	var logs bytes.Buffer
+	if err := logging.Configure(logging.Settings{Level: "info", Format: "json"}, &logs); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newTestServer(t)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.Header.Get("X-Miodesk-Request-ID") == "" {
+		t.Error("HTTP response should carry a request id")
+	}
+
+	ctx := context.Background()
+	client := mcp.NewClient(&mcp.Implementation{Name: "logging-test", Version: "0"}, nil)
+	sess, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             ts.URL + "/mcp",
+		HTTPClient:           ts.Client(),
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	call, err := sess.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "read",
+		Arguments: map[string]any{"path": "hello.txt"},
+	})
+	if err != nil || call.IsError {
+		t.Fatalf("read: err=%v call=%v", err, call)
+	}
+
+	output := logs.String()
+	for _, want := range []string{"http_request", "mcp_tool_complete", "\"tool\":\"read\"", "\"request_id\"", "\"duration_ms\""} {
+		if !strings.Contains(output, want) {
+			t.Errorf("logs missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "hello") {
+		t.Errorf("file content leaked into logs:\n%s", output)
+	}
+}
+
+func TestHandlerLogsAuthDenialWithoutCredential(t *testing.T) {
+	previous := slog.Default()
+	defer slog.SetDefault(previous)
+	var logs bytes.Buffer
+	if err := logging.Configure(logging.Settings{Level: "info", Format: "json"}, &logs); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = t.TempDir()
+	cfg.Remote.Mode = "token"
+	cfg.Remote.Token = "test-secret-token"
+	ws, err := workspace.New(cfg.Workspace.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(New(cfg, ws).Handler())
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+	output := logs.String()
+	for _, want := range []string{"auth_denied", "missing_or_invalid_bearer", "http_request"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("logs missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, cfg.Remote.Token) {
+		t.Error("bearer token leaked into auth logs")
 	}
 }
 

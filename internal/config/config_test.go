@@ -23,6 +23,9 @@ func TestDefault(t *testing.T) {
 	if cfg.Widget.Theme != "auto" {
 		t.Errorf("widget theme = %q", cfg.Widget.Theme)
 	}
+	if cfg.Logging.Level != "info" || cfg.Logging.Format != "text" {
+		t.Errorf("logging defaults = %+v", cfg.Logging)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config should validate: %v", err)
 	}
@@ -211,6 +214,19 @@ func TestRemoteValidation(t *testing.T) {
 	cfg.Remote.Token = "x"
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("token mode with token should validate: %v", err)
+	}
+}
+
+func TestLoggingValidation(t *testing.T) {
+	cfg := Default()
+	cfg.Logging.Level = "trace"
+	if err := cfg.Validate(); err == nil {
+		t.Error("unknown logging.level should be rejected")
+	}
+	cfg = Default()
+	cfg.Logging.Format = "yaml"
+	if err := cfg.Validate(); err == nil {
+		t.Error("unknown logging.format should be rejected")
 	}
 }
 

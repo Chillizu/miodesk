@@ -3,9 +3,12 @@ package server
 import (
 	"crypto/subtle"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"miodesk/internal/logging"
 )
 
 // AccessMode is miodesk's three-tier trust model. Local trusted usage stays
@@ -65,11 +68,13 @@ func (a *Authorize) Middleware(next http.Handler) http.Handler {
 		if a.mode != AccessUnsafe && r.URL.Path != "/healthz" {
 			if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(r.Host, origin) {
 				if !(a.mode == AccessToken && requestHasToken(r, a.token)) {
+					logAuthDenied(r, "origin")
 					http.Error(w, "forbidden origin", http.StatusForbidden)
 					return
 				}
 			}
 			if a.mode == AccessToken && !requestHasToken(r, a.token) {
+				logAuthDenied(r, "missing_or_invalid_bearer")
 				w.Header().Set("WWW-Authenticate", `Bearer realm="miodesk"`)
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
@@ -77,6 +82,16 @@ func (a *Authorize) Middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func logAuthDenied(r *http.Request, reason string) {
+	slog.Warn("auth_denied",
+		"request_id", logging.RequestID(r.Context()),
+		"reason", reason,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote_addr", r.RemoteAddr,
+	)
 }
 
 func requestHasToken(r *http.Request, want string) bool {

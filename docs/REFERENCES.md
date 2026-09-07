@@ -189,4 +189,14 @@ Format: topic → URL → version → used by → decision → checked.
   still needs ChatGPT-compatible `noauth` or OAuth; miodesk's static bearer
   mode is for clients that can send an Authorization header.
 
+## Structured diagnostics
+
+- URL: https://pkg.go.dev/log/slog
+- Used by: `internal/logging`, `internal/server`, `internal/cli`
+- Decision: use the Go standard structured logger; default to stderr so the
+  systemd user service collects records in journald. Request IDs correlate HTTP
+  records with MCP tool records; payloads, command lines, Authorization values,
+  and bearer tokens are excluded or redacted.
+- Checked: 2026-09-07
+
 ## Later milestones (not yet consulted — re-verify at implementation time)

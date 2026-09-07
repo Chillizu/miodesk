@@ -48,7 +48,7 @@ explicitly set to `"local"`, connect refuses to open a remote entrance at all.
 Note: ChatGPT connectors do not currently accept static bearer tokens (their
 documented options are `noauth` and `oauth2`). For ChatGPT-specific testing,
 see unsafe mode below; prefer OAuth-based flows for real deployments
-(not yet implemented — tracked as a limitation).
+(or OpenAI Secure MCP Tunnel, which keeps the server private).
 
 ### Unsafe development mode
 
@@ -71,6 +71,18 @@ send headers. Never combine it with a long-lived tunnel.
 `/api/status`, `/api/edits`, `/widget`, and the MCP endpoint all carry no
 secrets; they expose workspace paths and usage counters only. When a tunnel is
 active, everything reachable is gated by the active trust level.
+
+## Logging
+
+The server uses Go's structured `log/slog` logger. HTTP requests, authentication
+denials, MCP tool completion/errors, and panics include a short request ID and
+elapsed time. The default stderr sink is collected by the systemd user journal;
+set `[logging].format = "json"` for machine-readable records or
+`MIODESK_LOG=debug` for health checks and other verbose diagnostics.
+
+Logging intentionally omits file contents, command lines, bearer tokens,
+Authorization headers, and tool arguments. `miodesk logs` also redacts the
+configured bearer token defensively before displaying journal output.
 
 ## Reporting
 

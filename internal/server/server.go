@@ -26,6 +26,7 @@ import (
 	"miodesk/internal/adapter"
 	"miodesk/internal/buildinfo"
 	"miodesk/internal/config"
+	"miodesk/internal/logging"
 	"miodesk/internal/tools"
 	"miodesk/internal/workspace"
 	"miodesk/internal/xdg"
@@ -101,7 +102,9 @@ func New(cfg *config.Config, ws *workspace.Workspace) *Server {
 	registerTools(s)
 	// The ChatGPT / MCP Apps dashboard is host-facing UI metadata; it lives
 	// in the adapter, never in the core tools.
-	if err := adapter.Attach(s.mcp, widget.Static, func(ctx context.Context) (any, error) {
+	if err := adapter.Attach(s.mcp, widget.Static, func(ctx context.Context) (out any, err error) {
+		finish := s.beginTool(ctx, "status")
+		defer func() { finish(err) }()
 		return s.Dashboard(), nil
 	}); err != nil {
 		// Broken embedded assets are a build error; degrade to text-only
@@ -115,6 +118,30 @@ func (s *Server) bump(tool string) {
 	s.statsMu.Lock()
 	s.stats[tool]++
 	s.statsMu.Unlock()
+}
+
+// beginTool records one typed MCP invocation. Inputs and outputs are
+// intentionally omitted: paths, command lines, and file contents may contain
+// secrets. The correlation id still joins this record to its HTTP request.
+func (s *Server) beginTool(ctx context.Context, tool string) func(error) {
+	s.bump(tool)
+	started := time.Now()
+	id := logging.RequestID(ctx)
+	if id == "" {
+		id = logging.NewRequestID()
+	}
+	return func(err error) {
+		attrs := []any{
+			"request_id", id,
+			"tool", tool,
+			"duration_ms", time.Since(started).Seconds() * 1000,
+		}
+		if err != nil {
+			slog.Warn("mcp_tool_error", append(attrs, "error", err.Error())...)
+			return
+		}
+		slog.Info("mcp_tool_complete", attrs...)
+	}
 }
 
 func (s *Server) recordEdits(files []tools.EditFileResult) {
@@ -224,8 +251,9 @@ func registerTools(s *Server) {
 		Title:       "Read file",
 		Description: "Read a text file inside the workspace. Supports line-based offset/limit windowing; output is capped at 512 KiB per call.",
 		Annotations: readOnly,
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ReadInput) (*mcp.CallToolResult, *tools.ReadOutput, error) {
-		s.bump("read")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ReadInput) (result *mcp.CallToolResult, output *tools.ReadOutput, err error) {
+		finish := s.beginTool(ctx, "read")
+		defer func() { finish(err) }()
 		out, err := tools.Read(ctx, s.ws, in)
 		if err != nil {
 			return nil, nil, err
@@ -237,8 +265,9 @@ func registerTools(s *Server) {
 		Title:       "Search file contents",
 		Description: "Search file contents inside the workspace. Uses ripgrep when available and a built-in engine otherwise.",
 		Annotations: readOnly,
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.SearchInput) (*mcp.CallToolResult, *tools.SearchOutput, error) {
-		s.bump("search")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.SearchInput) (result *mcp.CallToolResult, output *tools.SearchOutput, err error) {
+		finish := s.beginTool(ctx, "search")
+		defer func() { finish(err) }()
 		out, err := tools.Search(ctx, s.ws, in)
 		if err != nil {
 			return nil, nil, err
@@ -250,8 +279,9 @@ func registerTools(s *Server) {
 		Title:       "List directory",
 		Description: "List directory entries inside the workspace with bounded depth and count.",
 		Annotations: readOnly,
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ListInput) (*mcp.CallToolResult, *tools.ListOutput, error) {
-		s.bump("list")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ListInput) (result *mcp.CallToolResult, output *tools.ListOutput, err error) {
+		finish := s.beginTool(ctx, "list")
+		defer func() { finish(err) }()
 		out, err := tools.List(ctx, s.ws, in)
 		if err != nil {
 			return nil, nil, err
@@ -263,8 +293,9 @@ func registerTools(s *Server) {
 		Title:       "Write file",
 		Description: "Create or overwrite a file inside the workspace. Parent directories are only created when create_dirs is set.",
 		Annotations: ann(false, true, false, true),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.WriteInput) (*mcp.CallToolResult, *tools.WriteOutput, error) {
-		s.bump("write")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.WriteInput) (result *mcp.CallToolResult, output *tools.WriteOutput, err error) {
+		finish := s.beginTool(ctx, "write")
+		defer func() { finish(err) }()
 		out, err := tools.Write(ctx, s.ws, in)
 		if err != nil {
 			return nil, nil, err
@@ -276,8 +307,9 @@ func registerTools(s *Server) {
 		Title:       "Edit file",
 		Description: "Apply exact-replace or guarded range edits to files inside the workspace. Every operation is validated before anything is written, and each file write is atomic (temp + rename).",
 		Annotations: ann(false, true, false, true),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.EditInput) (*mcp.CallToolResult, *tools.EditOutput, error) {
-		s.bump("edit")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.EditInput) (result *mcp.CallToolResult, output *tools.EditOutput, err error) {
+		finish := s.beginTool(ctx, "edit")
+		defer func() { finish(err) }()
 		out, err := tools.Edit(ctx, s.ws, in)
 		if err != nil {
 			return nil, nil, err
@@ -290,8 +322,9 @@ func registerTools(s *Server) {
 		Title:       "Delete path",
 		Description: "Delete a file, symlink, or directory inside the workspace. Non-empty directories require recursive=true.",
 		Annotations: ann(false, true, false, false),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.DeleteInput) (*mcp.CallToolResult, *tools.DeleteOutput, error) {
-		s.bump("delete")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.DeleteInput) (result *mcp.CallToolResult, output *tools.DeleteOutput, err error) {
+		finish := s.beginTool(ctx, "delete")
+		defer func() { finish(err) }()
 		out, err := tools.Delete(ctx, s.ws, in)
 		if err != nil {
 			return nil, nil, err
@@ -303,8 +336,9 @@ func registerTools(s *Server) {
 		Title:       "Run command",
 		Description: "Run a short command in the workspace and return stdout, stderr, exit code, and elapsed time.",
 		Annotations: ann(false, true, true, false),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.CommandInput) (*mcp.CallToolResult, *tools.CommandOutput, error) {
-		s.bump("command")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.CommandInput) (result *mcp.CallToolResult, output *tools.CommandOutput, err error) {
+		finish := s.beginTool(ctx, "command")
+		defer func() { finish(err) }()
 		out, err := tools.Command(ctx, s.ws, in)
 		if err != nil {
 			return nil, nil, err
@@ -316,8 +350,9 @@ func registerTools(s *Server) {
 		Title:       "Start long command",
 		Description: "Start a long-running command in the workspace; returns a task id for polling and cancellation.",
 		Annotations: ann(false, true, true, false),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.CommandInput) (*mcp.CallToolResult, *tools.TaskStarted, error) {
-		s.bump("command_start")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.CommandInput) (result *mcp.CallToolResult, output *tools.TaskStarted, err error) {
+		finish := s.beginTool(ctx, "command_start")
+		defer func() { finish(err) }()
 		id, err := s.commands.Start(s.ws, in)
 		if err != nil {
 			return nil, nil, err
@@ -329,8 +364,9 @@ func registerTools(s *Server) {
 		Title:       "Poll long command",
 		Description: "Poll a long-running command task by id for status and accumulated output.",
 		Annotations: ann(true, false, false, true),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.TaskID) (*mcp.CallToolResult, *tools.PollOutput, error) {
-		s.bump("command_poll")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.TaskID) (result *mcp.CallToolResult, output *tools.PollOutput, err error) {
+		finish := s.beginTool(ctx, "command_poll")
+		defer func() { finish(err) }()
 		out, err := s.commands.Poll(in.ID)
 		if err != nil {
 			return nil, nil, err
@@ -342,8 +378,9 @@ func registerTools(s *Server) {
 		Title:       "Cancel long command",
 		Description: "Cancel a long-running command task by id.",
 		Annotations: ann(false, true, false, true),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.TaskID) (*mcp.CallToolResult, *tools.PollOutput, error) {
-		s.bump("command_cancel")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.TaskID) (result *mcp.CallToolResult, output *tools.PollOutput, err error) {
+		finish := s.beginTool(ctx, "command_cancel")
+		defer func() { finish(err) }()
 		out, err := s.commands.Cancel(in.ID)
 		if err != nil {
 			return nil, nil, err
@@ -429,7 +466,78 @@ func (s *Server) Handler() http.Handler {
 	if static, err := fs.Sub(widget.Static, "static"); err == nil {
 		mux.Handle("/", http.FileServerFS(static))
 	}
-	return s.auth.Middleware(mux)
+	return s.requestLogger(s.auth.Middleware(mux))
+}
+
+type responseRecorder struct {
+	http.ResponseWriter
+	status      int
+	bytes       int
+	wroteHeader bool
+}
+
+func (w *responseRecorder) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *responseRecorder) Write(p []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.bytes += n
+	return n, err
+}
+
+func (w *responseRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (s *Server) requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := logging.NewRequestID()
+		ctx := logging.WithRequestID(r.Context(), id)
+		r = r.WithContext(ctx)
+		w.Header().Set("X-Miodesk-Request-ID", id)
+		rw := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
+		started := time.Now()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				slog.Error("http_panic", "request_id", id, "method", r.Method, "path", r.URL.Path, "panic", fmt.Sprint(recovered))
+				panic(recovered)
+			}
+			attrs := []any{
+				"request_id", id,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", rw.status,
+				"bytes", rw.bytes,
+				"duration_ms", time.Since(started).Seconds() * 1000,
+				"remote_addr", r.RemoteAddr,
+				"access_mode", string(s.auth.Mode()),
+			}
+			if value := r.Header.Get("Mcp-Method"); value != "" {
+				attrs = append(attrs, "mcp_method", value)
+			}
+			if value := r.Header.Get("Mcp-Name"); value != "" {
+				attrs = append(attrs, "mcp_name", value)
+			}
+			switch {
+			case rw.status >= 500:
+				slog.Error("http_request", attrs...)
+			case rw.status >= 400:
+				slog.Warn("http_request", attrs...)
+			case r.URL.Path == "/healthz":
+				slog.Debug("http_request", attrs...)
+			default:
+				slog.Info("http_request", attrs...)
+			}
+		}()
+		next.ServeHTTP(rw, r)
+	})
 }
 
 // ToolCalls is the real usage data behind the widget's token-stats strip.
@@ -511,6 +619,7 @@ func (s *Server) Listen() (net.Listener, error) {
 // gracefully. The state file lives exactly as long as the server does.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	s.writeState()
+	slog.Info("server_started", "endpoint", s.MCPURL(), "access_mode", s.AccessMode())
 
 	hs := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	serveErr := make(chan error, 1)
@@ -520,6 +629,9 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	case err := <-serveErr:
 		s.commands.Shutdown()
 		s.clearState()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server_exit", "error", err.Error())
+		}
 		return err
 	case <-ctx.Done():
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -527,6 +639,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		_ = hs.Shutdown(shutCtx)
 		s.commands.Shutdown()
 		s.clearState()
+		slog.Info("server_stopped", "reason", "context_cancelled")
 		return nil
 	}
 }
@@ -535,7 +648,14 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 // use stdout; anything human-facing must go to stderr.
 func (s *Server) RunStdio(ctx context.Context) error {
 	defer s.commands.Shutdown()
-	return s.mcp.Run(ctx, &mcp.StdioTransport{})
+	slog.Info("server_started", "transport", "stdio", "access_mode", s.AccessMode())
+	err := s.mcp.Run(ctx, &mcp.StdioTransport{})
+	if err != nil {
+		slog.Error("server_exit", "transport", "stdio", "error", err.Error())
+	} else {
+		slog.Info("server_stopped", "transport", "stdio", "reason", "context_cancelled")
+	}
+	return err
 }
 
 // URL is the widget/status base URL, for display after Listen.

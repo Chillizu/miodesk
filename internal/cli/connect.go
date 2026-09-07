@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -50,6 +51,7 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 		errf(stderr, "%v", err)
 		return 1
 	}
+	configureLogging(cfg, stderr)
 	if err := validateBindSecurity(cfg); err != nil {
 		errf(stderr, "%v", err)
 		hintf(stderr, "bind 127.0.0.1, or set remote.mode = \"token\" with remote.token; --unsafe-remote is for short tests only")
@@ -109,6 +111,7 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 		hintf(stderr, "check `miodesk tunnel doctor`, or try another provider: miodesk tunnel list")
 		return 1
 	}
+	slog.Info("tunnel_ready", "provider", ep.Provider, "endpoint", ep.URL)
 
 	okf(stdout, "local server: %s", s.URL())
 	okf(stdout, "public endpoint (%s): %s", ep.Provider, ep.URL)
@@ -127,7 +130,10 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 
 	serveErr := s.Serve(ctx, ln)
 	if err := provider.Stop(); err != nil {
+		slog.Warn("tunnel_stop_error", "provider", ep.Provider, "error", err.Error())
 		warnf(stderr, "%v", err)
+	} else {
+		slog.Info("tunnel_stopped", "provider", ep.Provider)
 	}
 	if serveErr != nil {
 		errf(stderr, "%v", serveErr)

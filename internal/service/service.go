@@ -34,6 +34,7 @@ After=default.target
 
 [Service]
 ExecStart=%s serve
+SyslogIdentifier=miodesk
 Restart=on-failure
 RestartSec=2
 

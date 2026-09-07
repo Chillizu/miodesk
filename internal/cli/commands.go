@@ -18,6 +18,7 @@ import (
 	"miodesk/internal/buildinfo"
 	"miodesk/internal/config"
 	"miodesk/internal/doctor"
+	"miodesk/internal/logging"
 	"miodesk/internal/server"
 	"miodesk/internal/service"
 	"miodesk/internal/update"
@@ -140,6 +141,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		errf(stderr, "%v", err)
 		return 1
 	}
+	configureLogging(cfg, stderr)
 	if err := validateBindSecurity(cfg); err != nil {
 		errf(stderr, "%v", err)
 		hintf(stderr, "bind 127.0.0.1, or set remote.mode = \"token\" with remote.token in the config")
@@ -211,6 +213,9 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	cfg, _, cfgErr := config.LoadOrDefault(path)
+	if cfgErr == nil {
+		configureLogging(cfg, stderr)
+	}
 	rep := doctor.Run(path, cfg, cfgErr)
 
 	if *jsonFlag {
@@ -444,6 +449,10 @@ func runLogs(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("logs", stderr)
 	follow := fs.Bool("follow", false, "keep streaming new log lines")
 	n := fs.Int("n", 100, "number of lines to show")
+	jsonFlag := fs.Bool("json", false, "print journal records as JSON")
+	since := fs.String("since", "", "journal start time, e.g. 10m or today")
+	until := fs.String("until", "", "journal end time")
+	grep := fs.String("grep", "", "journal message pattern to filter")
 	if err := fs.Parse(args); err != nil {
 		hintf(stderr, "run `miodesk logs -h`")
 		return 2
@@ -455,6 +464,20 @@ func runLogs(args []string, stdout, stderr io.Writer) int {
 	}
 
 	journalArgs := []string{"--user", "-u", service.Name, "-n", strconv.Itoa(*n), "--no-pager"}
+	if *jsonFlag {
+		journalArgs = append(journalArgs, "-o", "json-pretty")
+	} else {
+		journalArgs = append(journalArgs, "-o", "short-iso")
+	}
+	if *since != "" {
+		journalArgs = append(journalArgs, "--since", *since)
+	}
+	if *until != "" {
+		journalArgs = append(journalArgs, "--until", *until)
+	}
+	if *grep != "" {
+		journalArgs = append(journalArgs, "-g", *grep)
+	}
 	if *follow {
 		journalArgs = append(journalArgs, "--follow")
 	}
@@ -474,6 +497,20 @@ func runLogs(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func configureLogging(cfg *config.Config, stderr io.Writer) {
+	settings := logging.Settings{Level: cfg.Logging.Level, Format: cfg.Logging.Format}
+	if value := os.Getenv("MIODESK_LOG"); value != "" {
+		settings.Level = value
+	}
+	if value := os.Getenv("MIODESK_LOG_FORMAT"); value != "" {
+		settings.Format = value
+	}
+	if err := logging.Configure(settings, stderr); err != nil {
+		warnf(stderr, "logging configuration ignored: %v", err)
+		_ = logging.Configure(logging.Settings{Level: "info", Format: "text"}, stderr)
+	}
 }
 
 type redactingWriter struct {

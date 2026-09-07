@@ -35,6 +35,14 @@ type Widget struct {
 	Theme string `toml:"theme"` // auto | light | dark
 }
 
+// Logging controls diagnostic records emitted by the server and CLI. The
+// default stderr sink is intentional: the systemd user service collects it in
+// journald, while foreground runs keep the same records visible in a terminal.
+type Logging struct {
+	Level  string `toml:"level"`  // debug | info | warn | error
+	Format string `toml:"format"` // text | json
+}
+
 type Remote struct {
 	// Mode is the remote-access trust level:
 	//   "" / "local" — no token; the server must only be reachable from the
@@ -54,6 +62,7 @@ type Config struct {
 	Workspace Workspace `toml:"workspace"`
 	Tunnel    Tunnel    `toml:"tunnel"`
 	Widget    Widget    `toml:"widget"`
+	Logging   Logging   `toml:"logging"`
 	Remote    Remote    `toml:"remote"`
 }
 
@@ -66,6 +75,7 @@ func Default() *Config {
 		Workspace: Workspace{Root: home},
 		Tunnel:    Tunnel{Provider: "auto"},
 		Widget:    Widget{Theme: "auto"},
+		Logging:   Logging{Level: "info", Format: "text"},
 	}
 }
 
@@ -171,6 +181,12 @@ func (c *Config) applyDefaults() {
 	if c.Widget.Theme == "" {
 		c.Widget.Theme = def.Widget.Theme
 	}
+	if c.Logging.Level == "" {
+		c.Logging.Level = def.Logging.Level
+	}
+	if c.Logging.Format == "" {
+		c.Logging.Format = def.Logging.Format
+	}
 }
 
 // Validate reports configuration values miodesk cannot act on.
@@ -182,6 +198,16 @@ func (c *Config) Validate() error {
 	case "auto", "light", "dark":
 	default:
 		return fmt.Errorf("widget.theme %q must be auto, light, or dark", c.Widget.Theme)
+	}
+	switch c.Logging.Level {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("logging.level %q must be debug, info, warn, or error", c.Logging.Level)
+	}
+	switch c.Logging.Format {
+	case "text", "json":
+	default:
+		return fmt.Errorf("logging.format %q must be text or json", c.Logging.Format)
 	}
 	switch c.Remote.Mode {
 	case "", "local", "token", "unsafe":
