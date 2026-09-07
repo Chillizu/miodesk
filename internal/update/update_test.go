@@ -1,0 +1,164 @@
+package update
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestNewer(t *testing.T) {
+	cases := []struct {
+		latest, current string
+		want            bool
+	}{
+		{"0.2.0", "0.1.0", true},
+		{"0.1.0", "0.1.0", false},
+		{"0.1.0", "0.2.0", false},
+		{"1.0", "0.9.9", true},
+		{"v0.3.0", "0.2.5", true},
+		{"0.2.0-rc1", "0.1.9", true},  // suffix ignored, 0.2.0 > 0.1.9
+		{"0.2.0-rc1", "0.2.0", false}, // equal base → not newer
+		{"banana", "0.1.0", false},    // unparseable → never newer
+		{"0.1.0", "banana", false},
+		{"", "0.1.0", false},
+	}
+	for _, tc := range cases {
+		if got := Newer(tc.latest, tc.current); got != tc.want {
+			t.Errorf("Newer(%q, %q) = %v, want %v", tc.latest, tc.current, got, tc.want)
+		}
+	}
+}
+
+func fakeSHA(t *testing.T, data []byte) string {
+	t.Helper()
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestReplaceBinary(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "miodesk")
+	if err := os.WriteFile(target, []byte("OLD BINARY"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	newBytes := []byte("NEW BINARY CONTENT")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(newBytes)
+	}))
+	defer srv.Close()
+
+	n, err := replaceBinary(target, srv.URL, fakeSHA(t, newBytes))
+	if err != nil {
+		t.Fatalf("replaceBinary: %v", err)
+	}
+	if int64(len(newBytes)) != n {
+		t.Errorf("bytes = %d", n)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(newBytes) {
+		t.Errorf("content = %q", got)
+	}
+	fi, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o755 {
+		t.Errorf("mode = %v, want executable", fi.Mode().Perm())
+	}
+	// No temp leftovers.
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Errorf("leftover files: %v", entries)
+	}
+}
+
+func TestReplaceBinaryChecksumMismatch(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "miodesk")
+	if err := os.WriteFile(target, []byte("OLD"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("TAMPERED"))
+	}))
+	defer srv.Close()
+
+	_, err := replaceBinary(target, srv.URL, "deadbeef")
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("error = %v, want checksum mismatch", err)
+	}
+	got, _ := os.ReadFile(target)
+	if string(got) != "OLD" {
+		t.Errorf("target must be untouched on mismatch, got %q", got)
+	}
+}
+
+func TestCheckAgainstFeed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m := Manifest{Version: "9.9.9", Assets: map[string]Asset{
+			Platform(): {URL: "http://example.invalid/bin"},
+		}}
+		json.NewEncoder(w).Encode(m)
+	}))
+	defer srv.Close()
+
+	out, err := Check("0.1.0", srv.URL)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if out.UpToDate || out.Latest != "9.9.9" || out.Current != "0.1.0" {
+		t.Errorf("outcome = %+v", out)
+	}
+
+	out, err = Check("9.9.9", srv.URL)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if !out.UpToDate {
+		t.Errorf("same version should be up to date: %+v", out)
+	}
+}
+
+func TestUpdateMissingPlatformAsset(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m := Manifest{Version: "9.9.9", Assets: map[string]Asset{
+			"os/999": {URL: "http://example.invalid/bin"},
+		}}
+		json.NewEncoder(w).Encode(m)
+	}))
+	defer srv.Close()
+
+	if _, err := Update("0.1.0", srv.URL); err == nil {
+		t.Fatal("missing platform asset must error")
+	} else if !strings.Contains(err.Error(), "no asset for") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+func TestFetchErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	if _, err := Fetch(srv.URL); err == nil {
+		t.Fatal("404 manifest must error")
+	}
+
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"version": ""}`))
+	}))
+	defer srv2.Close()
+	if _, err := Fetch(srv2.URL); err == nil {
+		t.Fatal("manifest without version must error")
+	}
+}

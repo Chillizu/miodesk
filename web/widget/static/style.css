@@ -1,0 +1,447 @@
+/* miodesk widget — ChatGPT-native visual foundation.
+   Design reference: ChatGPT's own tool results, settings rows, and code
+   surfaces. Rows, sections, and dividers — not card grids. Neutral colors;
+   color only for state, focus, and interaction. Icons are inline monochrome
+   SVG. Components adapt to their container (container queries), never to the
+   device viewport. No sticky positioning, no backdrop-filter, no overlays. */
+
+:root {
+  color-scheme: light dark;
+
+  --miodesk-bg: #ffffff;
+  --miodesk-text: #0d0d0d;
+  --miodesk-muted: #8f8f8f;
+  --miodesk-border: #e6e6e6;
+  --miodesk-surface: #f7f7f8;
+  --miodesk-accent: #0d0d0d;
+  --miodesk-success: #1a7f46;
+  --miodesk-success-soft: rgba(26, 127, 70, 0.10);
+  --miodesk-warning: #b7791f;
+  --miodesk-danger: #c0392b;
+  --miodesk-danger-soft: rgba(192, 57, 43, 0.08);
+  --miodesk-info-soft: rgba(13, 13, 13, 0.05);
+  --miodesk-radius: 10px;
+  --miodesk-gap: 12px;
+  --miodesk-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --miodesk-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --miodesk-bg: #212121;
+    --miodesk-text: #ececec;
+    --miodesk-muted: #9b9b9b;
+    --miodesk-border: #3a3a3a;
+    --miodesk-surface: #2f2f2f;
+    --miodesk-accent: #ececec;
+    --miodesk-success: #4ade80;
+    --miodesk-success-soft: rgba(74, 222, 128, 0.12);
+    --miodesk-warning: #fbbf24;
+    --miodesk-danger: #f87171;
+    --miodesk-danger-soft: rgba(248, 113, 113, 0.12);
+    --miodesk-info-soft: rgba(236, 236, 236, 0.07);
+  }
+}
+
+:root[data-theme="dark"] {
+  --miodesk-bg: #212121;
+  --miodesk-text: #ececec;
+  --miodesk-muted: #9b9b9b;
+  --miodesk-border: #3a3a3a;
+  --miodesk-surface: #2f2f2f;
+  --miodesk-accent: #ececec;
+  --miodesk-success: #4ade80;
+  --miodesk-success-soft: rgba(74, 222, 128, 0.12);
+  --miodesk-warning: #fbbf24;
+  --miodesk-danger: #f87171;
+  --miodesk-danger-soft: rgba(248, 113, 113, 0.12);
+  --miodesk-info-soft: rgba(236, 236, 236, 0.07);
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --miodesk-bg: #ffffff;
+  --miodesk-text: #0d0d0d;
+  --miodesk-muted: #8f8f8f;
+  --miodesk-border: #e6e6e6;
+  --miodesk-surface: #f7f7f8;
+  --miodesk-accent: #0d0d0d;
+  --miodesk-success: #1a7f46;
+  --miodesk-success-soft: rgba(26, 127, 70, 0.10);
+  --miodesk-warning: #b7791f;
+  --miodesk-danger: #c0392b;
+  --miodesk-danger-soft: rgba(192, 57, 43, 0.08);
+  --miodesk-info-soft: rgba(13, 13, 13, 0.05);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: var(--miodesk-gap);
+  padding-left: max(var(--miodesk-gap), env(safe-area-inset-left));
+  padding-right: max(var(--miodesk-gap), env(safe-area-inset-right));
+  padding-top: max(var(--miodesk-gap), env(safe-area-inset-top));
+  padding-bottom: max(var(--miodesk-gap), env(safe-area-inset-bottom));
+  background: var(--miodesk-bg);
+  color: var(--miodesk-text);
+  font: 13px/1.5 var(--miodesk-font);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--miodesk-text);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+button {
+  font: inherit;
+  color: var(--miodesk-text);
+  background: transparent;
+  border: 1px solid var(--miodesk-border);
+  border-radius: 8px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+button:hover { background: var(--miodesk-info-soft); }
+button:disabled { opacity: 0.4; cursor: default; background: transparent; }
+
+/* ---------- result structure ---------- */
+
+.result {
+  display: grid;
+  gap: 10px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.stack { display: grid; gap: 18px; }
+
+/* A nested result block inside a renderer: no container of its own —
+   container-type on a shrink-to-fit child collapses its width. */
+.subresult { display: grid; gap: 10px; min-width: 0; }
+
+.rhead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rhead .ic {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--miodesk-muted);
+  align-self: center;
+}
+
+.rhead .action {
+  flex: none;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.rhead .target {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--miodesk-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.rhead .meta {
+  flex: none;
+  margin-left: auto;
+  color: var(--miodesk-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.section-h {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--miodesk-muted);
+}
+
+/* State line: icon + text — never color alone. */
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.state .ic { width: 14px; height: 14px; }
+.state--ok { color: var(--miodesk-success); }
+.state--fail { color: var(--miodesk-danger); }
+.state--warn { color: var(--miodesk-warning); }
+.state--info { color: var(--miodesk-muted); }
+
+.note {
+  color: var(--miodesk-muted);
+  font-size: 11.5px;
+  margin: 0;
+}
+
+/* ---------- code / output surfaces ---------- */
+
+.code {
+  background: var(--miodesk-surface);
+  border: 1px solid var(--miodesk-border);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.code pre {
+  margin: 0;
+  padding: 10px 12px;
+  font: 12px/1.55 var(--miodesk-mono);
+  overflow: auto;
+  max-height: 320px;
+  white-space: pre;
+  min-width: 0;
+}
+
+.code .code__bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--miodesk-border);
+}
+
+.code .code__bar .label {
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--miodesk-muted);
+}
+
+/* key/value rows */
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin: 0;
+  min-width: 0;
+}
+
+.kv dt { color: var(--miodesk-muted); }
+.kv dd {
+  margin: 0;
+  min-width: 0;
+  font-family: var(--miodesk-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* row lists (search groups, list entries) */
+.rowlist { display: grid; }
+
+.rowlist .row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--miodesk-border);
+  min-width: 0;
+}
+
+.rowlist .row:last-child { border-bottom: none; }
+
+.rowlist .row .ic {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--miodesk-muted);
+  align-self: center;
+}
+
+.rowlist .row .name {
+  font-family: var(--miodesk-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.rowlist .row .fill { flex: 1 1 auto; }
+
+.rowlist .row .meta {
+  flex: none;
+  color: var(--miodesk-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.match-line { display: flex; gap: 10px; padding: 3px 0; min-width: 0; }
+.match-line .no {
+  flex: none;
+  width: 4ch;
+  text-align: right;
+  color: var(--miodesk-muted);
+  font: 12px var(--miodesk-mono);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.match-line .txt {
+  font: 12px/1.5 var(--miodesk-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.match-line mark {
+  background: var(--miodesk-info-soft);
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 3px;
+}
+
+/* ---------- diff ---------- */
+
+.diff {
+  background: var(--miodesk-bg);
+  border: 1px solid var(--miodesk-border);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.diff > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  list-style: none;
+  min-width: 0;
+}
+
+.diff > summary::-webkit-details-marker { display: none; }
+
+.diff__path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--miodesk-mono);
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.diff__stat {
+  flex: none;
+  font-family: var(--miodesk-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.diff__stat .plus { color: var(--miodesk-success); }
+.diff__stat .minus { color: var(--miodesk-danger); }
+
+.diff__body {
+  border-top: 1px solid var(--miodesk-border);
+  padding: 8px 10px 10px;
+  display: grid;
+  gap: 8px;
+}
+
+/* Inline toolbar: a plain row above the scroll area — never floating,
+   never sticky, never covering content. */
+.diff__bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  font-family: var(--miodesk-mono);
+  font-size: 11px;
+  color: var(--miodesk-muted);
+}
+
+.diff__bar button {
+  padding: 1px 8px;
+  font-family: var(--miodesk-mono);
+  font-size: 11px;
+}
+
+.diff__bar .diff__pos { font-variant-numeric: tabular-nums; }
+.diff__bar[hidden] { display: none; }
+
+.diff__scroll {
+  overflow: auto;
+  max-height: 300px;
+  border: 1px solid var(--miodesk-border);
+  border-radius: 6px;
+}
+
+.dlines {
+  display: grid;
+  grid-template-columns: 1fr;
+  font: 11px/1.6 var(--miodesk-mono);
+  min-width: 0;
+  width: max-content;
+  min-width: 100%;
+}
+
+.dl {
+  display: grid;
+  grid-template-columns: 4ch 4ch 1fr;
+  padding: 0 8px;
+  white-space: pre;
+}
+
+.dl__no {
+  color: var(--miodesk-muted);
+  text-align: right;
+  padding-right: 8px;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.dl__text { white-space: pre; min-width: 0; }
+
+.dl--add { background: var(--miodesk-success-soft); }
+.dl--del { background: var(--miodesk-danger-soft); }
+.dl--add .dl__text { color: var(--miodesk-success); }
+.dl--del .dl__text { color: var(--miodesk-danger); }
+
+.dl--hunk {
+  color: var(--miodesk-muted);
+  background: var(--miodesk-info-soft);
+  font-weight: 600;
+}
+
+.dl--target { outline: 1px solid var(--miodesk-accent); outline-offset: -1px; }
+
+/* ---------- responsive (container width, not viewport) ---------- */
+
+.result { container-type: inline-size; container-name: result; }
+
+@container result (max-width: 480px) {
+  .rhead { flex-wrap: wrap; }
+  .rhead .target { flex-basis: 100%; order: 3; }
+  .rhead .meta { margin-left: 0; }
+  .kv { grid-template-columns: max-content 1fr; }
+}
+
+@container result (max-width: 320px) {
+  body { font-size: 13px; }
+  .kv { grid-template-columns: 1fr; gap: 0 0; }
+  .kv dt { margin-top: 6px; }
+  .rhead .meta { white-space: normal; }
+}

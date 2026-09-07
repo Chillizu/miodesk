@@ -1,0 +1,19 @@
+# Local build outputs
+/\.git-main/
+/miodesk
+/miodesk-*
+/dist/
+
+# Go tooling
+coverage.out
+*.test
+
+# Local runtime/config data
+config.toml
+server.json
+.miodesk-*
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
