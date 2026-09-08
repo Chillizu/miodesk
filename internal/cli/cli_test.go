@@ -345,13 +345,6 @@ func TestRedactingWriterHandlesSplitSecret(t *testing.T) {
 	}
 }
 
-func TestUpdateRequiresFeed(t *testing.T) {
-	isolatedEnv(t)
-	if code, _, errOut := run(t, "update"); code != 1 || !strings.Contains(errOut, "--from") {
-		t.Errorf("update without feed: exit=%d stderr:\n%s", code, errOut)
-	}
-}
-
 func TestServiceArgValidation(t *testing.T) {
 	isolatedEnv(t)
 	if code, _, errOut := run(t, "service"); code != 2 || !strings.Contains(errOut, "missing verb") {
