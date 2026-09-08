@@ -9,6 +9,8 @@
   explicitly and avoid starting a duplicate tunnel-client when the persistent
   tunnel service is already running.
 - Included the tunnel companion journal in `miodesk logs`.
+- Hardened persistent OpenAI tunnel reuse against port/profile mismatches and
+  completed tunnel reporting in status JSON recovery and the diagnostics widget.
 
 ## 0.2.1 — 2026-09-08
 

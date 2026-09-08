@@ -27,6 +27,7 @@ func TestWidgetHTMLAssembly(t *testing.T) {
 		"white-space: pre-wrap",        // command output can wrap on narrow hosts
 		"--miodesk-content-max",        // root and result share one width token
 		"max-width: calc(var(--miodesk-content-max) + 2 * var(--miodesk-gap))",
+		`["tunnel", data.tunnel]`, // status renderer distinguishes transport from local auth
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("assembled widget missing %q", want)
@@ -40,6 +41,14 @@ func TestWidgetHTMLAssembly(t *testing.T) {
 	if !strings.Contains(html, `appInfo: { name: "miodesk", version: "`+buildinfo.Version+`" }`) {
 		t.Error("widget appInfo should use the binary build version")
 	}
+	mocks, err := widget.Static.ReadFile("static/mocks.js")
+	if err != nil {
+		t.Fatalf("read mocks: %v", err)
+	}
+	if !strings.Contains(string(mocks), `tunnel: "openai"`) {
+		t.Error("status preview mock should include the OpenAI tunnel provider")
+	}
+
 	// Self-contained: no external URLs in resource/style/script references.
 	if strings.Contains(html, `src="http`) || strings.Contains(html, `href="http`) {
 		t.Error("widget must not reference external resources")

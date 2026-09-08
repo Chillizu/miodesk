@@ -558,17 +558,30 @@ func runOpenAIConnect(cfg *config.Config, ws *workspace.Workspace, stdout, stder
 
 	ctx, stop := signalContext()
 	defer stop()
+	if service.TunnelInstalled() {
+		if refreshProfile {
+			errf(stderr, "cannot override the OpenAI tunnel port while the persistent tunnel service is installed")
+			hintf(stderr, "use `miodesk setup --port %d`, then `miodesk service restart`; uninstall the service first for a foreground-only override", cfg.Server.Port)
+			return 1
+		}
+		if service.TunnelRunningQuick() {
+			if service.Installed() && service.RunningQuick() && runningServerMatchesPort(cfg.Server.Port) {
+				okf(stdout, "using running miodesk service at %s", openAILocalMCPURL(cfg.Server.Port))
+				okf(stdout, "OpenAI Secure MCP Tunnel service is already running")
+				infof(stdout, "inspect it with: miodesk service status")
+				return 0
+			}
+			errf(stderr, "persistent OpenAI tunnel service is running, but the local miodesk service does not match configured port %d", cfg.Server.Port)
+			hintf(stderr, "run `miodesk service restart` after changing the configured port; do not start a second foreground tunnel")
+			return 1
+		}
+	}
 	if service.Installed() && service.RunningQuick() && runningServerMatchesPort(cfg.Server.Port) {
 		if _, err := ensureOpenAIProfile(cfg, openAILocalMCPURL(cfg.Server.Port), refreshProfile); err != nil {
 			errf(stderr, "%v", err)
 			return 1
 		}
 		okf(stdout, "using running miodesk service at %s", openAILocalMCPURL(cfg.Server.Port))
-		if service.TunnelInstalled() && service.TunnelRunningQuick() {
-			okf(stdout, "OpenAI Secure MCP Tunnel service is already running")
-			infof(stdout, "inspect it with: miodesk service status")
-			return 0
-		}
 		okf(stdout, "starting OpenAI Secure MCP Tunnel for %s", settings.TunnelID)
 		err := waitOpenAITunnel(ctx, settings, stdout, stderr)
 		if err != nil && ctx.Err() == nil {

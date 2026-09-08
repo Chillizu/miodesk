@@ -65,6 +65,7 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 		hintf(stderr, "the OpenAI tunnel supplies the remote boundary; omit --unsafe-remote")
 		return 2
 	}
+	portOverride := portSet && *portFlag != cfg.Server.Port
 	if portSet {
 		cfg.Server.Port = *portFlag
 	}
@@ -87,7 +88,7 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 	if providerName == "openai" {
 		// An explicit port override changes the tunnel-client's local target;
 		// refresh the externally-owned profile in that case.
-		return runOpenAIConnect(cfg, ws, stdout, stderr, portSet)
+		return runOpenAIConnect(cfg, ws, stdout, stderr, portOverride)
 	}
 
 	// A tunnel is by definition a remote entrance: it must never open
