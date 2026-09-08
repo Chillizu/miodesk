@@ -20,7 +20,7 @@ func TestUpdateCheckUsesDefaultReleaseManifest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits++
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"version":"0.2.1-dev","assets":{}}`)
+		fmt.Fprint(w, "{\"version\":\"0.2.1-dev\",\"assets\":{}}")
 	}))
 	defer server.Close()
 
@@ -43,7 +43,7 @@ func TestUpdateCheckFromOverridesDefaultReleaseManifest(t *testing.T) {
 	defaultServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		defaultHits++
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"version":"0.2.1-dev","assets":{}}`)
+		fmt.Fprint(w, "{\"version\":\"0.2.1-dev\",\"assets\":{}}")
 	}))
 	defer defaultServer.Close()
 
@@ -51,7 +51,7 @@ func TestUpdateCheckFromOverridesDefaultReleaseManifest(t *testing.T) {
 	overrideServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		overrideHits++
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"version":"0.2.1-dev","assets":{}}`)
+		fmt.Fprint(w, "{\"version\":\"0.2.1-dev\",\"assets\":{}}")
 	}))
 	defer overrideServer.Close()
 
