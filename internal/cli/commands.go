@@ -510,7 +510,7 @@ func runService(args []string, stdout, stderr io.Writer) int {
 			}
 			okf(stdout, "service installed: %s.service", service.Name)
 			infof(stdout, "start it now: miodesk service start")
-			infof(stdout, "enable at login when ready: systemctl --user enable %s", service.Name)
+			infof(stdout, "enable it at login when ready: systemctl --user enable %s", service.Name)
 		}
 		return 0
 	case "uninstall":
@@ -551,6 +551,8 @@ func runService(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+const defaultReleaseManifestURL = "https://github.com/Chillizu/miodesk/releases/latest/download/manifest.json"
+
 func runUpdate(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("update", stderr)
 	from := fs.String("from", "", "release manifest URL (JSON: {version, assets: {\"os/arch\": {url, sha256}}})")
@@ -564,14 +566,13 @@ func runUpdate(args []string, stdout, stderr io.Writer) int {
 	if !requireNoPositional(fs, stderr) {
 		return 2
 	}
-	if *from == "" {
-		errf(stderr, "no release feed given")
-		hintf(stderr, "use `miodesk update --from <manifest-url>`; add --check to only report")
-		return 1
+	feedURL := *from
+	if feedURL == "" {
+		feedURL = defaultReleaseManifestURL
 	}
 
 	if *checkOnly {
-		out, err := update.Check(buildinfo.Version, *from)
+		out, err := update.Check(buildinfo.Version, feedURL)
 		if err != nil {
 			errf(stderr, "%v", err)
 			return 1
@@ -584,7 +585,7 @@ func runUpdate(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	out, err := update.Update(buildinfo.Version, *from)
+	out, err := update.Update(buildinfo.Version, feedURL)
 	if err != nil {
 		errf(stderr, "%v", err)
 		return 1
