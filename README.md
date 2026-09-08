@@ -1,6 +1,10 @@
-# miodesk
+<p align="center">
+  <img src="Miodesk-logo.png" width="180" alt="Miodesk logo">
+</p>
 
-A small, fast, portable local AI / MCP tool bridge.
+<h1 align="center">miodesk</h1>
+
+<p align="center"><strong>A small, fast, portable local AI / MCP tool bridge.</strong></p>
 
 miodesk lets ChatGPT, MCP clients, IDE agents, and coding agents work with a
 chosen workspace and its development tools through one static binary. The
