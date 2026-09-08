@@ -79,16 +79,20 @@ corresponding Tunnel in Developer Mode/connector settings. See
 [docs/SETUP.md](docs/SETUP.md) and [docs/CHATGPT.md](docs/CHATGPT.md) for the
 credential, workspace association, and troubleshooting details.
 
-On Linux, the local server can be kept running by the user service:
+On Linux, `miodesk service install` installs the local server unit and, when
+OpenAI Tunnel is configured, a companion `miodesk-tunnel.service` that runs
+`tunnel-client` from the generated profile:
 
 ```sh
 miodesk service install
 miodesk service start
-miodesk connect       # keeps the OpenAI tunnel in the foreground
+systemctl --user enable miodesk miodesk-tunnel  # optional: start at login/boot
 ```
 
-Without a running service, `miodesk connect` starts both the local server and
-the OpenAI tunnel in the foreground. Press `Ctrl-C` to stop both.
+`miodesk service start|stop|restart|status|uninstall` manages the pair
+together. If the persistent tunnel is already running, `miodesk connect`
+reuses it instead of starting a second tunnel client. Without installed
+services, `miodesk connect` still starts both processes in the foreground.
 
 ## Commands
 
@@ -99,10 +103,10 @@ the OpenAI tunnel in the foreground. Press `Ctrl-C` to stop both.
 | `serve`     | run the local MCP server and widget                          |
 | `connect`   | run/reuse the server and connect through the default tunnel  |
 | `tunnel`    | inspect the default connection with `list` or `doctor`      |
-| `status`    | show whether the local server is running (`--json`)         |
+| `status`    | show local server, tunnel provider, and tunnel service state (`--json`) |
 | `doctor`    | check configuration, workspace, connection, and ports       |
 | `logs`      | show collected systemd records or foreground guidance       |
-| `service`   | manage the Linux systemd user service                       |
+| `service`   | manage the Linux server + tunnel systemd user services                  |
 | `config`    | print the configuration file path                           |
 | `workspace` | print the configured workspace root                         |
 | `update`    | verify and atomically apply a release manifest              |

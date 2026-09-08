@@ -119,21 +119,27 @@ Press `Ctrl-C` to stop both processes. The local endpoint is normally
 `http://127.0.0.1:8787/mcp`; OpenAI receives the connection through the
 outbound tunnel, not through a public listener on that port.
 
-On Linux, the server can be kept alive by the systemd user service:
+On Linux, miodesk can keep both halves alive with systemd user services:
 
 ```sh
 miodesk service install
 miodesk service start
-miodesk connect
 ```
 
-When the service is already running, `miodesk connect` reuses it and keeps
-only the tunnel client in the foreground. `service install` does not enable
-the unit implicitly; enable it after checking the setup with:
+When OpenAI Tunnel is configured, `service install` writes both
+`miodesk.service` for the loopback MCP server and `miodesk-tunnel.service`
+for `tunnel-client run --profile miodesk`. The tunnel unit depends on the
+local server and restarts automatically if the tunnel client exits. The
+command does not enable units implicitly; after checking the setup, enable
+both for login/boot startup:
 
 ```sh
-systemctl --user enable miodesk
+systemctl --user enable miodesk miodesk-tunnel
 ```
+
+`miodesk service start|stop|restart|status|uninstall` manages the pair
+together. If both are already running, `miodesk connect` reports the
+persistent connection instead of launching a duplicate tunnel client.
 
 On macOS and Windows, use the foreground command or the host's own process
 manager. miodesk does not silently install an operating-system service.

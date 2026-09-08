@@ -565,6 +565,7 @@ type Status struct {
 	Port          int        `json:"port"`
 	Theme         string     `json:"theme"`
 	Remote        string     `json:"remote"`
+	Tunnel        string     `json:"tunnel"`
 	StartedAt     time.Time  `json:"started_at"`
 	UptimeSeconds int64      `json:"uptime_seconds"`
 	Tools         []ToolInfo `json:"tools"`
@@ -595,6 +596,7 @@ func (s *Server) Status() Status {
 		Port:          int(s.port.Load()),
 		Theme:         theme,
 		Remote:        remote,
+		Tunnel:        s.cfg.Tunnel.Provider,
 		StartedAt:     s.started,
 		UptimeSeconds: int64(time.Since(s.started).Seconds()),
 		Tools:         s.tools,

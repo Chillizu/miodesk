@@ -522,12 +522,16 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	if service.Supported() {
 		fmt.Fprintln(stdout, "  miodesk service install")
 		fmt.Fprintln(stdout, "  miodesk service start")
+	} else if cfg.Tunnel.Provider == "openai" && openaiConfigured {
+		fmt.Fprintln(stdout, "  miodesk connect")
 	} else {
 		fmt.Fprintln(stdout, "  miodesk serve")
 	}
 	if cfg.Tunnel.Provider == "openai" && openaiConfigured {
 		fmt.Fprintln(stdout, "  tunnel-client doctor --profile "+cfg.Tunnel.OpenAI.Profile+" --explain")
-		fmt.Fprintln(stdout, "  miodesk connect")
+		if service.Supported() {
+			fmt.Fprintln(stdout, "  miodesk service status")
+		}
 	} else {
 		fmt.Fprintln(stdout, "  miodesk doctor")
 	}
@@ -560,6 +564,11 @@ func runOpenAIConnect(cfg *config.Config, ws *workspace.Workspace, stdout, stder
 			return 1
 		}
 		okf(stdout, "using running miodesk service at %s", openAILocalMCPURL(cfg.Server.Port))
+		if service.TunnelInstalled() && service.TunnelRunningQuick() {
+			okf(stdout, "OpenAI Secure MCP Tunnel service is already running")
+			infof(stdout, "inspect it with: miodesk service status")
+			return 0
+		}
 		okf(stdout, "starting OpenAI Secure MCP Tunnel for %s", settings.TunnelID)
 		err := waitOpenAITunnel(ctx, settings, stdout, stderr)
 		if err != nil && ctx.Err() == nil {

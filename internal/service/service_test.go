@@ -20,6 +20,40 @@ func TestUnitPathFollowsXDG(t *testing.T) {
 	}
 }
 
+func TestTunnelUnitPathFollowsXDG(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/custom/cfg")
+	path, err := TunnelUnitPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join("/custom/cfg", "systemd", "user", "miodesk-tunnel.service")
+	if path != want {
+		t.Errorf("TunnelUnitPath = %q, want %q", path, want)
+	}
+}
+
+func TestTunnelUnitContent(t *testing.T) {
+	content := TunnelUnitContent("/home/me/.local/bin/tunnel-client", "/home/me/.config/tunnel-client", "miodesk")
+	for _, want := range []string{
+		"Description=miodesk OpenAI Secure MCP Tunnel",
+		"Requires=miodesk.service",
+		"After=miodesk.service network-online.target",
+		"ExecStart=/home/me/.local/bin/tunnel-client run --profile-dir /home/me/.config/tunnel-client --profile miodesk",
+		"Restart=always",
+		"UMask=0077",
+		"NoNewPrivileges=true",
+		"PrivateTmp=true",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("tunnel unit missing %q:\n%s", want, content)
+		}
+	}
+	quoted := TunnelUnitContent("/opt/Tunnel Client/tunnel-client", "/home/me/Config Dir", "mio profile")
+	if !strings.Contains(quoted, `ExecStart="/opt/Tunnel Client/tunnel-client" run --profile-dir "/home/me/Config Dir" --profile "mio profile"`) {
+		t.Errorf("tunnel unit must quote arguments with spaces:\n%s", quoted)
+	}
+}
+
 func TestUnitContent(t *testing.T) {
 	content := UnitContent("/opt/miodesk")
 	for _, want := range []string{

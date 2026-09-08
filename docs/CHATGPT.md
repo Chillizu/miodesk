@@ -51,19 +51,23 @@ Tunnel 本身就是 OpenAI 连接边界。ChatGPT 的可用入口仍受账号和
 miodesk connect
 ```
 
-按 `Ctrl-C` 会停止两者。若 Linux 上已经安装并启动了 miodesk user service，
-`miodesk connect` 会复用正在运行的本地 server，只在当前终端运行 tunnel：
+按 `Ctrl-C` 会停止两者。Linux 上可以把本地 server 和 tunnel-client 都交给
+systemd user service：
 
 ```sh
 miodesk service install
 miodesk service start
-miodesk connect
 ```
+
+OpenAI Tunnel 已配置时，安装会生成 `miodesk.service` 和
+`miodesk-tunnel.service`；后者依赖本地 server，并在 tunnel-client 异常退出时
+自动重启。若两者已经在后台运行，`miodesk connect` 只报告现有连接，不会再
+启动第二个 tunnel-client。
 
 `service install` 不会隐式 enable；确认运行正常后再执行：
 
 ```sh
-systemctl --user enable miodesk
+systemctl --user enable miodesk miodesk-tunnel
 ```
 
 macOS/Windows 没有内置的 miodesk service 管理器，使用前台命令或操作系统
@@ -78,8 +82,8 @@ macOS/Windows 没有内置的 miodesk service 管理器，使用前台命令或�
 miodesk setup --workspace /absolute/path/to/workspace --port 9900
 ```
 
-然后再运行 `miodesk connect`。`--port 0` 只适用于本地临时测试；OpenAI
-Tunnel 需要固定端口。
+若使用 systemd 服务，再运行 `miodesk service restart`；前台模式则重新运行
+`miodesk connect`。`--port 0` 只适用于本地临时测试；OpenAI Tunnel 需要固定端口。
 
 ## 已有 HTTPS 入口（高级）
 

@@ -84,12 +84,13 @@ flow.
 
 - URL: https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html
 - Used by: `internal/service`
-- Decision: minimal unit only — Description, After, ExecStart, Restart,
-  RestartSec, WantedBy=default.target. No type/specifier tricks; miodesk owns
-  config/port/logs. Unit lives at $XDG_CONFIG_HOME/systemd/user/miodesk.service;
-  install writes + `daemon-reload` (no implicit enable). Re-verify only if
-  specifiers (%h etc.) are ever added.
-- Checked: 2026-09-06 (live install/status/uninstall on linux)
+- Decision: keep the local MCP server and OpenAI tunnel-client as separate
+  systemd user services. `miodesk.service` owns the loopback server;
+  `miodesk-tunnel.service` runs the externally-owned tunnel-client profile,
+  requires/starts after the server, and restarts independently. Install writes
+  + `daemon-reload` but does not implicitly enable either unit.
+- Checked: 2026-09-08 (live install/status, forced tunnel crash/restart, and
+  ChatGPT-side reconnect verification on Linux)
 
 ## Legacy public tunnel adapters
 
@@ -194,15 +195,16 @@ or the primary CLI's connection discovery.
 ## OpenAI Secure MCP Tunnel
 
 - URL: https://developers.openai.com/api/docs/guides/secure-mcp-tunnels
-- Version: current, checked 2026-09-07
+- Version: current, checked 2026-09-08
 - Used by: deployment guidance and `internal/cli` tunnel output
 - Decision: OpenAI's Secure MCP Tunnel is the supported way to connect a
   private developer machine to ChatGPT without exposing a public listener. It
   requires a user-created `tunnel_id`, runtime API key, and workspace/org
   association; `tunnel-client` polls OpenAI and forwards to the local `/mcp`.
-  miodesk does not invent or store those credentials. A public HTTPS endpoint
-  still needs ChatGPT-compatible `noauth` or OAuth; miodesk's static bearer
-  mode is for clients that can send an Authorization header.
+  The official guide explicitly requires keeping `tunnel-client run` healthy
+  and lists a VM/systemd service as a supported deployment pattern, so Linux
+  service installation may supervise tunnel-client as a companion process.
+  miodesk still does not parse the profile or copy runtime key material.
 
 ## Structured diagnostics
 

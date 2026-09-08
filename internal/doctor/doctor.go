@@ -211,22 +211,28 @@ func checkTunnel(r *Report, cfg *config.Config) {
 	switch cfg.Tunnel.Provider {
 	case "openai":
 		checkOpenAITunnel(r, cfg)
+		hint := "run `miodesk connect` for a foreground tunnel, or `miodesk service install` on Linux for a persistent tunnel"
+		if service.Supported() && service.TunnelInstalled() {
+			hint = "use `miodesk service status` to inspect the persistent tunnel"
+		}
+		r.add("endpoint", StatusInfo,
+			"the local MCP server stays on loopback; tunnel-client provides the outbound OpenAI connection",
+			hint)
 	case "custom":
 		r.add("tunnel", StatusInfo,
 			"custom endpoint: miodesk will not create or verify a public URL",
 			"use `miodesk connect --provider custom --url https://…`")
+		r.add("endpoint", StatusInfo, "custom endpoint mode keeps public endpoint ownership outside miodesk")
 	case "local":
 		r.add("tunnel", StatusInfo, "local mode: no remote endpoint")
+		r.add("endpoint", StatusInfo, "local MCP server only; no remote tunnel is configured")
 	default:
 		// Keep old provider configurations working, but do not make their
 		// machine-specific availability part of the primary doctor output.
 		r.add("tunnel", StatusInfo, "legacy connection mode preserved: "+cfg.Tunnel.Provider,
 			"use `miodesk setup --tunnel-id tunnel_…` to switch to OpenAI Secure MCP Tunnel")
+		r.add("endpoint", StatusInfo, "legacy connection mode; migrate to OpenAI Secure MCP Tunnel when ready")
 	}
-
-	r.add("endpoint", StatusInfo,
-		"the local MCP server stays on loopback; OpenAI Secure MCP Tunnel is the default remote path",
-		"run `miodesk connect` only when a remote OpenAI connection is needed")
 }
 
 func checkOpenAITunnel(r *Report, cfg *config.Config) {
@@ -299,6 +305,22 @@ func checkOpenAITunnel(r *Report, cfg *config.Config) {
 		return
 	}
 	r.add("tunnel", StatusOK, "OpenAI Secure MCP Tunnel is configured")
+	if !service.Supported() {
+		return
+	}
+	if !service.TunnelInstalled() {
+		r.add("tunnel service", StatusInfo,
+			"persistent tunnel service is not installed",
+			"run `miodesk service install`; foreground `miodesk connect` remains available")
+		return
+	}
+	if service.TunnelRunningQuick() {
+		r.add("tunnel service", StatusOK, "systemd user tunnel service is running")
+		return
+	}
+	r.add("tunnel service", StatusWarn,
+		"systemd user tunnel service is installed but not running",
+		"run `miodesk service start`, then rerun doctor")
 }
 
 func checkWritable(root string) error {
