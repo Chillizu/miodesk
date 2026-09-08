@@ -315,6 +315,100 @@ func TestCommandsRejectUnexpectedPositionalArgs(t *testing.T) {
 	}
 }
 
+func TestConnectRejectsPortOverrideWithPersistentTunnelService(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("persistent tunnel service is Linux-only")
+	}
+	isolatedEnv(t)
+	ws := t.TempDir()
+	key := filepath.Join(t.TempDir(), "runtime-key")
+	if err := os.WriteFile(key, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profileDir := filepath.Join(t.TempDir(), "tunnel-client")
+	stub := filepath.Join(t.TempDir(), "tunnel-client")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nmkdir -p \"$MIODESK_TEST_PROFILE_DIR\"\nprintf '%s\\n' stub > \"$MIODESK_TEST_PROFILE_DIR/miodesk.yaml\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MIODESK_TEST_PROFILE_DIR", profileDir)
+	code, _, errOut := run(t, "setup", "--workspace", ws,
+		"--tunnel-id", "tunnel_0123456789abcdef0123456789abcdef",
+		"--runtime-key-file", key, "--profile-dir", profileDir, "--tunnel-client", stub)
+	if code != 0 {
+		t.Fatalf("setup exit=%d stderr=%q", code, errOut)
+	}
+	unitDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "systemd", "user")
+	if err := os.MkdirAll(unitDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unitDir, "miodesk-tunnel.service"), []byte("stub\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, errOut = run(t, "connect", "--port", "9900")
+	if code != 1 || !strings.Contains(errOut, "cannot override the OpenAI tunnel port") {
+		t.Fatalf("connect override: exit=%d stderr=%q", code, errOut)
+	}
+}
+
+func TestConnectRejectsRunningPersistentTunnelWithStaleServerPort(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("persistent tunnel service is Linux-only")
+	}
+	isolatedEnv(t)
+	ws := t.TempDir()
+	key := filepath.Join(t.TempDir(), "runtime-key")
+	if err := os.WriteFile(key, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profileDir := filepath.Join(t.TempDir(), "tunnel-client")
+	stub := filepath.Join(t.TempDir(), "tunnel-client")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nmkdir -p \"$MIODESK_TEST_PROFILE_DIR\"\nprintf '%s\\n' stub > \"$MIODESK_TEST_PROFILE_DIR/miodesk.yaml\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MIODESK_TEST_PROFILE_DIR", profileDir)
+	code, _, errOut := run(t, "setup", "--workspace", ws,
+		"--tunnel-id", "tunnel_0123456789abcdef0123456789abcdef",
+		"--runtime-key-file", key, "--profile-dir", profileDir, "--tunnel-client", stub)
+	if code != 0 {
+		t.Fatalf("setup exit=%d stderr=%q", code, errOut)
+	}
+
+	cfgPath, err := config.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Server.Port = 9900
+	if err := cfg.Save(cfgPath); err != nil {
+		t.Fatal(err)
+	}
+
+	unitDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "systemd", "user")
+	if err := os.MkdirAll(unitDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"miodesk.service", "miodesk-tunnel.service"} {
+		if err := os.WriteFile(filepath.Join(unitDir, name), []byte("stub\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	binDir := t.TempDir()
+	systemctl := filepath.Join(binDir, "systemctl")
+	if err := os.WriteFile(systemctl, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	code, _, errOut = run(t, "connect")
+	if code != 1 || !strings.Contains(errOut, "persistent OpenAI tunnel service is running") || !strings.Contains(errOut, "do not start a second foreground tunnel") {
+		t.Fatalf("stale persistent port: exit=%d stderr=%q", code, errOut)
+	}
+}
+
 func TestConnectRejectsIncompatibleFlags(t *testing.T) {
 	isolatedEnv(t)
 	if code, _, errOut := run(t, "connect", "--url", "https://example.com"); code != 2 || !strings.Contains(errOut, "only valid") {
@@ -442,7 +536,7 @@ func TestStatusJSONRemovesInvalidState(t *testing.T) {
 	}
 
 	code, out, _ := run(t, "status", "--json")
-	if code != 0 || !strings.Contains(out, `"running":false`) {
+	if code != 0 || !strings.Contains(out, `"running":false`) || !strings.Contains(out, `"remote":"local"`) || !strings.Contains(out, `"tunnel":"openai"`) || !strings.Contains(out, `"tunnel_service":"not-installed"`) {
 		t.Errorf("invalid status: exit=%d output=%q", code, out)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {

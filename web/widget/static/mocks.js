@@ -83,7 +83,7 @@ window.MIODESK_MOCKS = {
   status: {
     kind: "status", name: "miodesk", version: "0.3.0", platform: "linux/amd64",
     workspace: "/home/you/project", endpoint: "http://127.0.0.1:8791/mcp",
-    remote: "local", port: 8791, uptime_seconds: 3721,
+    remote: "local", tunnel: "openai", port: 8791, uptime_seconds: 3721,
     stats: { calls: { read: 12, search: 4, edit: 2, command: 9 }, total: 27 },
   },
 };

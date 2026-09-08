@@ -372,7 +372,9 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 	if err := json.Unmarshal(data, &st); err != nil {
 		removeStateIfMatches(path, data)
 		if *jsonFlag {
-			_ = json.NewEncoder(stdout).Encode(map[string]any{"running": false})
+			_ = json.NewEncoder(stdout).Encode(map[string]any{
+				"running": false, "remote": remote, "tunnel": tunnelProvider, "tunnel_service": tunnelService,
+			})
 			return 0
 		}
 		warnf(stdout, "unreadable server state at %s", path)
