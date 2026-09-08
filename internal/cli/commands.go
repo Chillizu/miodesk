@@ -553,9 +553,13 @@ func runService(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+const defaultReleaseManifestURL = "https://github.com/Chillizu/miodesk/releases/latest/download/manifest.json"
+
+var releaseManifestURL = defaultReleaseManifestURL
+
 func runUpdate(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("update", stderr)
-	from := fs.String("from", "", "release manifest URL (JSON: {version, assets: {\"os/arch\": {url, sha256}}})")
+	from := fs.String("from", "", "release manifest URL override (JSON: {version, assets: {\"os/arch\": {url, sha256}}})")
 	checkOnly := fs.Bool("check", false, "report the available version without replacing anything")
 	if help, err := parseFlags(fs, args); help {
 		return 0
@@ -566,14 +570,13 @@ func runUpdate(args []string, stdout, stderr io.Writer) int {
 	if !requireNoPositional(fs, stderr) {
 		return 2
 	}
-	if *from == "" {
-		errf(stderr, "no release feed given")
-		hintf(stderr, "use `miodesk update --from <manifest-url>`; add --check to only report")
-		return 1
+	feedURL := *from
+	if feedURL == "" {
+		feedURL = releaseManifestURL
 	}
 
 	if *checkOnly {
-		out, err := update.Check(buildinfo.Version, *from)
+		out, err := update.Check(buildinfo.Version, feedURL)
 		if err != nil {
 			errf(stderr, "%v", err)
 			return 1
@@ -586,7 +589,7 @@ func runUpdate(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	out, err := update.Update(buildinfo.Version, *from)
+	out, err := update.Update(buildinfo.Version, feedURL)
 	if err != nil {
 		errf(stderr, "%v", err)
 		return 1
