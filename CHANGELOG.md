@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Added a companion `miodesk-tunnel.service` for configured OpenAI Secure MCP
+  Tunnel profiles, so Linux service commands supervise the loopback MCP server
+  and outbound tunnel together.
+- Made `doctor`, `status`, and `connect` report the tunnel lifecycle
+  explicitly and avoid starting a duplicate tunnel-client when the persistent
+  tunnel service is already running.
+- Included the tunnel companion journal in `miodesk logs`.
+
 ## 0.2.1 — 2026-09-08
 
 - Kept valid server state after a transient health-check failure so `status`

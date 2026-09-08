@@ -399,7 +399,7 @@ func TestServeOccupiedPort(t *testing.T) {
 func TestStatusWithoutServer(t *testing.T) {
 	isolatedEnv(t)
 	code, out, _ := run(t, "status")
-	if code != 0 || !strings.Contains(out, "no running server found") {
+	if code != 0 || !strings.Contains(out, "no running server found") || !strings.Contains(out, "tunnel: openai (service not-installed)") {
 		t.Errorf("status output:\n%s", out)
 	}
 }
@@ -419,7 +419,7 @@ func TestStatusJSONRetainsUnreachableState(t *testing.T) {
 	}
 
 	code, out, _ := run(t, "status", "--json")
-	if code != 0 || !strings.Contains(out, `"running":false`) {
+	if code != 0 || !strings.Contains(out, `"running":false`) || !strings.Contains(out, `"tunnel":"openai"`) || !strings.Contains(out, `"tunnel_service":"not-installed"`) {
 		t.Errorf("stale status: exit=%d output=%q", code, out)
 	}
 	if _, err := os.Stat(path); err != nil {

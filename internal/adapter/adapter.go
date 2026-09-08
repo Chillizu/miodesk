@@ -121,7 +121,7 @@ func dashboardTool() *mcp.Tool {
 	tool := &mcp.Tool{
 		Name:        "status",
 		Title:       "miodesk dashboard",
-		Description: "Return miodesk server status for the diagnostics view: workspace root, endpoint, remote access mode, usage counters, and recent edits. Read-only.",
+		Description: "Return miodesk server status for the diagnostics view: workspace root, endpoint, remote access mode, tunnel provider, usage counters, and recent edits. Read-only.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "miodesk dashboard",
 			ReadOnlyHint:    true,
@@ -141,6 +141,7 @@ func dashboardTool() *mcp.Tool {
 				"port":           map[string]any{"type": "integer"},
 				"theme":          map[string]any{"type": "string"},
 				"remote":         map[string]any{"type": "string"},
+				"tunnel":         map[string]any{"type": "string"},
 				"started_at":     map[string]any{"type": "string"},
 				"uptime_seconds": map[string]any{"type": "integer"},
 				"stats":          map[string]any{"type": "object"},

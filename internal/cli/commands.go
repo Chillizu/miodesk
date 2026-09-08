@@ -311,6 +311,27 @@ type serverState struct {
 	StartedAt string `json:"started_at"`
 }
 
+func statusConnection(stderr io.Writer) (remote, tunnelProvider, tunnelService string) {
+	remote = "local"
+	tunnelProvider = "local"
+	tunnelService = "not-installed"
+	if cfg, _, ok := loadConfig(stderr); ok {
+		if cfg.Remote.Mode != "" {
+			remote = cfg.Remote.Mode
+		}
+		if cfg.Tunnel.Provider != "" {
+			tunnelProvider = cfg.Tunnel.Provider
+		}
+	}
+	if service.Supported() && service.TunnelInstalled() {
+		tunnelService = "stopped"
+		if service.TunnelRunningQuick() {
+			tunnelService = "running"
+		}
+	}
+	return remote, tunnelProvider, tunnelService
+}
+
 func runStatus(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("status", stderr)
 	jsonFlag := fs.Bool("json", false, "print machine-readable JSON")
@@ -323,6 +344,7 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 	if !requireNoPositional(fs, stderr) {
 		return 2
 	}
+	remote, tunnelProvider, tunnelService := statusConnection(stderr)
 	dir, err := xdg.StateDir()
 	if err != nil {
 		errf(stderr, "%v", err)
@@ -332,10 +354,13 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		if *jsonFlag {
-			_ = json.NewEncoder(stdout).Encode(map[string]any{"running": false})
+			_ = json.NewEncoder(stdout).Encode(map[string]any{
+				"running": false, "remote": remote, "tunnel": tunnelProvider, "tunnel_service": tunnelService,
+			})
 			return 0
 		}
 		infof(stdout, "no running server found")
+		infof(stdout, "tunnel: %s (service %s)", tunnelProvider, tunnelService)
 		infof(stdout, "start one: miodesk serve")
 		return 0
 	}
@@ -359,28 +384,27 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 	// probeable on Windows). The local health endpoint is the authoritative
 	// liveness check for the recorded server.
 	alive := st.PID > 0 && serverHealth(st.URL)
-	remote := "local"
-	if cfg, _, ok := loadConfig(stderr); ok && cfg.Remote.Mode != "" {
-		remote = cfg.Remote.Mode
-	}
 	// Keep a structurally valid state file when a single health probe fails.
 	// The server removes it on a normal shutdown and overwrites it on startup;
 	// retaining it here lets status recover from a transient timeout instead of
 	// forgetting a live server until its next restart.
 	if *jsonFlag {
 		_ = json.NewEncoder(stdout).Encode(map[string]any{
-			"running":    alive,
-			"pid":        st.PID,
-			"url":        st.URL,
-			"port":       st.Port,
-			"started_at": st.StartedAt,
-			"remote":     remote,
+			"running":        alive,
+			"pid":            st.PID,
+			"url":            st.URL,
+			"port":           st.Port,
+			"started_at":     st.StartedAt,
+			"remote":         remote,
+			"tunnel":         tunnelProvider,
+			"tunnel_service": tunnelService,
 		})
 		return 0
 	}
 	if alive {
 		okf(stdout, "server running (pid %d): %s", st.PID, st.URL)
 		infof(stdout, "remote access: %s", remote)
+		infof(stdout, "tunnel: %s (service %s)", tunnelProvider, tunnelService)
 	} else {
 		warnf(stdout, "stale or unreachable state: server at %s is not responding", st.URL)
 		hintf(stdout, "start a fresh server: miodesk serve")
@@ -449,13 +473,45 @@ func runService(args []string, stdout, stderr io.Writer) int {
 	verb := fs.Arg(0)
 	switch verb {
 	case "install":
+		cfg, _, ok := loadConfig(stderr)
+		if !ok {
+			return 1
+		}
+		var tunnelSettings *openAISettings
+		if cfg.Tunnel.Provider == "openai" && cfg.Tunnel.OpenAI.TunnelID != "" {
+			settings, err := openAISettingsFromConfig(cfg, true)
+			if err != nil {
+				errf(stderr, "%v", err)
+				hintf(stderr, "run `miodesk setup` to repair the OpenAI tunnel configuration")
+				return 1
+			}
+			if _, err := os.Stat(openAIProfilePath(settings)); err != nil {
+				errf(stderr, "OpenAI tunnel-client profile is missing: %s", openAIProfilePath(settings))
+				hintf(stderr, "run `miodesk setup` to regenerate the tunnel-client profile")
+				return 1
+			}
+			tunnelSettings = &settings
+		}
 		if err := service.Install(); err != nil {
 			errf(stderr, "%v", err)
 			return 1
 		}
-		okf(stdout, "service installed")
-		infof(stdout, "start it now: miodesk service start")
-		infof(stdout, "enable at login when ready: systemctl --user enable miodesk")
+		if tunnelSettings != nil {
+			if err := service.InstallTunnel(tunnelSettings.ClientPath, tunnelSettings.ProfileDir, tunnelSettings.Profile); err != nil {
+				errf(stderr, "%v", err)
+				return 1
+			}
+			okf(stdout, "services installed: %s.service + %s.service", service.Name, service.TunnelName)
+			infof(stdout, "start both now: miodesk service start")
+			infof(stdout, "enable both at login when ready: systemctl --user enable %s %s", service.Name, service.TunnelName)
+		} else {
+			if err := service.RemoveTunnel(); err != nil {
+				warnf(stderr, "remove stale tunnel service: %v", err)
+			}
+			okf(stdout, "service installed: %s.service", service.Name)
+			infof(stdout, "start it now: miodesk service start")
+			infof(stdout, "enable at login when ready: systemctl --user enable %s", service.Name)
+		}
 		return 0
 	case "uninstall":
 		if err := service.Uninstall(); err != nil {
@@ -574,7 +630,11 @@ func runLogs(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	journalArgs := []string{"--user", "-u", service.Name, "-n", strconv.Itoa(*n), "--no-pager"}
+	journalArgs := []string{"--user", "-u", service.Name}
+	if service.TunnelInstalled() {
+		journalArgs = append(journalArgs, "-u", service.TunnelName)
+	}
+	journalArgs = append(journalArgs, "-n", strconv.Itoa(*n), "--no-pager")
 	if *jsonFlag {
 		journalArgs = append(journalArgs, "-o", "json-pretty")
 	} else {
