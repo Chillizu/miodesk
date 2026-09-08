@@ -33,6 +33,13 @@ import (
 	widget "github.com/Chillizu/miodesk/web/widget"
 )
 
+const (
+	// HealthHeader identifies a successful health response as coming from
+	// miodesk without exposing workspace or runtime details.
+	HealthHeader      = "X-Miodesk-Health"
+	HealthHeaderValue = "miodesk"
+)
+
 // Server hosts miodesk's MCP tools for HTTP and stdio clients.
 type Server struct {
 	cfg     *config.Config
@@ -422,6 +429,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.Handle("/mcp", mcpHandler)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(HealthHeader, HealthHeaderValue)
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, _ *http.Request) {

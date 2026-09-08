@@ -358,6 +358,9 @@ func TestListenServeShutdown(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("healthz = %d", resp.StatusCode)
 	}
+	if got := resp.Header.Get(HealthHeader); got != HealthHeaderValue {
+		t.Errorf("healthz %s = %q, want %q", HealthHeader, got, HealthHeaderValue)
+	}
 
 	resp, err = http.Get(base + "/")
 	if err != nil {

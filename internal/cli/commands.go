@@ -363,9 +363,10 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 	if cfg, _, ok := loadConfig(stderr); ok && cfg.Remote.Mode != "" {
 		remote = cfg.Remote.Mode
 	}
-	if !alive {
-		removeStateIfMatches(path, data)
-	}
+	// Keep a structurally valid state file when a single health probe fails.
+	// The server removes it on a normal shutdown and overwrites it on startup;
+	// retaining it here lets status recover from a transient timeout instead of
+	// forgetting a live server until its next restart.
 	if *jsonFlag {
 		_ = json.NewEncoder(stdout).Encode(map[string]any{
 			"running":    alive,

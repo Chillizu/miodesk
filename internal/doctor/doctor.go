@@ -5,12 +5,15 @@ package doctor
 import (
 	"fmt"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Chillizu/miodesk/internal/config"
 	"github.com/Chillizu/miodesk/internal/server"
@@ -141,9 +144,9 @@ func checkPort(r *Report, cfg *config.Config) {
 	}
 	ln, err := net.Listen("tcp", net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port)))
 	if err != nil {
-		if service.RunningQuick() {
+		if miodeskHealthy(cfg.Server.Host, cfg.Server.Port) {
 			r.add("server", StatusOK,
-				fmt.Sprintf("port %d is in use by the running miodesk service", cfg.Server.Port))
+				fmt.Sprintf("port %d is in use by a running miodesk server", cfg.Server.Port))
 			return
 		}
 		r.add("server", StatusWarn, fmt.Sprintf("port %d is not available: %v", cfg.Server.Port, err),
@@ -152,6 +155,34 @@ func checkPort(r *Report, cfg *config.Config) {
 	}
 	ln.Close()
 	r.add("server", StatusOK, fmt.Sprintf("port %d is free", cfg.Server.Port))
+}
+
+func miodeskHealthy(host string, port int) bool {
+	switch host {
+	case "", "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	u := url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort(host, strconv.Itoa(port)),
+		Path:   "/healthz",
+	}
+	client := &http.Client{
+		Timeout: time.Second,
+		Transport: &http.Transport{
+			Proxy: nil,
+		},
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Get(u.String())
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK &&
+		resp.Header.Get(server.HealthHeader) == server.HealthHeaderValue
 }
 
 // checkRemoteSecurity reports the remote-access trust level. Security

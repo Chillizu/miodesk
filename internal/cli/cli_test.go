@@ -404,7 +404,7 @@ func TestStatusWithoutServer(t *testing.T) {
 	}
 }
 
-func TestStatusJSONRemovesStaleState(t *testing.T) {
+func TestStatusJSONRetainsUnreachableState(t *testing.T) {
 	isolatedEnv(t)
 	dir, err := xdg.StateDir()
 	if err != nil {
@@ -422,8 +422,31 @@ func TestStatusJSONRemovesStaleState(t *testing.T) {
 	if code != 0 || !strings.Contains(out, `"running":false`) {
 		t.Errorf("stale status: exit=%d output=%q", code, out)
 	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("valid state should survive a transient health failure, stat error=%v", err)
+	}
+}
+
+func TestStatusJSONRemovesInvalidState(t *testing.T) {
+	isolatedEnv(t)
+	dir, err := xdg.StateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "server.json")
+	if err := os.WriteFile(path, []byte(`{"pid":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, _ := run(t, "status", "--json")
+	if code != 0 || !strings.Contains(out, `"running":false`) {
+		t.Errorf("invalid status: exit=%d output=%q", code, out)
+	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Errorf("stale state should be removed, stat error=%v", err)
+		t.Errorf("invalid state should be removed, stat error=%v", err)
 	}
 }
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Kept valid server state after a transient health-check failure so `status`
+  can recover without requiring a service restart.
+- Made `doctor` verify the exact occupied port is served by miodesk instead
+  of attributing it to any active systemd user service.
+
 ## 0.2.0 — 2026-09-07
 
 - Added a new-device `miodesk setup` flow with a stable local port, canonical
