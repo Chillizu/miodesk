@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Chillizu/miodesk/internal/buildinfo"
 	widget "github.com/Chillizu/miodesk/web/widget"
 )
 
@@ -32,8 +33,12 @@ func TestWidgetHTMLAssembly(t *testing.T) {
 		}
 	}
 	if strings.Contains(html, "__STYLE__") || strings.Contains(html, "__SCRIPT__") ||
-		strings.Contains(html, "__ICONS__") || strings.Contains(html, "__RENDERERS__") {
+		strings.Contains(html, "__ICONS__") || strings.Contains(html, "__RENDERERS__") ||
+		strings.Contains(html, "__MIODESK_APP_VERSION__") {
 		t.Error("template markers must not survive assembly")
+	}
+	if !strings.Contains(html, `appInfo: { name: "miodesk", version: "`+buildinfo.Version+`" }`) {
+		t.Error("widget appInfo should use the binary build version")
 	}
 	// Self-contained: no external URLs in resource/style/script references.
 	if strings.Contains(html, `src="http`) || strings.Contains(html, `href="http`) {

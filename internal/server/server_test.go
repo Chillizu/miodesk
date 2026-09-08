@@ -734,6 +734,7 @@ func TestMCPAppsDashboard(t *testing.T) {
 		"ui://miodesk/status.html",
 		"ui://miodesk/status-v2.html",
 		"ui://miodesk/status-v3.html",
+		"ui://miodesk/status-v4.html",
 	} {
 		legacyRead, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: legacyURI})
 		if err != nil {

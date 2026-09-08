@@ -219,7 +219,7 @@ go test -vet=all ./...
 go test -race ./...
 go build -buildvcs=false -o miodesk ./cmd/miodesk
 scripts/release-check.sh
-scripts/build-release.sh 0.2.0
+scripts/build-release.sh 0.2.1
 ```
 
 The release script produces platform binaries, `checksums.txt`, and a

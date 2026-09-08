@@ -124,13 +124,17 @@ or the primary CLI's connection discovery.
 ## ChatGPT Apps (plugins / Apps SDK)
 
 - URLs: https://developers.openai.com/llms.txt → https://developers.openai.com/plugins/llms.txt →
-  build/chatgpt-ui.md , plugins/reference.md , build/app-guidelines.md (all `.md` fetchable)
-- Version: current docs, checked 2026-09-07
+  https://developers.openai.com/plugins/build/chatgpt-ui.md , plugins/reference.md ,
+  build/app-guidelines.md (all `.md` fetchable)
+- Version: current docs, checked 2026-09-08
 - Used by: `internal/adapter`, `internal/server`
 - Decision:
   - UI tools declare the shared MCP Apps field `_meta.ui.resourceUri`
     (`ui://…`); `openai/outputTemplate` is set as the documented compatibility
     alias. `openai/toolInvocation/invoking|invoked` labels are ≤64 chars.
+    UI remains opt-in for selected tools; attaching a template to every data
+    tool causes unnecessary iframe re-renders, so ordinary file and short
+    command tools stay Native-first.
   - The widget resource uses mimeType `text/html;profile=mcp-app` and carries
     `_meta.ui` (`prefersBorder`; `csp`/`domain` omitted — the asset is fully
     self-contained with zero external origins).
@@ -142,7 +146,7 @@ or the primary CLI's connection discovery.
     performs the dependency-free MCP Apps `ui/initialize` handshake and
     applies host theme-change notifications.
   - Structured output tools declare `outputSchema`.
-- Checked: 2026-09-07
+- Checked: 2026-09-08
 
 ## MCP Apps extension
 

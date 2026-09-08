@@ -1,11 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 — 2026-09-08
 
 - Kept valid server state after a transient health-check failure so `status`
   can recover without requiring a service restart.
 - Made `doctor` verify the exact occupied port is served by miodesk instead
   of attributing it to any active systemd user service.
+- Kept the embedded MCP Apps identity aligned with the binary build version.
 
 ## 0.2.0 — 2026-09-07
 

@@ -14,12 +14,14 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/Chillizu/miodesk/internal/buildinfo"
 )
 
 // WidgetURI is the shared result widget resource. The URI doubles as the
 // host's cache key: bump the version segment whenever the embedded
 // HTML/CSS/JS change in a user-visible way.
-const WidgetURI = "ui://miodesk/status-v4.html"
+const WidgetURI = "ui://miodesk/status-v5.html"
 
 // legacyWidgetURIs keeps previously advertised template URIs readable while
 // ChatGPT connector metadata catches up. The current tools always advertise
@@ -29,6 +31,7 @@ var legacyWidgetURIs = []string{
 	"ui://miodesk/status.html",
 	"ui://miodesk/status-v2.html",
 	"ui://miodesk/status-v3.html",
+	"ui://miodesk/status-v4.html",
 }
 
 // WidgetMIMEType is the MCP Apps UI resource media type.
@@ -191,10 +194,15 @@ func widgetHTML(assets fs.FS) (string, error) {
 		}
 		html = strings.ReplaceAll(html, marker, body)
 	}
+	const versionMarker = "/*__MIODESK_APP_VERSION__*/"
+	html = strings.ReplaceAll(html, versionMarker, string(mustJSON(buildinfo.Version)))
 	for marker := range parts {
 		if strings.Contains(html, marker) {
 			return "", errors.New("widget template marker was not replaced: " + marker)
 		}
+	}
+	if strings.Contains(html, versionMarker) {
+		return "", errors.New("widget app version marker was not replaced")
 	}
 	return html, nil
 }
