@@ -510,7 +510,7 @@ func runService(args []string, stdout, stderr io.Writer) int {
 			}
 			okf(stdout, "service installed: %s.service", service.Name)
 			infof(stdout, "start it now: miodesk service start")
-			infof(stdout, "enable it at login when ready: systemctl --user enable %s", service.Name)
+			infof(stdout, "enable at login when ready: systemctl --user enable %s", service.Name)
 		}
 		return 0
 	case "uninstall":
@@ -553,9 +553,11 @@ func runService(args []string, stdout, stderr io.Writer) int {
 
 const defaultReleaseManifestURL = "https://github.com/Chillizu/miodesk/releases/latest/download/manifest.json"
 
+var releaseManifestURL = defaultReleaseManifestURL
+
 func runUpdate(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("update", stderr)
-	from := fs.String("from", "", "release manifest URL (JSON: {version, assets: {\"os/arch\": {url, sha256}}})")
+	from := fs.String("from", "", "release manifest URL override (JSON: {version, assets: {\"os/arch\": {url, sha256}}})")
 	checkOnly := fs.Bool("check", false, "report the available version without replacing anything")
 	if help, err := parseFlags(fs, args); help {
 		return 0
@@ -568,7 +570,7 @@ func runUpdate(args []string, stdout, stderr io.Writer) int {
 	}
 	feedURL := *from
 	if feedURL == "" {
-		feedURL = defaultReleaseManifestURL
+		feedURL = releaseManifestURL
 	}
 
 	if *checkOnly {
