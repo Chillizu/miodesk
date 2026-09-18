@@ -66,8 +66,29 @@ function startMCPAppsBridge() {
 
 function applyHostContext(context) {
   if (!context || typeof context !== "object") return;
+
+  const root = document.documentElement;
   if (context.theme === "light" || context.theme === "dark") {
-    document.documentElement.dataset.theme = context.theme;
+    root.dataset.theme = context.theme;
+  }
+
+  const variables = context.styles && context.styles.variables;
+  if (variables && typeof variables === "object") {
+    for (const [name, value] of Object.entries(variables)) {
+      if (/^--[a-z0-9-]+$/i.test(name) && typeof value === "string") {
+        root.style.setProperty(name, value);
+      }
+    }
+  }
+
+  const insets = context.safeAreaInsets;
+  if (insets && typeof insets === "object") {
+    for (const side of ["top", "right", "bottom", "left"]) {
+      const value = Number(insets[side]);
+      if (Number.isFinite(value) && value >= 0) {
+        root.style.setProperty("--miodesk-safe-" + side, value + "px");
+      }
+    }
   }
 }
 

@@ -112,7 +112,7 @@ func New(cfg *config.Config, ws *workspace.Workspace) *Server {
 	if err := adapter.Attach(s.mcp, widget.Static, func(ctx context.Context) (out any, err error) {
 		finish := s.beginTool(ctx, "status")
 		defer func() { finish(err) }()
-		return s.Dashboard(), nil
+		return s.MCPStatus(), nil
 	}); err != nil {
 		// Broken embedded assets are a build error; degrade to text-only
 		// rather than refusing to serve.
@@ -204,20 +204,48 @@ func cloneDiffGroups(src []tools.DiffGroup) []tools.DiffGroup {
 	return dst
 }
 
-// Dashboard is the payload the adapter's status tool serves and /api/status
-// returns: the status fields plus the recent-edit history.
-type Dashboard struct {
-	Kind string `json:"kind"` // "status"
+// LocalStatus keeps the standalone diagnostics renderer's kind discriminator
+// while leaving edit history on the dedicated /api/edits endpoint.
+type LocalStatus struct {
+	Kind string `json:"kind"`
 	Status
-	Edits []EditRecord `json:"edits"`
 }
 
-func (s *Server) Dashboard() Dashboard {
-	edits := s.recentEdits()
-	if edits == nil {
-		edits = []EditRecord{} // keep the declared array schema honest
+func (s *Server) LocalStatus() LocalStatus {
+	return LocalStatus{Kind: "status", Status: s.Status()}
+}
+
+// MCPStatus is intentionally smaller than the local Status payload. ChatGPT
+// only needs the fields rendered by the inline status view; detailed tool
+// metadata and edit history already exist elsewhere and should not be repeated
+// into model context.
+type MCPStatus struct {
+	Kind          string `json:"kind"`
+	Name          string `json:"name"`
+	Version       string `json:"version"`
+	Platform      string `json:"platform"`
+	Workspace     string `json:"workspace"`
+	Endpoint      string `json:"endpoint"`
+	Remote        string `json:"remote"`
+	Tunnel        string `json:"tunnel"`
+	UptimeSeconds int64  `json:"uptime_seconds"`
+	ToolCalls     int64  `json:"tool_calls"`
+}
+
+func (s *Server) MCPStatus() MCPStatus {
+	status := s.Status()
+	return MCPStatus{
+		Kind:          "status",
+		Name:          status.Name,
+		Version:       status.Version,
+		Platform:      status.Platform,
+		Workspace:     status.Workspace,
+		Endpoint:      status.Endpoint,
+		Remote:        status.Remote,
+		Tunnel:        status.Tunnel,
+		UptimeSeconds: status.UptimeSeconds,
+		ToolCalls:     status.Stats.Total,
 	}
-	return Dashboard{Kind: "status", Status: s.Status(), Edits: edits}
 }
 
 func (s *Server) callCount(tool string) int64 {
@@ -434,7 +462,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(s.Dashboard())
+		_ = json.NewEncoder(w).Encode(s.LocalStatus())
 	})
 	// /preview is a development view: every result renderer with mock data,
 	// no MCP involved. kind picks one payload; "all" stacks every mock.
@@ -555,7 +583,7 @@ type ToolCalls struct {
 	Total int64            `json:"total"`
 }
 
-// Status is the JSON payload behind /api/status and the widget.
+// Status is the full local diagnostics payload behind /api/status.
 type Status struct {
 	Name          string     `json:"name"`
 	Version       string     `json:"version"`

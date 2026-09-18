@@ -21,7 +21,7 @@ import (
 // WidgetURI is the shared result widget resource. The URI doubles as the
 // host's cache key: bump the version segment whenever the embedded
 // HTML/CSS/JS change in a user-visible way.
-const WidgetURI = "ui://miodesk/status-v5.html"
+const WidgetURI = "ui://miodesk/status-v6.html"
 
 // legacyWidgetURIs keeps previously advertised template URIs readable while
 // ChatGPT connector metadata catches up. The current tools always advertise
@@ -32,6 +32,7 @@ var legacyWidgetURIs = []string{
 	"ui://miodesk/status-v2.html",
 	"ui://miodesk/status-v3.html",
 	"ui://miodesk/status-v4.html",
+	"ui://miodesk/status-v5.html",
 }
 
 // WidgetMIMEType is the MCP Apps UI resource media type.
@@ -120,10 +121,10 @@ func Attach(s *mcp.Server, assets fs.FS, data Data) error {
 func dashboardTool() *mcp.Tool {
 	tool := &mcp.Tool{
 		Name:        "status",
-		Title:       "miodesk dashboard",
-		Description: "Return miodesk server status for the diagnostics view: workspace root, endpoint, remote access mode, tunnel provider, usage counters, and recent edits. Read-only.",
+		Title:       "miodesk status",
+		Description: "Return a compact diagnostics summary for the miodesk connection: workspace, endpoint, remote/tunnel mode, uptime, version, and total tool calls. Read-only.",
 		Annotations: &mcp.ToolAnnotations{
-			Title:           "miodesk dashboard",
+			Title:           "miodesk status",
 			ReadOnlyHint:    true,
 			DestructiveHint: boolPtr(false),
 			OpenWorldHint:   boolPtr(false),
@@ -133,21 +134,22 @@ func dashboardTool() *mcp.Tool {
 		OutputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
+				"kind":           map[string]any{"type": "string", "const": "status"},
 				"name":           map[string]any{"type": "string"},
 				"version":        map[string]any{"type": "string"},
 				"platform":       map[string]any{"type": "string"},
 				"workspace":      map[string]any{"type": "string"},
 				"endpoint":       map[string]any{"type": "string"},
-				"port":           map[string]any{"type": "integer"},
-				"theme":          map[string]any{"type": "string"},
 				"remote":         map[string]any{"type": "string"},
 				"tunnel":         map[string]any{"type": "string"},
-				"started_at":     map[string]any{"type": "string"},
 				"uptime_seconds": map[string]any{"type": "integer"},
-				"stats":          map[string]any{"type": "object"},
-				"tools":          map[string]any{"type": "array"},
-				"edits":          map[string]any{"type": "array"},
+				"tool_calls":     map[string]any{"type": "integer"},
 			},
+			"required": []string{
+				"kind", "name", "version", "platform", "workspace", "endpoint",
+				"remote", "tunnel", "uptime_seconds", "tool_calls",
+			},
+			"additionalProperties": false,
 		},
 	}
 	tool.SetMeta(RichUIToolMeta("status"))

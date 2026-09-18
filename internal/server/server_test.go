@@ -376,13 +376,20 @@ func TestListenServeShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("api/status: %v", err)
 	}
-	var status Status
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+	statusBody, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	var status LocalStatus
+	if err := json.Unmarshal(statusBody, &status); err != nil {
 		t.Fatalf("decode status: %v", err)
 	}
-	resp.Body.Close()
-	if status.Name != "miodesk" || status.Port != port || len(status.Tools) != 11 {
+	if status.Kind != "status" || status.Name != "miodesk" || status.Port != port || len(status.Tools) != 11 {
 		t.Errorf("status = %+v", status)
+	}
+	if bytes.Contains(statusBody, []byte(`"edits"`)) {
+		t.Errorf("api/status should not duplicate edit history: %s", statusBody)
 	}
 	if status.Endpoint == "" {
 		t.Error("status endpoint should be set while listening")
@@ -727,6 +734,9 @@ func TestMCPAppsDashboard(t *testing.T) {
 	if !strings.Contains(rc.Text, "<style>") || !strings.Contains(rc.Text, "MIODESK_RENDERERS") {
 		t.Error("resource text should be the assembled dashboard HTML")
 	}
+	if !strings.Contains(rc.Text, "--color-background-primary") || !strings.Contains(rc.Text, "safeAreaInsets") {
+		t.Error("widget should consume MCP Apps host style variables and safe-area context")
+	}
 	if ui, ok := rc.Meta["ui"].(map[string]any); !ok || ui["prefersBorder"] != true {
 		t.Errorf("contents _meta.ui = %v", rc.Meta)
 	}
@@ -735,6 +745,7 @@ func TestMCPAppsDashboard(t *testing.T) {
 		"ui://miodesk/status-v2.html",
 		"ui://miodesk/status-v3.html",
 		"ui://miodesk/status-v4.html",
+		"ui://miodesk/status-v5.html",
 	} {
 		legacyRead, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: legacyURI})
 		if err != nil {
@@ -774,7 +785,7 @@ func TestMCPAppsDashboard(t *testing.T) {
 	if status.Annotations == nil || !status.Annotations.ReadOnlyHint {
 		t.Errorf("status annotations = %+v", status.Annotations)
 	}
-	if status.Title != "miodesk dashboard" {
+	if status.Title != "miodesk status" {
 		t.Errorf("status title = %q", status.Title)
 	}
 	// Core tool annotations survive the roundtrip.
@@ -800,7 +811,8 @@ func TestMCPAppsDashboard(t *testing.T) {
 		}
 	}
 
-	// Calling the dashboard tool returns the full status payload.
+	// The model-facing status tool is deliberately compact. Rich local
+	// diagnostics (tool metadata and edit history) stay on the local APIs.
 	call, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "status", Arguments: map[string]any{}})
 	if err != nil {
 		t.Fatalf("call status: %v", err)
@@ -813,10 +825,18 @@ func TestMCPAppsDashboard(t *testing.T) {
 	if err := json.Unmarshal(data, &dash); err != nil {
 		t.Fatalf("structured content: %v (%s)", err, data)
 	}
-	for _, key := range []string{"workspace", "tools", "stats", "edits"} {
+	for _, key := range []string{"kind", "workspace", "endpoint", "remote", "tunnel", "uptime_seconds", "tool_calls"} {
 		if _, ok := dash[key]; !ok {
-			t.Errorf("dashboard payload missing %q: %s", key, data)
+			t.Errorf("status payload missing %q: %s", key, data)
 		}
+	}
+	for _, key := range []string{"tools", "stats", "edits", "started_at"} {
+		if _, ok := dash[key]; ok {
+			t.Errorf("status payload should not repeat %q into model context: %s", key, data)
+		}
+	}
+	if len(data) > 2048 {
+		t.Errorf("status payload unexpectedly large: %d bytes: %s", len(data), data)
 	}
 
 	// The output schema is declared, per the ChatGPT reference.

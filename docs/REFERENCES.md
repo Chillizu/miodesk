@@ -146,8 +146,14 @@ or the primary CLI's connection discovery.
     falls back to fetching `/api/status` when opened standalone. It also
     performs the dependency-free MCP Apps `ui/initialize` handshake and
     applies host theme-change notifications.
-  - Structured output tools declare `outputSchema`.
-- Checked: 2026-09-08
+  - Host-provided MCP Apps style variables (`hostContext.styles.variables`) and
+    safe-area insets are applied when present; local light/dark values remain
+    fallbacks. This keeps the widget visually native without a JS UI runtime.
+  - The model-facing `status` result is intentionally compact. Full local
+    diagnostics and recent edit history stay on `/api/status` and
+    `/api/edits` instead of being repeated into ChatGPT model context.
+  - Structured output tools declare exact `outputSchema` shapes.
+- Checked: 2026-09-18
 
 ## MCP Apps extension
 
@@ -160,7 +166,7 @@ or the primary CLI's connection discovery.
   rendering). The embedded widget implements the stable 2026-01-26
   `ui/initialize`/`ui/notifications/initialized` handshake and standard
   tool-result/host-context notifications without adding a JavaScript runtime.
-- Checked: 2026-09-07
+- Checked: 2026-09-18
 
 ## Streamable HTTP transport security (MCP 2026-07-28)
 

@@ -243,7 +243,7 @@ const MIODESK_RENDERERS = {
       ["endpoint", data.endpoint],
       ["remote access", data.remote],
       ["tunnel", data.tunnel],
-      ["tool calls", data.stats ? data.stats.total : 0],
+      ["tool calls", data.tool_calls != null ? data.tool_calls : (data.stats ? data.stats.total : 0)],
       ["uptime", formatUptime(data.uptime_seconds)],
       ["version", data.version ? `${data.version} (${data.platform})` : null],
     ]));

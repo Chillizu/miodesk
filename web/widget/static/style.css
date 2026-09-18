@@ -8,71 +8,75 @@
 :root {
   color-scheme: light dark;
 
-  --miodesk-bg: #ffffff;
-  --miodesk-text: #0d0d0d;
-  --miodesk-muted: #8f8f8f;
-  --miodesk-border: #e6e6e6;
-  --miodesk-surface: #f7f7f8;
-  --miodesk-accent: #0d0d0d;
-  --miodesk-success: #1a7f46;
-  --miodesk-success-soft: rgba(26, 127, 70, 0.10);
-  --miodesk-warning: #b7791f;
-  --miodesk-danger: #c0392b;
-  --miodesk-danger-soft: rgba(192, 57, 43, 0.08);
-  --miodesk-info-soft: rgba(13, 13, 13, 0.05);
-  --miodesk-radius: 10px;
+  --miodesk-bg: var(--color-background-primary, #ffffff);
+  --miodesk-text: var(--color-text-primary, #0d0d0d);
+  --miodesk-muted: var(--color-text-secondary, #8f8f8f);
+  --miodesk-border: var(--color-border-secondary, #e6e6e6);
+  --miodesk-surface: var(--color-background-secondary, #f7f7f8);
+  --miodesk-accent: var(--color-text-primary, #0d0d0d);
+  --miodesk-success: var(--color-text-success, #1a7f46);
+  --miodesk-success-soft: var(--color-background-success, rgba(26, 127, 70, 0.10));
+  --miodesk-warning: var(--color-text-warning, #b7791f);
+  --miodesk-danger: var(--color-text-danger, #c0392b);
+  --miodesk-danger-soft: var(--color-background-danger, rgba(192, 57, 43, 0.08));
+  --miodesk-info-soft: var(--color-background-ghost, rgba(13, 13, 13, 0.05));
+  --miodesk-radius: var(--border-radius-md, 10px);
   --miodesk-gap: 12px;
   --miodesk-content-max: 760px;
-  --miodesk-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --miodesk-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --miodesk-font: var(--font-sans, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif);
+  --miodesk-mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  --miodesk-safe-top: env(safe-area-inset-top, 0px);
+  --miodesk-safe-right: env(safe-area-inset-right, 0px);
+  --miodesk-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --miodesk-safe-left: env(safe-area-inset-left, 0px);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --miodesk-bg: #212121;
-    --miodesk-text: #ececec;
-    --miodesk-muted: #9b9b9b;
-    --miodesk-border: #3a3a3a;
-    --miodesk-surface: #2f2f2f;
-    --miodesk-accent: #ececec;
-    --miodesk-success: #4ade80;
-    --miodesk-success-soft: rgba(74, 222, 128, 0.12);
-    --miodesk-warning: #fbbf24;
-    --miodesk-danger: #f87171;
-    --miodesk-danger-soft: rgba(248, 113, 113, 0.12);
-    --miodesk-info-soft: rgba(236, 236, 236, 0.07);
+    --miodesk-bg: var(--color-background-primary, #212121);
+    --miodesk-text: var(--color-text-primary, #ececec);
+    --miodesk-muted: var(--color-text-secondary, #9b9b9b);
+    --miodesk-border: var(--color-border-secondary, #3a3a3a);
+    --miodesk-surface: var(--color-background-secondary, #2f2f2f);
+    --miodesk-accent: var(--color-text-primary, #ececec);
+    --miodesk-success: var(--color-text-success, #4ade80);
+    --miodesk-success-soft: var(--color-background-success, rgba(74, 222, 128, 0.12));
+    --miodesk-warning: var(--color-text-warning, #fbbf24);
+    --miodesk-danger: var(--color-text-danger, #f87171);
+    --miodesk-danger-soft: var(--color-background-danger, rgba(248, 113, 113, 0.12));
+    --miodesk-info-soft: var(--color-background-ghost, rgba(236, 236, 236, 0.07));
   }
 }
 
 :root[data-theme="dark"] {
-  --miodesk-bg: #212121;
-  --miodesk-text: #ececec;
-  --miodesk-muted: #9b9b9b;
-  --miodesk-border: #3a3a3a;
-  --miodesk-surface: #2f2f2f;
-  --miodesk-accent: #ececec;
-  --miodesk-success: #4ade80;
-  --miodesk-success-soft: rgba(74, 222, 128, 0.12);
-  --miodesk-warning: #fbbf24;
-  --miodesk-danger: #f87171;
-  --miodesk-danger-soft: rgba(248, 113, 113, 0.12);
-  --miodesk-info-soft: rgba(236, 236, 236, 0.07);
+  --miodesk-bg: var(--color-background-primary, #212121);
+  --miodesk-text: var(--color-text-primary, #ececec);
+  --miodesk-muted: var(--color-text-secondary, #9b9b9b);
+  --miodesk-border: var(--color-border-secondary, #3a3a3a);
+  --miodesk-surface: var(--color-background-secondary, #2f2f2f);
+  --miodesk-accent: var(--color-text-primary, #ececec);
+  --miodesk-success: var(--color-text-success, #4ade80);
+  --miodesk-success-soft: var(--color-background-success, rgba(74, 222, 128, 0.12));
+  --miodesk-warning: var(--color-text-warning, #fbbf24);
+  --miodesk-danger: var(--color-text-danger, #f87171);
+  --miodesk-danger-soft: var(--color-background-danger, rgba(248, 113, 113, 0.12));
+  --miodesk-info-soft: var(--color-background-ghost, rgba(236, 236, 236, 0.07));
   color-scheme: dark;
 }
 
 :root[data-theme="light"] {
-  --miodesk-bg: #ffffff;
-  --miodesk-text: #0d0d0d;
-  --miodesk-muted: #8f8f8f;
-  --miodesk-border: #e6e6e6;
-  --miodesk-surface: #f7f7f8;
-  --miodesk-accent: #0d0d0d;
-  --miodesk-success: #1a7f46;
-  --miodesk-success-soft: rgba(26, 127, 70, 0.10);
-  --miodesk-warning: #b7791f;
-  --miodesk-danger: #c0392b;
-  --miodesk-danger-soft: rgba(192, 57, 43, 0.08);
-  --miodesk-info-soft: rgba(13, 13, 13, 0.05);
+  --miodesk-bg: var(--color-background-primary, #ffffff);
+  --miodesk-text: var(--color-text-primary, #0d0d0d);
+  --miodesk-muted: var(--color-text-secondary, #8f8f8f);
+  --miodesk-border: var(--color-border-secondary, #e6e6e6);
+  --miodesk-surface: var(--color-background-secondary, #f7f7f8);
+  --miodesk-accent: var(--color-text-primary, #0d0d0d);
+  --miodesk-success: var(--color-text-success, #1a7f46);
+  --miodesk-success-soft: var(--color-background-success, rgba(26, 127, 70, 0.10));
+  --miodesk-warning: var(--color-text-warning, #b7791f);
+  --miodesk-danger: var(--color-text-danger, #c0392b);
+  --miodesk-danger-soft: var(--color-background-danger, rgba(192, 57, 43, 0.08));
+  --miodesk-info-soft: var(--color-background-ghost, rgba(13, 13, 13, 0.05));
   color-scheme: light;
 }
 
@@ -90,10 +94,10 @@ body {
   width: 100%;
   max-width: calc(var(--miodesk-content-max) + 2 * var(--miodesk-gap));
   margin-inline: auto;
-  padding-top: max(var(--miodesk-gap), env(safe-area-inset-top));
-  padding-right: max(var(--miodesk-gap), env(safe-area-inset-right));
-  padding-bottom: max(var(--miodesk-gap), env(safe-area-inset-bottom));
-  padding-left: max(var(--miodesk-gap), env(safe-area-inset-left));
+  padding-top: max(var(--miodesk-gap), var(--miodesk-safe-top));
+  padding-right: max(var(--miodesk-gap), var(--miodesk-safe-right));
+  padding-bottom: max(var(--miodesk-gap), var(--miodesk-safe-bottom));
+  padding-left: max(var(--miodesk-gap), var(--miodesk-safe-left));
   min-width: 0;
   container-type: inline-size;
   container-name: widget;
