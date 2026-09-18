@@ -274,6 +274,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 		}
 	} else {
 		printReport(stdout, rep)
+		printReadiness(stdout, rep, cfg)
 	}
 	if rep.HasErrors() {
 		return 1
@@ -283,16 +284,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 
 func printReport(w io.Writer, rep doctor.Report) {
 	for _, c := range rep.Checks {
-		switch c.Status {
-		case doctor.StatusOK:
-			fmt.Fprint(w, "[OK] ")
-		case doctor.StatusWarn:
-			fmt.Fprint(w, "[WARN] ")
-		case doctor.StatusInfo:
-			fmt.Fprint(w, "[INFO] ")
-		default:
-			fmt.Fprint(w, "[ERROR] ")
-		}
+		printCheckStatus(w, c.Status)
 		if c.Detail != "" {
 			fmt.Fprintf(w, "%s: %s\n", c.Name, c.Detail)
 		} else {
@@ -302,6 +294,115 @@ func printReport(w io.Writer, rep doctor.Report) {
 			fmt.Fprintf(w, "     Hint: %s\n", c.Hint)
 		}
 	}
+}
+
+func printCheckStatus(w io.Writer, status doctor.Status) {
+	switch status {
+	case doctor.StatusOK:
+		fmt.Fprint(w, "[OK] ")
+	case doctor.StatusWarn:
+		fmt.Fprint(w, "[WARN] ")
+	case doctor.StatusInfo:
+		fmt.Fprint(w, "[INFO] ")
+	default:
+		fmt.Fprint(w, "[ERROR] ")
+	}
+}
+
+func printReadiness(w io.Writer, rep doctor.Report, cfg *config.Config) {
+	fmt.Fprintln(w, "\nReadiness:")
+
+	localErrors, localWarnings := 0, 0
+	for _, c := range rep.Checks {
+		switch c.Name {
+		case "tunnel", "endpoint", "service", "platform":
+			continue
+		}
+		switch c.Status {
+		case doctor.StatusError:
+			localErrors++
+		case doctor.StatusWarn:
+			localWarnings++
+		}
+	}
+	switch {
+	case localErrors > 0:
+		fmt.Fprintln(w, "  [ERROR] local use: not ready")
+	case localWarnings > 0:
+		fmt.Fprintf(w, "  [WARN] local use: ready with %d warning(s)\n", localWarnings)
+	default:
+		fmt.Fprintln(w, "  [OK] local use: ready")
+	}
+
+	if cfg != nil {
+		printTunnelReadiness(w, rep, cfg)
+	}
+	printServiceReadiness(w, rep)
+}
+
+func printTunnelReadiness(w io.Writer, rep doctor.Report, cfg *config.Config) {
+	switch cfg.Tunnel.Provider {
+	case "openai":
+		if cfg.Tunnel.OpenAI.TunnelID == "" {
+			fmt.Fprintln(w, "  [INFO] OpenAI tunnel: not configured (optional)")
+			return
+		}
+		status := worstCheckStatus(rep, "tunnel")
+		switch status {
+		case doctor.StatusError, doctor.StatusWarn:
+			fmt.Fprintln(w, "  [WARN] OpenAI tunnel: configured, needs attention")
+		default:
+			fmt.Fprintln(w, "  [OK] OpenAI tunnel: configured")
+		}
+	case "local", "":
+		fmt.Fprintln(w, "  [INFO] remote connection: local only")
+	case "custom":
+		fmt.Fprintln(w, "  [INFO] remote connection: custom endpoint")
+	default:
+		fmt.Fprintf(w, "  [INFO] remote connection: legacy mode %s\n", cfg.Tunnel.Provider)
+	}
+}
+
+func printServiceReadiness(w io.Writer, rep doctor.Report) {
+	for _, c := range rep.Checks {
+		if c.Name != "service" {
+			continue
+		}
+		switch {
+		case c.Status == doctor.StatusOK:
+			fmt.Fprintln(w, "  [OK] persistent service: running")
+		case strings.Contains(c.Detail, "not installed"):
+			fmt.Fprintln(w, "  [INFO] persistent service: not installed (optional)")
+		case strings.Contains(c.Detail, "installed but not running"):
+			fmt.Fprintln(w, "  [INFO] persistent service: installed, stopped (optional)")
+		default:
+			fmt.Fprint(w, "  ")
+			printCheckStatus(w, c.Status)
+			fmt.Fprintf(w, "persistent service: %s\n", c.Detail)
+		}
+		return
+	}
+	fmt.Fprintln(w, "  [INFO] persistent service: unavailable on this platform (optional)")
+}
+
+func worstCheckStatus(rep doctor.Report, name string) doctor.Status {
+	worst := doctor.StatusInfo
+	for _, c := range rep.Checks {
+		if c.Name != name {
+			continue
+		}
+		switch c.Status {
+		case doctor.StatusError:
+			return doctor.StatusError
+		case doctor.StatusWarn:
+			worst = doctor.StatusWarn
+		case doctor.StatusOK:
+			if worst == doctor.StatusInfo {
+				worst = doctor.StatusOK
+			}
+		}
+	}
+	return worst
 }
 
 type serverState struct {

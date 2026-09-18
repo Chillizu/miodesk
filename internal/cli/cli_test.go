@@ -72,10 +72,21 @@ func TestInitThenDoctor(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("doctor exit = %d, output:\n%s", code, out)
 	}
-	for _, want := range []string{"[OK] config", "[OK] workspace", "[OK] mcp", "11 tools registered"} {
+	for _, want := range []string{
+		"[OK] config",
+		"[OK] workspace",
+		"[OK] mcp",
+		"11 tools registered",
+		"Readiness:",
+		"[OK] local use: ready",
+		"[INFO] OpenAI tunnel: not configured (optional)",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor output missing %q:\n%s", want, out)
 		}
+	}
+	if service.Supported() && !strings.Contains(out, "[INFO] persistent service: not installed (optional)") {
+		t.Errorf("fresh isolated doctor should report the optional service as not installed:\n%s", out)
 	}
 
 	// Second init must not clobber anything.
@@ -290,6 +301,9 @@ func TestDoctorJSON(t *testing.T) {
 	if !strings.Contains(out, `"checks"`) || !strings.Contains(out, `"status": "ok"`) {
 		t.Errorf("doctor --json output:\n%s", out)
 	}
+	if strings.Contains(out, "Readiness:") || strings.Contains(out, "local use:") {
+		t.Errorf("doctor --json must not contain human readiness text:\n%s", out)
+	}
 }
 
 func TestDoctorValidatesConfigSemantics(t *testing.T) {
@@ -299,6 +313,9 @@ func TestDoctorValidatesConfigSemantics(t *testing.T) {
 	code, out, _ := run(t, "doctor")
 	if code != 1 || !strings.Contains(out, "[ERROR] config") || !strings.Contains(out, "remote.mode") {
 		t.Errorf("doctor should reject invalid semantic config: exit=%d output=%q", code, out)
+	}
+	if !strings.Contains(out, "[ERROR] local use: not ready") {
+		t.Errorf("invalid config should make readiness explicit:\n%s", out)
 	}
 }
 
@@ -819,5 +836,8 @@ func TestDoctorSecurityDiagnostics(t *testing.T) {
 	code, out, _ = run(t, "doctor")
 	if code != 0 || !strings.Contains(out, "[WARN] remote security") {
 		t.Errorf("doctor unsafe mode output:\n%s", out)
+	}
+	if !strings.Contains(out, "[WARN] local use: ready with") {
+		t.Errorf("doctor should summarize warning readiness:\n%s", out)
 	}
 }
