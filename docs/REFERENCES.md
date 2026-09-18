@@ -130,12 +130,15 @@ or the primary CLI's connection discovery.
 - Version: current docs, checked 2026-09-08
 - Used by: `internal/adapter`, `internal/server`
 - Decision:
-  - UI tools declare the shared MCP Apps field `_meta.ui.resourceUri`
-    (`ui://…`); `openai/outputTemplate` is set as the documented compatibility
-    alias. `openai/toolInvocation/invoking|invoked` labels are ≤64 chars.
-    UI remains opt-in for selected tools; attaching a template to every data
-    tool causes unnecessary iframe re-renders, so ordinary file and short
-    command tools stay Native-first.
+  - The diagnostics `status` tool declares the shared MCP Apps field
+    `_meta.ui.resourceUri` (`ui://…`); `openai/outputTemplate` is set as the
+    documented compatibility alias. `openai/toolInvocation/invoking|invoked`
+    labels are ≤64 chars.
+  - Rich UI is intentionally status-only. File tools, short commands, and the
+    `command_start`/`command_poll`/`command_cancel` lifecycle stay in
+    ChatGPT's native tool UI; the lifecycle tools keep only lightweight
+    invocation labels. This avoids large iframe results that repeat command
+    text and stdout/stderr on narrow/mobile clients.
   - The widget resource uses mimeType `text/html;profile=mcp-app` and carries
     `_meta.ui` (`prefersBorder`; `csp`/`domain` omitted — the asset is fully
     self-contained with zero external origins).

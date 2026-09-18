@@ -21,7 +21,7 @@ import (
 // WidgetURI is the shared result widget resource. The URI doubles as the
 // host's cache key: bump the version segment whenever the embedded
 // HTML/CSS/JS change in a user-visible way.
-const WidgetURI = "ui://miodesk/status-v6.html"
+const WidgetURI = "ui://miodesk/status-v7.html"
 
 // legacyWidgetURIs keeps previously advertised template URIs readable while
 // ChatGPT connector metadata catches up. The current tools always advertise
@@ -33,6 +33,7 @@ var legacyWidgetURIs = []string{
 	"ui://miodesk/status-v3.html",
 	"ui://miodesk/status-v4.html",
 	"ui://miodesk/status-v5.html",
+	"ui://miodesk/status-v6.html",
 }
 
 // WidgetMIMEType is the MCP Apps UI resource media type.
@@ -42,33 +43,37 @@ const WidgetMIMEType = "text/html;profile=mcp-app"
 // the tools' structuredContent (with its "kind" discriminator).
 type Data func(context.Context) (any, error)
 
-// richUIToolNames is the opt-in allowlist for the shared widget. Data-first
-// tools stay native in ChatGPT unless their result represents an ongoing task
-// or a diagnostics view worth keeping visible.
-var richUIToolNames = map[string]struct{ invoking, invoked string }{
+// invocationLabels are lightweight ChatGPT status strings. They do not imply
+// a widget: long-running commands stay in ChatGPT's native tool UI, while only
+// the diagnostics status tool opts into the embedded MCP App.
+var invocationLabels = map[string]struct{ invoking, invoked string }{
 	"command_start":  {"Starting command…", "Command started."},
 	"command_poll":   {"Checking task…", "Task status."},
 	"command_cancel": {"Cancelling task…", "Task cancelled."},
 	"status":         {"Reading miodesk status…", "Status loaded."},
 }
 
-// RichUIToolMeta returns the MCP Apps / ChatGPT _meta for a tool selected for
-// the optional rich UI. Native-first tools and unknown names return nil.
-func RichUIToolMeta(name string) map[string]any {
-	labels, ok := richUIToolNames[name]
+// ToolMeta returns client-facing metadata for one tool. Most tools need none;
+// command lifecycle tools get only invocation labels, while status also gets
+// the MCP Apps resource metadata.
+func ToolMeta(name string) map[string]any {
+	labels, ok := invocationLabels[name]
 	if !ok {
 		return nil
 	}
-	return map[string]any{
-		"ui": map[string]any{
-			"resourceUri": WidgetURI,
-			"visibility":  []string{"model", "app"},
-		},
-		// ChatGPT compatibility alias for _meta.ui.resourceUri.
-		"openai/outputTemplate":          WidgetURI,
+	meta := map[string]any{
 		"openai/toolInvocation/invoking": labels.invoking,
 		"openai/toolInvocation/invoked":  labels.invoked,
 	}
+	if name == "status" {
+		meta["ui"] = map[string]any{
+			"resourceUri": WidgetURI,
+			"visibility":  []string{"model", "app"},
+		}
+		// ChatGPT compatibility alias for _meta.ui.resourceUri.
+		meta["openai/outputTemplate"] = WidgetURI
+	}
+	return meta
 }
 
 // Attach registers the status tool and the widget resource on an MCP server.
@@ -90,9 +95,9 @@ func Attach(s *mcp.Server, assets fs.FS, data Data) error {
 	registerWidget := func(uri string) {
 		resource := &mcp.Resource{
 			URI:         uri,
-			Name:        "miodesk result view",
-			Title:       "miodesk result view",
-			Description: "Interactive view for miodesk tool results: file reads, searches, diffs, command output, and server status. Rendered as an MCP App.",
+			Name:        "miodesk status view",
+			Title:       "miodesk status",
+			Description: "Compact miodesk connection and workspace diagnostics view. Rendered as an MCP App.",
 			MIMEType:    WidgetMIMEType,
 		}
 		resource.SetMeta(map[string]any{
@@ -152,7 +157,7 @@ func dashboardTool() *mcp.Tool {
 			"additionalProperties": false,
 		},
 	}
-	tool.SetMeta(RichUIToolMeta("status"))
+	tool.SetMeta(ToolMeta("status"))
 	return tool
 }
 

@@ -276,7 +276,7 @@ func registerTools(s *Server) {
 	// Optional rich UI metadata comes from the adapter; tools stay
 	// host-agnostic. Native-first tools receive no template metadata.
 	declared := func(name string, t *mcp.Tool) *mcp.Tool {
-		if meta := adapter.RichUIToolMeta(name); meta != nil {
+		if meta := adapter.ToolMeta(name); meta != nil {
 			t.SetMeta(meta)
 		}
 		return t

@@ -237,16 +237,21 @@ const MIODESK_RENDERERS = {
 
   status(data) {
     const root = mEl("div", "result");
+    const calls = data.tool_calls != null ? data.tool_calls : (data.stats ? data.stats.total : 0);
+    const connection = [data.remote, data.tunnel && `${data.tunnel} tunnel`].filter(Boolean).join(" · ");
+
     root.append(stateLine("ok", "check", "miodesk is running"));
     root.append(kvList([
       ["workspace", data.workspace],
       ["endpoint", data.endpoint],
-      ["remote access", data.remote],
-      ["tunnel", data.tunnel],
-      ["tool calls", data.tool_calls != null ? data.tool_calls : (data.stats ? data.stats.total : 0)],
-      ["uptime", formatUptime(data.uptime_seconds)],
-      ["version", data.version ? `${data.version} (${data.platform})` : null],
+      ["connection", connection],
     ]));
+    root.append(note([
+      `${calls || 0} tool call${calls === 1 ? "" : "s"}`,
+      `up ${formatUptime(data.uptime_seconds)}`,
+      data.version ? `v${data.version}` : "",
+      data.platform || "",
+    ].filter(Boolean).join(" · ")));
     return root;
   },
 

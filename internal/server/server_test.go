@@ -746,6 +746,7 @@ func TestMCPAppsDashboard(t *testing.T) {
 		"ui://miodesk/status-v3.html",
 		"ui://miodesk/status-v4.html",
 		"ui://miodesk/status-v5.html",
+		"ui://miodesk/status-v6.html",
 	} {
 		legacyRead, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: legacyURI})
 		if err != nil {
@@ -796,18 +797,17 @@ func TestMCPAppsDashboard(t *testing.T) {
 		t.Errorf("read title = %q", read2.Title)
 	}
 
-	richUI := map[string]bool{
-		"command_start":  true,
-		"command_poll":   true,
-		"command_cancel": true,
-		"status":         true,
-	}
 	for _, tl := range listed.Tools {
 		_, hasUI := tl.Meta["ui"]
 		_, hasTemplate := tl.Meta["openai/outputTemplate"]
-		wantUI := richUI[tl.Name]
+		wantUI := tl.Name == "status"
 		if hasUI != wantUI || hasTemplate != wantUI {
 			t.Errorf("%s UI metadata present = (%v, %v), want = %v; meta = %v", tl.Name, hasUI, hasTemplate, wantUI, tl.Meta)
+		}
+		if tl.Name == "command_start" || tl.Name == "command_poll" || tl.Name == "command_cancel" {
+			if tl.Meta["openai/toolInvocation/invoking"] == nil || tl.Meta["openai/toolInvocation/invoked"] == nil {
+				t.Errorf("%s should keep native invocation labels: %v", tl.Name, tl.Meta)
+			}
 		}
 	}
 

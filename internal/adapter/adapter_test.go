@@ -27,7 +27,7 @@ func TestWidgetHTMLAssembly(t *testing.T) {
 		"white-space: pre-wrap",        // command output can wrap on narrow hosts
 		"--miodesk-content-max",        // root and result share one width token
 		"max-width: calc(var(--miodesk-content-max) + 2 * var(--miodesk-gap))",
-		`["tunnel", data.tunnel]`, // status renderer distinguishes transport from local auth
+		`["connection", connection]`, // compact status combines local access and tunnel provider
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("assembled widget missing %q", want)
@@ -55,27 +55,37 @@ func TestWidgetHTMLAssembly(t *testing.T) {
 	}
 }
 
-func TestRichUIToolMetaNativeFirst(t *testing.T) {
+func TestToolMetaKeepsOnlyStatusRich(t *testing.T) {
 	for _, name := range []string{
 		"read", "search", "list", "write", "edit", "delete", "command",
 	} {
-		if got := RichUIToolMeta(name); got != nil {
-			t.Errorf("native-first tool %q unexpectedly has UI metadata: %v", name, got)
+		if got := ToolMeta(name); got != nil {
+			t.Errorf("native-first tool %q unexpectedly has client metadata: %v", name, got)
 		}
 	}
 
-	for _, name := range []string{"command_start", "command_poll", "command_cancel", "status"} {
-		got := RichUIToolMeta(name)
+	for _, name := range []string{"command_start", "command_poll", "command_cancel"} {
+		got := ToolMeta(name)
 		if got == nil {
-			t.Errorf("rich UI tool %q has no UI metadata", name)
-			continue
+			t.Fatalf("command lifecycle tool %q has no invocation metadata", name)
 		}
-		ui, ok := got["ui"].(map[string]any)
-		if !ok || ui["resourceUri"] != WidgetURI {
-			t.Errorf("%q ui metadata = %v", name, got["ui"])
+		if _, ok := got["ui"]; ok {
+			t.Errorf("%q should stay in ChatGPT native UI: %v", name, got)
 		}
-		if got["openai/outputTemplate"] != WidgetURI {
-			t.Errorf("%q ChatGPT template alias = %v", name, got["openai/outputTemplate"])
+		if _, ok := got["openai/outputTemplate"]; ok {
+			t.Errorf("%q should not advertise a widget template: %v", name, got)
 		}
+		if got["openai/toolInvocation/invoking"] == nil || got["openai/toolInvocation/invoked"] == nil {
+			t.Errorf("%q should keep lightweight invocation labels: %v", name, got)
+		}
+	}
+
+	status := ToolMeta("status")
+	ui, ok := status["ui"].(map[string]any)
+	if !ok || ui["resourceUri"] != WidgetURI {
+		t.Errorf("status ui metadata = %v", status["ui"])
+	}
+	if status["openai/outputTemplate"] != WidgetURI {
+		t.Errorf("status ChatGPT template alias = %v", status["openai/outputTemplate"])
 	}
 }
