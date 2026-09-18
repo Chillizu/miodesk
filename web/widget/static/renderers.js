@@ -235,6 +235,34 @@ const MIODESK_RENDERERS = {
     return root;
   },
 
+  task(data) {
+    const root = mEl("div", "result task-result");
+    const st = commandState(data);
+    const head = rhead("terminal", "Task", data.label || "Background task", st.meta);
+    const label = head.querySelector(".target");
+    if (label) label.classList.add("task-label");
+    root.append(head);
+
+    const stateRow = mEl("div", "task-state-row");
+    stateRow.append(stateLine(st.cls, st.icon, st.text));
+    if (data.status === "running" && data.id && typeof cancelTask === "function") {
+      const cancel = mEl("button", "task-cancel", "Cancel");
+      cancel.type = "button";
+      cancel.addEventListener("click", () => {
+        cancel.disabled = true;
+        cancelTask(data.id).catch(() => { cancel.disabled = false; });
+      });
+      stateRow.append(cancel);
+    }
+    root.append(stateRow);
+
+    if (data.stdout) root.append(codeSurface(data.stdout, "stdout" + (data.stdout_truncated ? " (truncated)" : "")));
+    if (data.stderr) root.append(codeSurface(data.stderr, "stderr" + (data.stderr_truncated ? " (truncated)" : "")));
+    if (!data.stdout && !data.stderr && data.status === "running") root.append(note("Waiting for output…"));
+    if (data.poll_error) root.append(note("Live update paused: " + data.poll_error));
+    return root;
+  },
+
   status(data) {
     const root = mEl("div", "result");
     const calls = data.tool_calls != null ? data.tool_calls : (data.stats ? data.stats.total : 0);

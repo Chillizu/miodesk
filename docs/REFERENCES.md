@@ -134,21 +134,24 @@ or the primary CLI's connection discovery.
     `_meta.ui.resourceUri` (`ui://…`); `openai/outputTemplate` is set as the
     documented compatibility alias. `openai/toolInvocation/invoking|invoked`
     labels are ≤64 chars.
-  - Rich UI is intentionally status-only. File tools, short commands, and the
-    `command_start`/`command_poll`/`command_cancel` lifecycle stay in
-    ChatGPT's native tool UI; the lifecycle tools keep only lightweight
-    invocation labels. This avoids large iframe results that repeat command
-    text and stdout/stderr on narrow/mobile clients.
+  - Rich UI is limited to diagnostics `status` and `command_start`. Starting a
+    long command creates one Task view; that iframe polls `command_poll` through
+    the MCP Apps `tools/call` bridge and updates its own DOM until completion.
+    `command_poll` and `command_cancel` do not declare output templates, so
+    repeated lifecycle calls cannot create additional iframes. File tools and
+    short `command` calls remain native-first.
   - The widget resource uses mimeType `text/html;profile=mcp-app` and carries
     `_meta.ui` (`prefersBorder`; `csp`/`domain` omitted — the asset is fully
     self-contained with zero external origins).
   - ChatGPT reads `annotations` (readOnlyHint/destructiveHint/openWorldHint —
     treated as required) and `title`; every miodesk tool sets them explicitly.
   - The embedded widget reads data from `window.openai.toolOutput` (documented
-    alias) or the `ui/notifications/tool-result` postMessage notification, and
-    falls back to fetching `/api/status` when opened standalone. It also
-    performs the dependency-free MCP Apps `ui/initialize` handshake and
-    applies host theme-change notifications.
+    alias) or the `ui/notifications/tool-result` postMessage notification. It
+    performs the dependency-free MCP Apps `ui/initialize` handshake, applies
+    host theme-change notifications, and issues standard `tools/call` requests
+    for live Task polling (with `window.openai.callTool` only as a compatibility
+    fallback). `/api/status` fallback is standalone-only so Task iframes never
+    flash unrelated status content.
   - Host-provided MCP Apps style variables (`hostContext.styles.variables`) and
     safe-area insets are applied when present; local light/dark values remain
     fallbacks. This keeps the widget visually native without a JS UI runtime.

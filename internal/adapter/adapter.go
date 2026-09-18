@@ -21,7 +21,10 @@ import (
 // WidgetURI is the shared result widget resource. The URI doubles as the
 // host's cache key: bump the version segment whenever the embedded
 // HTML/CSS/JS change in a user-visible way.
-const WidgetURI = "ui://miodesk/status-v7.html"
+const (
+	WidgetURI     = "ui://miodesk/status-v8.html"
+	TaskWidgetURI = "ui://miodesk/task-v1.html"
+)
 
 // legacyWidgetURIs keeps previously advertised template URIs readable while
 // ChatGPT connector metadata catches up. The current tools always advertise
@@ -34,6 +37,7 @@ var legacyWidgetURIs = []string{
 	"ui://miodesk/status-v4.html",
 	"ui://miodesk/status-v5.html",
 	"ui://miodesk/status-v6.html",
+	"ui://miodesk/status-v7.html",
 }
 
 // WidgetMIMEType is the MCP Apps UI resource media type.
@@ -65,13 +69,20 @@ func ToolMeta(name string) map[string]any {
 		"openai/toolInvocation/invoking": labels.invoking,
 		"openai/toolInvocation/invoked":  labels.invoked,
 	}
-	if name == "status" {
+	var resourceURI string
+	switch name {
+	case "status":
+		resourceURI = WidgetURI
+	case "command_start":
+		resourceURI = TaskWidgetURI
+	}
+	if resourceURI != "" {
 		meta["ui"] = map[string]any{
-			"resourceUri": WidgetURI,
+			"resourceUri": resourceURI,
 			"visibility":  []string{"model", "app"},
 		}
 		// ChatGPT compatibility alias for _meta.ui.resourceUri.
-		meta["openai/outputTemplate"] = WidgetURI
+		meta["openai/outputTemplate"] = resourceURI
 	}
 	return meta
 }
@@ -92,12 +103,12 @@ func Attach(s *mcp.Server, assets fs.FS, data Data) error {
 		return &mcp.CallToolResult{StructuredContent: out}, nil
 	})
 
-	registerWidget := func(uri string) {
+	registerWidget := func(uri, name, title, description string) {
 		resource := &mcp.Resource{
 			URI:         uri,
-			Name:        "miodesk status view",
-			Title:       "miodesk status",
-			Description: "Compact miodesk connection and workspace diagnostics view. Rendered as an MCP App.",
+			Name:        name,
+			Title:       title,
+			Description: description,
 			MIMEType:    WidgetMIMEType,
 		}
 		resource.SetMeta(map[string]any{
@@ -114,10 +125,11 @@ func Attach(s *mcp.Server, assets fs.FS, data Data) error {
 			}, nil
 		})
 	}
-	registerWidget(WidgetURI)
+	registerWidget(WidgetURI, "miodesk status view", "miodesk status", "Compact miodesk connection and workspace diagnostics view.")
 	for _, uri := range legacyWidgetURIs {
-		registerWidget(uri)
+		registerWidget(uri, "miodesk status view", "miodesk status", "Compatibility alias for the current miodesk status view.")
 	}
+	registerWidget(TaskWidgetURI, "miodesk task view", "miodesk task", "Live view of one long-running miodesk task.")
 	return nil
 }
 

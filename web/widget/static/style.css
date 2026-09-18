@@ -180,6 +180,21 @@ section { min-width: 0; }
   word-break: normal;
 }
 
+.rhead .target.task-label {
+  font-family: var(--miodesk-font);
+  font-weight: 500;
+}
+
+.task-state-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.task-state-row .state { flex: 1 1 auto; }
+.task-cancel { flex: none; font-size: 11.5px; }
+
 .rhead .meta {
   flex: none;
   min-width: 0;

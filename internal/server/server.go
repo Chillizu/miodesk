@@ -103,7 +103,7 @@ func New(cfg *config.Config, ws *workspace.Workspace) *Server {
 			Version:     buildinfo.Version,
 		},
 		&mcp.ServerOptions{
-			Instructions: "miodesk bridges the user's local workspace. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root; paths may be relative to the root. Prefer list before deeper reads, and prefer edit over write for changing existing files — edit batches are atomic. Long commands use command_start/command_poll/command_cancel instead of blocking.",
+			Instructions: "miodesk bridges the user's local workspace. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root; paths may be relative to the root. Prefer list before deeper reads, and prefer edit over write for changing existing files — edit batches are atomic. Long commands use command_start with a short user-facing label. UI-capable clients can track the live Task view automatically; use command_poll when you need the task state/output in model reasoning or when no Task UI is available.",
 		},
 	)
 	registerTools(s)
@@ -384,16 +384,16 @@ func registerTools(s *Server) {
 	mcp.AddTool(s.mcp, declared("command_start", &mcp.Tool{
 		Name:        "command_start",
 		Title:       "Start long command",
-		Description: "Start a long-running command in the workspace; returns a task id for polling and cancellation.",
+		Description: "Start a long-running command in the workspace. Include a short user-facing label describing the task. UI-capable clients show one live Task view that updates itself; command_poll remains available when the model needs task output or no UI is present.",
 		Annotations: ann(false, true, true, false),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.CommandInput) (result *mcp.CallToolResult, output *tools.TaskStarted, err error) {
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.TaskCommandInput) (result *mcp.CallToolResult, output *tools.TaskStarted, err error) {
 		finish := s.beginTool(ctx, "command_start")
 		defer func() { finish(err) }()
 		id, err := s.commands.Start(s.ws, in)
 		if err != nil {
 			return nil, nil, err
 		}
-		return nil, &tools.TaskStarted{Kind: "command", ID: id}, nil
+		return nil, &tools.TaskStarted{Kind: "task", ID: id, Label: tools.TaskLabel(in.Label), Status: "running"}, nil
 	})
 	mcp.AddTool(s.mcp, declared("command_poll", &mcp.Tool{
 		Name:        "command_poll",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,9 +36,39 @@ func NewManager() *Manager {
 	return &Manager{procs: map[string]*procHandle{}}
 }
 
+// TaskCommandInput starts a long-running task. Label is a short user-facing
+// summary shown by UI-capable clients; command remains the executable payload.
+type TaskCommandInput struct {
+	Command string `json:"command" jsonschema:"shell command to run, e.g. go test ./..."`
+	CWD     string `json:"cwd,omitempty" jsonschema:"working directory inside the workspace (default: root)"`
+	Timeout int    `json:"timeout,omitempty" jsonschema:"seconds before the command is killed (default 120, max 600)"`
+	Label   string `json:"label,omitempty" jsonschema:"short user-facing task summary, e.g. Run installation tests"`
+}
+
+func (in TaskCommandInput) commandInput() CommandInput {
+	return CommandInput{Command: in.Command, CWD: in.CWD, Timeout: in.Timeout}
+}
+
+// TaskLabel normalizes a user-facing task summary for consistent start/poll output.
+func TaskLabel(label string) string {
+	return normalizeTaskLabel(label)
+}
+
+func normalizeTaskLabel(label string) string {
+	label = strings.Join(strings.Fields(label), " ")
+	if label == "" {
+		return "Run background task"
+	}
+	runes := []rune(label)
+	if len(runes) > 80 {
+		return string(runes[:79]) + "…"
+	}
+	return label
+}
+
 // Start launches a command and returns its task id immediately.
-func (m *Manager) Start(ws *workspace.Workspace, in CommandInput) (string, error) {
-	p, err := newProc(context.Background(), ws, in, maxLongOutput)
+func (m *Manager) Start(ws *workspace.Workspace, in TaskCommandInput) (string, error) {
+	p, err := newProc(context.Background(), ws, in.commandInput(), maxLongOutput)
 	if err != nil {
 		return "", err
 	}
@@ -55,6 +86,7 @@ func (m *Manager) Start(ws *workspace.Workspace, in CommandInput) (string, error
 	}
 	m.next++
 	p.id = "task-" + strconv.Itoa(m.next)
+	p.label = normalizeTaskLabel(in.Label)
 	m.procs[p.id] = p
 	m.order = append(m.order, p.id)
 	m.evictLocked()
@@ -102,8 +134,9 @@ func (m *Manager) Poll(id string) (*PollOutput, error) {
 	default:
 	}
 	return &PollOutput{
-		Kind:            "command",
+		Kind:            "task",
 		ID:              p.id,
+		Label:           p.label,
 		Status:          status,
 		ExitCode:        exitCode,
 		Stdout:          p.stdout.String(),
@@ -204,8 +237,9 @@ func (m *Manager) evictLocked() {
 }
 
 type PollOutput struct {
-	Kind            string `json:"kind"` // "command"
+	Kind            string `json:"kind"` // "task"
 	ID              string `json:"id"`
+	Label           string `json:"label"`
 	Status          string `json:"status"` // running | done
 	ExitCode        *int   `json:"exit_code"`
 	Stdout          string `json:"stdout"`
@@ -223,6 +257,8 @@ type TaskID struct {
 
 // TaskStarted is the command_start result.
 type TaskStarted struct {
-	Kind string `json:"kind"` // "command"
-	ID   string `json:"id"`
+	Kind   string `json:"kind"` // "task"
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Status string `json:"status"` // running
 }

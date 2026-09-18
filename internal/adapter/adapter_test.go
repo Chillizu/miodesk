@@ -15,17 +15,20 @@ func TestWidgetHTMLAssembly(t *testing.T) {
 	}
 	for _, want := range []string{
 		"<style>", "</style>", "<script>", "</script>",
-		"MIODESK_ICONS",                // icon set present
-		"MIODESK_RENDERERS",            // renderers present
-		"bootWidget",                   // bootstrap present
-		"ui/initialize",                // MCP Apps handshake present
-		"appInfo",                      // MCP Apps view identity present
-		"ui/notifications/tool-result", // standard result delivery present
-		"--miodesk-text",               // design tokens present
-		"code--lines",                  // source code owns its narrow scroll area
-		"container-name: widget",       // outer layout uses container queries
-		"white-space: pre-wrap",        // command output can wrap on narrow hosts
-		"--miodesk-content-max",        // root and result share one width token
+		"MIODESK_ICONS",                 // icon set present
+		"MIODESK_RENDERERS",             // renderers present
+		"bootWidget",                    // bootstrap present
+		"ui/initialize",                 // MCP Apps handshake present
+		"appInfo",                       // MCP Apps view identity present
+		"ui/notifications/tool-result",  // standard result delivery present
+		`method: "tools/call"`,          // task view polls through the MCP Apps bridge
+		`callServerTool("command_poll"`, // one Task iframe updates itself
+		`"Task"`,                        // task renderer title
+		"--miodesk-text",                // design tokens present
+		"code--lines",                   // source code owns its narrow scroll area
+		"container-name: widget",        // outer layout uses container queries
+		"white-space: pre-wrap",         // command output can wrap on narrow hosts
+		"--miodesk-content-max",         // root and result share one width token
 		"max-width: calc(var(--miodesk-content-max) + 2 * var(--miodesk-gap))",
 		`["connection", connection]`, // compact status combines local access and tunnel provider
 	} {
@@ -55,7 +58,7 @@ func TestWidgetHTMLAssembly(t *testing.T) {
 	}
 }
 
-func TestToolMetaKeepsOnlyStatusRich(t *testing.T) {
+func TestToolMetaKeepsStatusAndTaskRich(t *testing.T) {
 	for _, name := range []string{
 		"read", "search", "list", "write", "edit", "delete", "command",
 	} {
@@ -64,13 +67,22 @@ func TestToolMetaKeepsOnlyStatusRich(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"command_start", "command_poll", "command_cancel"} {
+	start := ToolMeta("command_start")
+	startUI, ok := start["ui"].(map[string]any)
+	if !ok || startUI["resourceUri"] != TaskWidgetURI {
+		t.Errorf("command_start task ui metadata = %v", start)
+	}
+	if start["openai/outputTemplate"] != TaskWidgetURI {
+		t.Errorf("command_start task template = %v", start)
+	}
+
+	for _, name := range []string{"command_poll", "command_cancel"} {
 		got := ToolMeta(name)
 		if got == nil {
 			t.Fatalf("command lifecycle tool %q has no invocation metadata", name)
 		}
 		if _, ok := got["ui"]; ok {
-			t.Errorf("%q should stay in ChatGPT native UI: %v", name, got)
+			t.Errorf("%q should not create another widget: %v", name, got)
 		}
 		if _, ok := got["openai/outputTemplate"]; ok {
 			t.Errorf("%q should not advertise a widget template: %v", name, got)

@@ -25,6 +25,7 @@ func shell() (string, string) {
 
 type procHandle struct {
 	id      string
+	label   string
 	dir     string
 	relDir  string
 	started time.Time

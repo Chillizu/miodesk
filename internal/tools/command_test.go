@@ -119,7 +119,7 @@ func TestManagerLifecycle(t *testing.T) {
 	m := NewManager()
 	defer m.Shutdown()
 
-	id, err := m.Start(ws, CommandInput{Command: "echo started; sleep 30"})
+	id, err := m.Start(ws, TaskCommandInput{Command: "echo started; sleep 30", Label: "Run lifecycle test"})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -134,6 +134,9 @@ func TestManagerLifecycle(t *testing.T) {
 	}
 	if poll.Status != "running" {
 		t.Errorf("early status = %q", poll.Status)
+	}
+	if poll.Kind != "task" || poll.Label != "Run lifecycle test" {
+		t.Errorf("early task identity = kind %q label %q", poll.Kind, poll.Label)
 	}
 	if poll.ExitCode != nil {
 		t.Errorf("running task exit code = %v, want nil", *poll.ExitCode)
@@ -172,7 +175,7 @@ func TestManagerLifecycle(t *testing.T) {
 	}
 
 	// Short-lived task completes on its own.
-	id2, err := m.Start(ws, CommandInput{Command: "echo quick", Timeout: 30})
+	id2, err := m.Start(ws, TaskCommandInput{Command: "echo quick", Timeout: 30})
 	if err != nil {
 		t.Fatalf("Start 2: %v", err)
 	}
@@ -189,6 +192,9 @@ func TestManagerLifecycle(t *testing.T) {
 	}
 	if poll.Status != "done" || poll.ExitCode == nil || *poll.ExitCode != 0 || !strings.Contains(poll.Stdout, "quick") {
 		t.Errorf("final poll = %+v", poll)
+	}
+	if poll.Label != "Run background task" {
+		t.Errorf("fallback label = %q", poll.Label)
 	}
 	finishedElapsed := poll.ElapsedMS
 	time.Sleep(25 * time.Millisecond)
@@ -231,7 +237,7 @@ func TestManagerCapsConcurrentTasks(t *testing.T) {
 		m.mu.Unlock()
 	}()
 
-	if _, err := m.Start(ws, CommandInput{Command: "true"}); err == nil || !strings.Contains(err.Error(), "cap") {
+	if _, err := m.Start(ws, TaskCommandInput{Command: "true"}); err == nil || !strings.Contains(err.Error(), "cap") {
 		t.Fatalf("Start beyond cap error = %v", err)
 	}
 }

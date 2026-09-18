@@ -658,14 +658,17 @@ func TestMCPNewTools(t *testing.T) {
 	}
 
 	// command lifecycle: start → poll → cancel
-	startOut := callOK("command_start", map[string]any{"command": "sleep 30"})
+	startOut := callOK("command_start", map[string]any{"command": "sleep 30", "label": "Wait for test"})
 	id, _ := startOut["id"].(string)
-	if id == "" {
+	if id == "" || startOut["kind"] != "task" || startOut["label"] != "Wait for test" || startOut["status"] != "running" {
 		t.Fatalf("command_start = %v", startOut)
 	}
 	pollOut := callOK("command_poll", map[string]any{"id": id})
 	if pollOut["status"] != "running" && pollOut["status"] != "done" {
 		t.Errorf("poll status = %v", pollOut)
+	}
+	if pollOut["kind"] != "task" || pollOut["label"] != "Wait for test" {
+		t.Errorf("poll task identity = %v", pollOut)
 	}
 	cancelOut := callOK("command_cancel", map[string]any{"id": id})
 	if cancelOut["status"] != "done" {
@@ -747,6 +750,7 @@ func TestMCPAppsDashboard(t *testing.T) {
 		"ui://miodesk/status-v4.html",
 		"ui://miodesk/status-v5.html",
 		"ui://miodesk/status-v6.html",
+		"ui://miodesk/status-v7.html",
 	} {
 		legacyRead, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: legacyURI})
 		if err != nil {
@@ -757,24 +761,35 @@ func TestMCPAppsDashboard(t *testing.T) {
 		}
 	}
 
-	// The status tool declares the UI via the shared MCP Apps field plus the
-	// ChatGPT alias, and carries the hints ChatGPT requires.
+	taskRead, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: adapter.TaskWidgetURI})
+	if err != nil {
+		t.Fatalf("task resources/read: %v", err)
+	}
+	if len(taskRead.Contents) != 1 || taskRead.Contents[0].URI != adapter.TaskWidgetURI || taskRead.Contents[0].Text != rc.Text {
+		t.Errorf("task resource should reuse the current self-contained widget")
+	}
+
+	// Status and command_start declare UI resources; command_poll/cancel stay
+	// native so repeated lifecycle calls never create extra iframes.
 	listed, err := sess.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
 	var status *mcp.Tool
+	var commandStart *mcp.Tool
 	var read2 *mcp.Tool
 	for _, tl := range listed.Tools {
 		switch tl.Name {
 		case "status":
 			status = tl
+		case "command_start":
+			commandStart = tl
 		case "read":
 			read2 = tl
 		}
 	}
-	if status == nil || read2 == nil {
-		t.Fatal("status/read tools missing")
+	if status == nil || commandStart == nil || read2 == nil {
+		t.Fatal("status/command_start/read tools missing")
 	}
 	ui, _ := status.Meta["ui"].(map[string]any)
 	if ui == nil || ui["resourceUri"] != adapter.WidgetURI {
@@ -782,6 +797,10 @@ func TestMCPAppsDashboard(t *testing.T) {
 	}
 	if status.Meta["openai/outputTemplate"] != adapter.WidgetURI {
 		t.Errorf("ChatGPT alias missing: %v", status.Meta)
+	}
+	startUI, _ := commandStart.Meta["ui"].(map[string]any)
+	if startUI == nil || startUI["resourceUri"] != adapter.TaskWidgetURI || commandStart.Meta["openai/outputTemplate"] != adapter.TaskWidgetURI {
+		t.Errorf("command_start task UI metadata = %v", commandStart.Meta)
 	}
 	if status.Annotations == nil || !status.Annotations.ReadOnlyHint {
 		t.Errorf("status annotations = %+v", status.Annotations)
@@ -800,7 +819,7 @@ func TestMCPAppsDashboard(t *testing.T) {
 	for _, tl := range listed.Tools {
 		_, hasUI := tl.Meta["ui"]
 		_, hasTemplate := tl.Meta["openai/outputTemplate"]
-		wantUI := tl.Name == "status"
+		wantUI := tl.Name == "status" || tl.Name == "command_start"
 		if hasUI != wantUI || hasTemplate != wantUI {
 			t.Errorf("%s UI metadata present = (%v, %v), want = %v; meta = %v", tl.Name, hasUI, hasTemplate, wantUI, tl.Meta)
 		}

@@ -75,10 +75,10 @@ window.MIODESK_MOCKS = {
   "command-cancel": {
     kind: "command", command: "npm run build", exit_code: -1, elapsed_ms: 4200, stdout: "building…\n", stderr: "", timed_out: false,
   },
-  "command-start": { kind: "command", command: "air -c ./air.toml", id: "task-3" },
+  "command-start": { kind: "task", id: "task-3", label: "Run development server", status: "running" },
   "command-poll": {
-    kind: "command", id: "task-3", command: "air -c ./air.toml", cwd: ".", status: "running",
-    exit_code: -1, elapsed_ms: 42000, stdout: "watching for changes…\nrebuilding on save\n", stderr: "", timed_out: false,
+    kind: "task", id: "task-3", label: "Run development server", status: "running",
+    exit_code: null, elapsed_ms: 42000, stdout: "watching for changes…\nrebuilding on save\n", stderr: "", timed_out: false,
   },
   status: {
     kind: "status", name: "miodesk", version: "0.3.0", platform: "linux/amd64",
