@@ -38,3 +38,6 @@ jobs:
 
       - name: Build
         run: go build -buildvcs=false ./cmd/miodesk
+
+      - name: Test installer
+        run: scripts/install-test.sh

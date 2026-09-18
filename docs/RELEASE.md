@@ -43,7 +43,9 @@ miodesk-darwin-arm64
 miodesk-windows-amd64.exe
 ```
 
-It also creates `dist/checksums.txt` and `dist/manifest.json`. The manifest
+It also copies the verified-release installer to `dist/install.sh` and creates
+`dist/checksums.txt` plus `dist/manifest.json`. The checksum file covers the
+platform binaries and installer. The manifest
 uses the GitHub release URLs for `Chillizu/miodesk`; override the repository
 only when publishing a deliberate fork:
 
@@ -70,7 +72,7 @@ git push origin v0.2.1
 ```
 
 Create a GitHub release for `v0.2.1`, upload every `dist/miodesk-*` file,
-`dist/checksums.txt`, and `dist/manifest.json`, then run the update check from
+`dist/install.sh`, `dist/checksums.txt`, and `dist/manifest.json`, then run the update check from
 a separate test installation. Do not upload the runtime key or a local
 `tunnel-client` profile.
 

@@ -14,9 +14,35 @@ choose another access mode.
 
 ## Install
 
-For normal use, download the binary for your platform from a tagged GitHub
-release and put it on `PATH`. A source install is also available when Go
-1.26.6 or newer is installed:
+On Linux and macOS, the recommended installer downloads the matching release
+binary, verifies it against the release SHA-256 checksums, and installs it to
+`~/.local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Chillizu/miodesk/main/scripts/install.sh | sh
+```
+
+To inspect the installer before running it:
+
+```sh
+curl -fsSLo miodesk-install.sh https://raw.githubusercontent.com/Chillizu/miodesk/main/scripts/install.sh
+less miodesk-install.sh
+sh miodesk-install.sh
+```
+
+Useful installer options:
+
+```sh
+sh miodesk-install.sh --version 0.2.1
+sh miodesk-install.sh --bin-dir ~/bin
+```
+
+The installer only places the verified binary on disk. It does not configure a
+workspace, write credentials, install a service, or start a daemon.
+
+Windows users can download `miodesk-windows-amd64.exe` directly from a tagged
+GitHub release. On any supported platform, you can also install from source
+when Go 1.26.6 or newer is available:
 
 ```sh
 go install github.com/Chillizu/miodesk/cmd/miodesk@latest

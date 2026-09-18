@@ -519,21 +519,18 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	}
 
 	fmt.Fprintln(stdout, "\nNext:")
-	if service.Supported() {
-		fmt.Fprintln(stdout, "  miodesk service install")
-		fmt.Fprintln(stdout, "  miodesk service start")
-	} else if cfg.Tunnel.Provider == "openai" && openaiConfigured {
+	fmt.Fprintln(stdout, "  miodesk doctor")
+	if cfg.Tunnel.Provider == "openai" && openaiConfigured {
+		fmt.Fprintln(stdout, "  tunnel-client doctor --profile "+cfg.Tunnel.OpenAI.Profile+" --explain")
 		fmt.Fprintln(stdout, "  miodesk connect")
 	} else {
 		fmt.Fprintln(stdout, "  miodesk serve")
 	}
-	if cfg.Tunnel.Provider == "openai" && openaiConfigured {
-		fmt.Fprintln(stdout, "  tunnel-client doctor --profile "+cfg.Tunnel.OpenAI.Profile+" --explain")
-		if service.Supported() {
-			fmt.Fprintln(stdout, "  miodesk service status")
-		}
-	} else {
-		fmt.Fprintln(stdout, "  miodesk doctor")
+	if service.Supported() {
+		fmt.Fprintln(stdout, "\nOptional persistent service:")
+		fmt.Fprintln(stdout, "  miodesk service install")
+		fmt.Fprintln(stdout, "  miodesk service start")
+		fmt.Fprintln(stdout, "  miodesk service status")
 	}
 	return 0
 }

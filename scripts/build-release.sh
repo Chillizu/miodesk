@@ -20,7 +20,7 @@ REPOSITORY="${REPOSITORY:-Chillizu/miodesk}"
 mkdir -p dist
 # Only remove artifacts owned by this script. Other files in dist/ are left
 # alone so a local checkout can keep unrelated build outputs there.
-find dist -maxdepth 1 -type f \( -name 'miodesk-*' -o -name 'checksums.txt' -o -name 'manifest.json' \) -delete
+find dist -maxdepth 1 -type f \( -name 'miodesk-*' -o -name 'install.sh' -o -name 'checksums.txt' -o -name 'manifest.json' \) -delete
 
 platforms=(linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64)
 for platform in "${platforms[@]}"; do
@@ -34,7 +34,9 @@ for platform in "${platforms[@]}"; do
     -o "$out" ./cmd/miodesk
 done
 
-(cd dist && sha256sum miodesk-* > checksums.txt)
+cp scripts/install.sh dist/install.sh
+chmod +x dist/install.sh
+(cd dist && sha256sum miodesk-* install.sh > checksums.txt)
 
 manifest="dist/manifest.json"
 {

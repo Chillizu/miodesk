@@ -32,4 +32,6 @@ echo "[INFO] go build ./cmd/miodesk"
 build_dir="$(mktemp -d)"
 trap 'rm -rf "$build_dir"' EXIT
 go build -buildvcs=false -o "$build_dir/miodesk" ./cmd/miodesk
+echo "[INFO] installer smoke test"
+scripts/install-test.sh
 echo "[OK] release preflight passed"

@@ -17,6 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Chillizu/miodesk/internal/config"
+	"github.com/Chillizu/miodesk/internal/service"
 	"github.com/Chillizu/miodesk/internal/xdg"
 )
 
@@ -124,6 +125,25 @@ func TestSetupHelpIsUsable(t *testing.T) {
 	for _, want := range []string{"Usage: miodesk setup", "-workspace", "-tunnel-id", "-runtime-key-file"} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("setup help missing %q:\n%s", want, errOut)
+		}
+	}
+}
+
+func TestSetupNextStepsStartWithDoctor(t *testing.T) {
+	isolatedEnv(t)
+	ws := t.TempDir()
+	code, out, errOut := run(t, "setup", "--workspace", ws)
+	if code != 0 {
+		t.Fatalf("setup exit = %d\nstdout:\n%s\nstderr:\n%s", code, out, errOut)
+	}
+	if !strings.Contains(out, "Next:\n  miodesk doctor\n  miodesk serve") {
+		t.Errorf("setup should validate before starting or installing services:\n%s", out)
+	}
+	if service.Supported() {
+		doctorPos := strings.Index(out, "  miodesk doctor")
+		servicePos := strings.Index(out, "Optional persistent service:")
+		if doctorPos < 0 || servicePos < 0 || servicePos < doctorPos {
+			t.Errorf("persistent service guidance should follow doctor guidance:\n%s", out)
 		}
 	}
 }
