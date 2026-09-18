@@ -393,7 +393,7 @@ func registerTools(s *Server) {
 		if err != nil {
 			return nil, nil, err
 		}
-		return nil, &tools.TaskStarted{Kind: "command", ID: id, Command: in.Command}, nil
+		return nil, &tools.TaskStarted{Kind: "command", ID: id}, nil
 	})
 	mcp.AddTool(s.mcp, declared("command_poll", &mcp.Tool{
 		Name:        "command_poll",

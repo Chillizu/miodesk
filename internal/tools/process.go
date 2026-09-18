@@ -25,7 +25,6 @@ func shell() (string, string) {
 
 type procHandle struct {
 	id      string
-	command string
 	dir     string
 	relDir  string
 	started time.Time
@@ -37,11 +36,12 @@ type procHandle struct {
 	stdout limitedBuffer
 	stderr limitedBuffer
 
-	// exitCode/timedOut are written once right before doneCh closes; readers
+	// Completion fields are written once right before doneCh closes; readers
 	// observe them only after seeing doneCh closed.
-	exitCode atomic.Int32
-	timedOut atomic.Bool
-	doneCh   chan struct{}
+	exitCode  atomic.Int32
+	timedOut  atomic.Bool
+	elapsedMS atomic.Int64
+	doneCh    chan struct{}
 }
 
 var errTimedOut = errors.New("command timed out")
@@ -73,7 +73,6 @@ func newProc(parent context.Context, ws *workspace.Workspace, in CommandInput, c
 	cmd.WaitDelay = 3 * time.Second
 
 	p := &procHandle{
-		command: in.Command,
 		dir:     dir,
 		relDir:  ws.Rel(dir),
 		started: time.Now(),

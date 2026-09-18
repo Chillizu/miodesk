@@ -135,6 +135,9 @@ func TestManagerLifecycle(t *testing.T) {
 	if poll.Status != "running" {
 		t.Errorf("early status = %q", poll.Status)
 	}
+	if poll.ExitCode != nil {
+		t.Errorf("running task exit code = %v, want nil", *poll.ExitCode)
+	}
 
 	// Wait for output to land, then cancel.
 	deadline := time.Now().Add(5 * time.Second)
@@ -184,8 +187,17 @@ func TestManagerLifecycle(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if poll.Status != "done" || poll.ExitCode != 0 || !strings.Contains(poll.Stdout, "quick") {
+	if poll.Status != "done" || poll.ExitCode == nil || *poll.ExitCode != 0 || !strings.Contains(poll.Stdout, "quick") {
 		t.Errorf("final poll = %+v", poll)
+	}
+	finishedElapsed := poll.ElapsedMS
+	time.Sleep(25 * time.Millisecond)
+	pollAgain, err := m.Poll(id2)
+	if err != nil {
+		t.Fatalf("Poll completed task: %v", err)
+	}
+	if pollAgain.ElapsedMS != finishedElapsed {
+		t.Errorf("completed task elapsed time changed: %d -> %d", finishedElapsed, pollAgain.ElapsedMS)
 	}
 
 	// Cancelling a finished task is a no-op.

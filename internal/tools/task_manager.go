@@ -64,6 +64,7 @@ func (m *Manager) Start(ws *workspace.Workspace, in CommandInput) (string, error
 		waitErr := waitWithTimeout(p, DefaultTimeout(in.Timeout))
 		p.exitCode.Store(int32(exitCodeOf(p)))
 		p.timedOut.Store(waitErr == errTimedOut)
+		p.elapsedMS.Store(time.Since(p.started).Milliseconds())
 		close(p.doneCh)
 	}()
 	return p.id, nil
@@ -90,24 +91,27 @@ func (m *Manager) Poll(id string) (*PollOutput, error) {
 		return nil, fmt.Errorf("command_poll: %w", err)
 	}
 	status := "running"
+	elapsedMS := time.Since(p.started).Milliseconds()
+	var exitCode *int
 	select {
 	case <-p.doneCh:
 		status = "done"
+		elapsedMS = p.elapsedMS.Load()
+		code := int(p.exitCode.Load())
+		exitCode = &code
 	default:
 	}
 	return &PollOutput{
 		Kind:            "command",
 		ID:              p.id,
-		Command:         p.command,
-		CWD:             p.relDir,
 		Status:          status,
-		ExitCode:        int(p.exitCode.Load()),
+		ExitCode:        exitCode,
 		Stdout:          p.stdout.String(),
 		Stderr:          p.stderr.String(),
 		StdoutTruncated: p.stdout.Truncated(),
 		StderrTruncated: p.stderr.Truncated(),
 		TimedOut:        p.timedOut.Load(),
-		ElapsedMS:       time.Since(p.started).Milliseconds(),
+		ElapsedMS:       elapsedMS,
 	}, nil
 }
 
@@ -202,10 +206,8 @@ func (m *Manager) evictLocked() {
 type PollOutput struct {
 	Kind            string `json:"kind"` // "command"
 	ID              string `json:"id"`
-	Command         string `json:"command"`
-	CWD             string `json:"cwd"`
 	Status          string `json:"status"` // running | done
-	ExitCode        int    `json:"exit_code"`
+	ExitCode        *int   `json:"exit_code"`
 	Stdout          string `json:"stdout"`
 	Stderr          string `json:"stderr"`
 	StdoutTruncated bool   `json:"stdout_truncated"`
@@ -221,7 +223,6 @@ type TaskID struct {
 
 // TaskStarted is the command_start result.
 type TaskStarted struct {
-	Kind    string `json:"kind"` // "command"
-	ID      string `json:"id"`
-	Command string `json:"command"`
+	Kind string `json:"kind"` // "command"
+	ID   string `json:"id"`
 }
