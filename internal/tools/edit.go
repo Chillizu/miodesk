@@ -11,8 +11,10 @@ import (
 )
 
 const (
-	// MaxEditBytes caps the file size the edit tool will load.
+	// MaxEditBytes caps both existing and resulting file content per edit path.
 	MaxEditBytes = 2 << 20
+	// MaxEditBatchBytes caps old and new content across one atomic edit batch.
+	MaxEditBatchBytes = 16 << 20
 	// MaxEditOps bounds one atomic batch.
 	MaxEditOps = 100
 )
@@ -77,6 +79,7 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 
 	// Phase 1: validate and compute every new content in memory.
 	edits := make([]preparedEdit, 0, len(order))
+	totalEditBytes := 0
 	for _, key := range order {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -108,6 +111,13 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 			if err != nil {
 				return nil, err
 			}
+			if len(content) > MaxEditBytes {
+				return nil, fmt.Errorf("edit: %s result is %d bytes, cap is %d", ws.Rel(path), len(content), MaxEditBytes)
+			}
+		}
+		totalEditBytes += len(data) + len(content)
+		if totalEditBytes > MaxEditBatchBytes {
+			return nil, fmt.Errorf("edit: old and new content total is %d bytes, batch cap is %d", totalEditBytes, MaxEditBatchBytes)
 		}
 		edits = append(edits, preparedEdit{
 			path: path,

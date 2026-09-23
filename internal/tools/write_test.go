@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -150,6 +151,51 @@ func TestEditExactReplace(t *testing.T) {
 	}
 	if len(out.Files[0].Diff) == 0 {
 		t.Error("edit result should include a diff")
+	}
+}
+
+func TestEditRejectsOversizedNewContentWithoutWriting(t *testing.T) {
+	ws, root := newWS(t)
+	writeFile(t, root, "f.txt", "original")
+
+	_, err := Edit(context.Background(), ws, EditInput{Operations: []EditOperation{
+		{Path: "f.txt", Old: "original", New: strings.Repeat("x", MaxEditBytes+1)},
+	}})
+	if err == nil {
+		t.Fatal("oversized replacement unexpectedly succeeded")
+	}
+	data, readErr := os.ReadFile(filepath.Join(root, "f.txt"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "original" {
+		t.Fatalf("file changed after rejected edit: %q", data)
+	}
+}
+
+func TestEditRejectsAggregateBatchBytesWithoutWriting(t *testing.T) {
+	ws, root := newWS(t)
+	original := strings.Repeat("a", MaxEditBytes)
+	operations := make([]EditOperation, 0, 5)
+	for i := 0; i < 5; i++ {
+		name := "file-" + strconv.Itoa(i) + ".txt"
+		writeFile(t, root, name, original)
+		operations = append(operations, EditOperation{Path: name, Old: "a", New: "b", ReplaceAll: true})
+	}
+
+	_, err := Edit(context.Background(), ws, EditInput{Operations: operations})
+	if err == nil || !strings.Contains(err.Error(), "batch") {
+		t.Fatalf("aggregate edit error = %v, want batch byte limit", err)
+	}
+	for i := 0; i < 5; i++ {
+		name := "file-" + strconv.Itoa(i) + ".txt"
+		data, readErr := os.ReadFile(filepath.Join(root, name))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(data) != original {
+			t.Errorf("%s changed after rejected batch", name)
+		}
 	}
 }
 
