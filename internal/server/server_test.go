@@ -870,6 +870,36 @@ func TestMCPNewTools(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer sess.Close()
+	initialize := sess.InitializeResult()
+	if initialize == nil || initialize.ServerInfo == nil {
+		t.Fatal("initialize result must include server description")
+	}
+	implementationDescription := strings.ToLower(initialize.ServerInfo.Description)
+	if !strings.Contains(implementationDescription, "file tools") || !strings.Contains(implementationDescription, "current user's permissions") {
+		t.Errorf("implementation description does not distinguish file and command boundaries: %q", initialize.ServerInfo.Description)
+	}
+	instructions := strings.ToLower(initialize.Instructions)
+	for _, want := range []string{"file tool", "sandboxed inside the workspace root", "current user's permissions", "workspace-contained working directory", "does not restrict os filesystem access"} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("server instructions missing security wording %q: %q", want, initialize.Instructions)
+		}
+	}
+	listed, err := sess.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	var execDescription string
+	for _, tool := range listed.Tools {
+		if tool.Name == "exec_command" {
+			execDescription = strings.ToLower(tool.Description)
+			break
+		}
+	}
+	for _, want := range []string{"current user's permissions", "workspace-contained working directory", "not confined by an os filesystem sandbox"} {
+		if !strings.Contains(execDescription, want) {
+			t.Errorf("exec_command description missing security wording %q: %q", want, execDescription)
+		}
+	}
 
 	callOK := func(name string, args map[string]any) map[string]any {
 		t.Helper()

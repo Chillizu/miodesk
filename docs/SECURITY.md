@@ -14,16 +14,18 @@ are bounded (depth, entry count, byte caps).
 
 ## Command tools
 
-`exec_command` and `write_stdin` keep every process cwd inside the workspace
-(or a sandboxed subdirectory). A command that outlives the initial yield window
-returns an explicit numeric `session_id`; the process remains subject to the
-same bounded runtime, output cap, and 32-session concurrency limit. Pipe mode
-is the default; `tty=true` creates an interactive Unix PTY but does not weaken
-workspace or privilege-escalation checks. Common privilege-escalation commands
-(`sudo`, `doas`, `su`, `pkexec`, `runuser`, and
-`runas`) are conservatively refused. These are guardrails, not an account
-sandbox: commands can still do anything the user's account can do — treat every
-MCP client you connect as a full agent on this machine.
+`exec_command` and `write_stdin` run with the current user's operating-system
+permissions. The command's working directory is resolved inside the configured
+workspace (or a workspace-contained subdirectory), but that only constrains
+`cwd`; commands are not confined by an OS filesystem sandbox and can access
+other resources permitted to the account. A command that outlives the initial
+yield window returns an explicit numeric `session_id`; the process remains
+subject to the same bounded runtime, output cap, and 32-session concurrency
+limit. Pipe mode is the default; `tty=true` creates an interactive Unix PTY.
+Common privilege-escalation commands (`sudo`, `doas`, `su`, `pkexec`,
+`runuser`, and `runas`) are conservatively refused. That refusal is a
+guardrail, not an account sandbox — treat every MCP client you connect as a
+full agent on this machine.
 
 ## Trust levels
 
@@ -83,9 +85,14 @@ send headers. Never combine it with a long-lived tunnel.
 
 ## Data surfaces
 
-`/api/status`, `/api/edits`, `/widget`, and the MCP endpoint all carry no
-secrets; they expose workspace paths and usage counters only. When a tunnel is
-active, everything reachable is gated by the active trust level.
+`/api/status` and `/widget` do not contain bearer tokens or edited file text;
+they expose local diagnostics such as workspace paths and usage counters.
+`/api/edits` can contain edited workspace text. It is retained in memory only
+(up to 10 records and 2 MiB of diff data) and is controlled by the configured
+access mode: local/origin validation, bearer-token authentication, or the
+explicitly unsafe mode. MCP tool results can also contain workspace content
+requested by the client, such as file reads or command output. When a tunnel is
+active, every reachable surface follows the active trust level.
 
 ## Logging
 
@@ -95,9 +102,11 @@ elapsed time. The default stderr sink is collected by the systemd user journal;
 set `[logging].format = "json"` for machine-readable records or
 `MIODESK_LOG=debug` for health checks and other verbose diagnostics.
 
-Logging intentionally omits file contents, command lines, bearer tokens,
-Authorization headers, and tool arguments. `miodesk logs` also redacts the
-configured bearer token defensively before displaying journal output.
+HTTP request logs contain metadata, not request bodies. MCP tool logging omits
+raw arguments and result payloads; failure entries can still include an error
+summary. Logs do not include file contents, command lines, bearer tokens, or
+Authorization headers. `miodesk logs` also redacts the configured bearer token
+defensively before displaying journal output.
 
 ## Reporting
 

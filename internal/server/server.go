@@ -132,11 +132,11 @@ func New(cfg *config.Config, ws *workspace.Workspace) *Server {
 		&mcp.Implementation{
 			Name:        "miodesk",
 			Title:       "miodesk",
-			Description: "Local workspace bridge: sandboxed file tools and commands for AI clients.",
+			Description: "Local workspace bridge: workspace-sandboxed file tools; commands run with the current user's permissions from a workspace-contained working directory.",
 			Version:     buildinfo.Version,
 		},
 		&mcp.ServerOptions{
-			Instructions: "miodesk bridges the user's local workspace. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root; paths may be relative to the root. Prefer list before deeper reads, and prefer edit over write for changing existing files — edit batches are atomic. Commands use a compact coding-agent surface: exec_command runs a shell command and either returns its final output or a numeric session_id; keep tty=false for ordinary commands and set tty=true only for genuinely interactive terminal programs. write_stdin resumes that session, polls with empty chars, or writes input; Ctrl-C is terminal input for TTY sessions and cancels pipe sessions. The context tool maintains small cross-session rolling handoffs: update at meaningful changes in goals, decisions, blockers, or next steps; checkpoint at explicit or important milestones; resume in a new session. Use approach_summary for a concise current approach and rationale. For update/checkpoint, clear_fields explicitly clears scalar fields and takes precedence over values supplied in the same request.",
+			Instructions: "miodesk bridges the user's local workspace. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root; paths may be relative to the root. Prefer list before deeper reads, and prefer edit over write for changing existing files — edit batches are atomic. Commands run with the current user's permissions; exec_command.workdir selects a workspace-contained working directory and does not restrict OS filesystem access. exec_command either returns final output or a numeric session_id; keep tty=false for ordinary commands and set tty=true only for genuinely interactive terminal programs. write_stdin resumes that session, polls with empty chars, or writes input; Ctrl-C is terminal input for TTY sessions and cancels pipe sessions. The context tool maintains small cross-session rolling handoffs: update at meaningful changes in goals, decisions, blockers, or next steps; checkpoint at explicit or important milestones; resume in a new session. Use approach_summary for a concise current approach and rationale. For update/checkpoint, clear_fields explicitly clears scalar fields and takes precedence over values supplied in the same request.",
 		},
 	)
 	registerTools(s)
@@ -451,7 +451,7 @@ func registerTools(s *Server) {
 	mcp.AddTool(s.mcp, declared("exec_command", &mcp.Tool{
 		Name:        "exec_command",
 		Title:       "Run command",
-		Description: "Run a shell command inside the workspace. Returns final output when it exits within yield_time_ms; otherwise returns a numeric session_id for write_stdin. Set tty=true only for interactive terminal programs; ordinary commands stay pipe-backed by default.",
+		Description: "Run a shell command with the current user's permissions and a workspace-contained working directory. The command is not confined by an OS filesystem sandbox and may access resources permitted to the account. Returns final output when it exits within yield_time_ms; otherwise returns a numeric session_id for write_stdin. Set tty=true only for interactive terminal programs; ordinary commands stay pipe-backed by default.",
 		Annotations: ann(false, true, true, false),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ExecCommandInput) (result *mcp.CallToolResult, output *tools.UnifiedExecOutput, err error) {
 		finish := s.beginTool(ctx, "exec_command")

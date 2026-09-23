@@ -31,7 +31,7 @@ type Server struct {
 }
 
 type Workspace struct {
-	// Root is the sandbox boundary for every file and command tool.
+	// Root is the sandbox boundary for every file tool; command cwd is constrained here.
 	Root string `toml:"root"`
 }
 
