@@ -44,8 +44,12 @@ type procHandle struct {
 	output limitedBuffer
 
 	stdinMu sync.Mutex
-	stdin   io.WriteCloser
-	pty     io.ReadWriteCloser
+	// stdin is installed before the session is published and is never replaced.
+	stdin          io.WriteCloser
+	stdinCloseOnce sync.Once
+	stdinClosed    atomic.Bool
+	stdinCloseErr  error
+	pty            io.ReadWriteCloser
 
 	outputCursorMu sync.Mutex
 	outputCursor   int
@@ -266,20 +270,88 @@ func (p *procHandle) abortBeforeStart() {
 	if p.cancel != nil {
 		p.cancel()
 	}
-	p.stdinMu.Lock()
-	defer p.stdinMu.Unlock()
-	if p.stdin != nil {
-		_ = p.stdin.Close()
-		p.stdin = nil
-	}
+	_ = p.closeStdin()
 }
 
-func (p *procHandle) writeStdin(chars string) error {
-	p.stdinMu.Lock()
+func (p *procHandle) closeStdin() error {
+	p.stdinCloseOnce.Do(func() {
+		p.stdinClosed.Store(true)
+		if p.stdin != nil {
+			p.stdinCloseErr = p.stdin.Close()
+		}
+	})
+	return p.stdinCloseErr
+}
+
+func (p *procHandle) writeStdinBounded(ctx context.Context, chars string, timeout time.Duration) error {
+	if p.stdinClosed.Load() {
+		return fmt.Errorf("session stdin is closed")
+	}
+	if !p.stdinMu.TryLock() {
+		return fmt.Errorf("session stdin write already in progress")
+	}
 	defer p.stdinMu.Unlock()
+	if p.stdinClosed.Load() {
+		return fmt.Errorf("session stdin is closed")
+	}
 	if p.stdin == nil {
 		return fmt.Errorf("session stdin is not writable")
 	}
-	_, err := io.WriteString(p.stdin, chars)
-	return err
+	if chars == "" {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("stdin write canceled: %w", err)
+	}
+	if timeout <= 0 {
+		timeout = writeStdinWriteTimeout
+	}
+
+	stdin := p.stdin
+	done := make(chan error, 1)
+	go func() {
+		written, err := io.WriteString(stdin, chars)
+		if err == nil && written != len(chars) {
+			err = io.ErrShortWrite
+		}
+		done <- err
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		p.interruptStdinWrite(done)
+		return fmt.Errorf("stdin write canceled: %w", ctx.Err())
+	case <-timer.C:
+		p.interruptStdinWrite(done)
+		return fmt.Errorf("stdin write timed out after %s", timeout)
+	}
+}
+
+func (p *procHandle) interruptStdinWrite(done <-chan error) {
+	_ = p.closeStdin()
+	if waitForStdinWrite(done, 100*time.Millisecond) {
+		return
+	}
+	if p.cancel != nil {
+		p.cancel()
+	}
+	_ = waitForStdinWrite(done, 100*time.Millisecond)
+}
+
+func waitForStdinWrite(done <-chan error, timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }

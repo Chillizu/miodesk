@@ -9,10 +9,12 @@ import (
 )
 
 const (
-	defaultExecYieldMS  = 10_000
-	maxExecYieldMS      = 30_000
-	defaultWriteYieldMS = 1_000
-	maxWriteYieldMS     = 30_000
+	defaultExecYieldMS     = 10_000
+	maxExecYieldMS         = 30_000
+	defaultWriteYieldMS    = 1_000
+	maxWriteYieldMS        = 30_000
+	maxWriteStdinBytes     = 64 << 10
+	writeStdinWriteTimeout = 5 * time.Second
 )
 
 // ExecCommandInput stays intentionally close to Codex's unified exec surface.
@@ -64,6 +66,9 @@ func ExecCommand(ctx context.Context, ws *workspace.Workspace, manager *Manager,
 }
 
 func WriteStdin(ctx context.Context, manager *Manager, in WriteStdinInput) (*UnifiedExecOutput, error) {
+	if len(in.Chars) > maxWriteStdinBytes {
+		return nil, fmt.Errorf("write_stdin: chars exceeds 64 KiB limit")
+	}
 	if in.SessionID <= 0 {
 		return nil, fmt.Errorf("write_stdin: session_id must be positive")
 	}
@@ -85,7 +90,7 @@ func WriteStdin(ctx context.Context, manager *Manager, in WriteStdinInput) (*Uni
 			return manager.sessionOutput(in.SessionID)
 		default:
 		}
-		if err := p.writeStdin(in.Chars); err != nil {
+		if err := p.writeStdinBounded(ctx, in.Chars, writeStdinWriteTimeout); err != nil {
 			select {
 			case <-p.doneCh:
 				return manager.sessionOutput(in.SessionID)
