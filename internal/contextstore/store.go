@@ -34,10 +34,33 @@ type State struct {
 	Summary         string   `json:"summary,omitempty"`
 	Goal            string   `json:"goal,omitempty"`
 	CurrentState    string   `json:"current_state,omitempty"`
-	ActiveReasoning string   `json:"active_reasoning,omitempty"`
+	ApproachSummary string   `json:"approach_summary,omitempty"`
 	Decisions       []string `json:"decisions,omitempty"`
 	OpenQuestions   []string `json:"open_questions,omitempty"`
 	NextSteps       []string `json:"next_steps,omitempty"`
+}
+
+// UnmarshalJSON reads the retired active_reasoning key as a compatibility
+// alias. The current approach_summary field always wins when both are present.
+func (s *State) UnmarshalJSON(data []byte) error {
+	type stateJSON State
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	var decoded stateJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if _, hasCurrent := fields["approach_summary"]; !hasCurrent {
+		if legacy, hasLegacy := fields["active_reasoning"]; hasLegacy {
+			if err := json.Unmarshal(legacy, &decoded.ApproachSummary); err != nil {
+				return fmt.Errorf("context active_reasoning: %w", err)
+			}
+		}
+	}
+	*s = State(decoded)
+	return nil
 }
 
 // Revision is an automatically retained copy of a previous active handoff.
@@ -97,7 +120,8 @@ type Summary struct {
 // Input is the single model-facing context tool request.
 //
 // update upserts the rolling handoff. Only non-empty scalar fields and
-// non-nil list fields replace their existing values.
+// non-nil list fields replace existing values; clear_fields explicitly clears
+// selected scalar fields after replacements are applied.
 // checkpoint may also include updates, which are applied before snapshotting.
 // resume reads one active handoff. list returns compact context summaries.
 type Input struct {
@@ -107,11 +131,50 @@ type Input struct {
 	Summary          string   `json:"summary,omitempty" jsonschema:"brief current handoff summary; update/checkpoint only"`
 	Goal             string   `json:"goal,omitempty" jsonschema:"current goal; update/checkpoint only"`
 	CurrentState     string   `json:"current_state,omitempty" jsonschema:"what is done/in progress now; update/checkpoint only"`
-	ActiveReasoning  string   `json:"active_reasoning,omitempty" jsonschema:"current approach and why; update/checkpoint only"`
+	ApproachSummary  string   `json:"approach_summary,omitempty" jsonschema:"concise current approach summary and rationale; update/checkpoint only"`
+	ClearFields      []string `json:"clear_fields,omitempty" jsonschema:"scalar fields to clear: working_directory, summary, goal, current_state, approach_summary; clear takes precedence over values in the same update/checkpoint request"`
 	Decisions        []string `json:"decisions,omitempty" jsonschema:"important decisions that should carry into the next session"`
 	OpenQuestions    []string `json:"open_questions,omitempty" jsonschema:"unresolved questions or blockers"`
 	NextSteps        []string `json:"next_steps,omitempty" jsonschema:"ordered next useful steps"`
 	Label            string   `json:"label,omitempty" jsonschema:"optional checkpoint label; checkpoint only"`
+
+	clearFieldsPresent bool
+}
+
+// UnmarshalJSON accepts exactly the model-facing fields plus the retired
+// active_reasoning alias for stale clients. Unknown properties remain errors.
+func (in *Input) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	known := map[string]bool{
+		"action": true, "id": true, "working_directory": true,
+		"summary": true, "goal": true, "current_state": true,
+		"approach_summary": true, "active_reasoning": true,
+		"clear_fields": true, "decisions": true, "open_questions": true,
+		"next_steps": true, "label": true,
+	}
+	for name := range fields {
+		if !known[name] {
+			return fmt.Errorf("context input: unknown field %q", name)
+		}
+	}
+	type inputJSON Input
+	var decoded inputJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*in = Input(decoded)
+	_, in.clearFieldsPresent = fields["clear_fields"]
+	if _, hasCurrent := fields["approach_summary"]; !hasCurrent {
+		if legacy, hasLegacy := fields["active_reasoning"]; hasLegacy {
+			if err := json.Unmarshal(legacy, &in.ApproachSummary); err != nil {
+				return fmt.Errorf("context input active_reasoning: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 // Output is the structured result of the context tool.
@@ -141,6 +204,9 @@ func (s *Store) Apply(ws *workspace.Workspace, in Input) (*Output, error) {
 	defer s.mu.Unlock()
 
 	action := strings.ToLower(strings.TrimSpace(in.Action))
+	if err := validateClearFields(action, in); err != nil {
+		return nil, err
+	}
 	switch action {
 	case "update":
 		ctx, err := s.updateLocked(ws, in)
@@ -238,7 +304,8 @@ func (s *Store) checkpointLocked(ws *workspace.Workspace, in Input) (*Context, *
 			Summary:          in.Summary,
 			Goal:             in.Goal,
 			CurrentState:     in.CurrentState,
-			ActiveReasoning:  in.ActiveReasoning,
+			ApproachSummary:  in.ApproachSummary,
+			ClearFields:      in.ClearFields,
 			Decisions:        in.Decisions,
 			OpenQuestions:    in.OpenQuestions,
 			NextSteps:        in.NextSteps,
@@ -326,7 +393,7 @@ func applyPatch(ws *workspace.Workspace, ctx *Context, in Input) (bool, error) {
 	replaceString(&ctx.State.Summary, in.Summary)
 	replaceString(&ctx.State.Goal, in.Goal)
 	replaceString(&ctx.State.CurrentState, in.CurrentState)
-	replaceString(&ctx.State.ActiveReasoning, in.ActiveReasoning)
+	replaceString(&ctx.State.ApproachSummary, in.ApproachSummary)
 
 	replaceList := func(dst *[]string, src []string) {
 		if src == nil {
@@ -342,7 +409,56 @@ func applyPatch(ws *workspace.Workspace, ctx *Context, in Input) (bool, error) {
 	replaceList(&ctx.State.OpenQuestions, in.OpenQuestions)
 	replaceList(&ctx.State.NextSteps, in.NextSteps)
 
+	clearString := func(dst *string) {
+		if *dst != "" {
+			*dst = ""
+			changed = true
+		}
+	}
+	for _, field := range in.ClearFields {
+		switch field {
+		case "working_directory":
+			clearString(&ctx.WorkingDirectory)
+		case "summary":
+			clearString(&ctx.State.Summary)
+		case "goal":
+			clearString(&ctx.State.Goal)
+		case "current_state":
+			clearString(&ctx.State.CurrentState)
+		case "approach_summary":
+			clearString(&ctx.State.ApproachSummary)
+		}
+	}
+
 	return changed, nil
+}
+
+func validateClearFields(action string, in Input) error {
+	provided := in.clearFieldsPresent || in.ClearFields != nil
+	if action != "update" && action != "checkpoint" {
+		if provided {
+			return fmt.Errorf("context: clear_fields is only valid for update or checkpoint")
+		}
+		return nil
+	}
+	allowed := map[string]bool{
+		"working_directory": true,
+		"summary":           true,
+		"goal":              true,
+		"current_state":     true,
+		"approach_summary":  true,
+	}
+	seen := make(map[string]bool, len(in.ClearFields))
+	for _, field := range in.ClearFields {
+		if !allowed[field] {
+			return fmt.Errorf("context: clear_fields contains unsupported field %q", field)
+		}
+		if seen[field] {
+			return fmt.Errorf("context: clear_fields contains duplicate field %q", field)
+		}
+		seen[field] = true
+	}
+	return nil
 }
 
 func cleanList(in []string) []string {

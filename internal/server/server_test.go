@@ -1005,6 +1005,82 @@ func TestMCPNewTools(t *testing.T) {
 	}
 }
 
+func TestContextAcceptsLegacyActiveReasoningInput(t *testing.T) {
+	s := newTestServer(t)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	ctx := context.Background()
+	client := mcp.NewClient(&mcp.Implementation{Name: "miodesk-context-alias-test", Version: "test"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             ts.URL + "/mcp",
+		HTTPClient:           ts.Client(),
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer session.Close()
+
+	listed, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	var contextTool *mcp.Tool
+	for _, tool := range listed.Tools {
+		if tool.Name == "context" {
+			contextTool = tool
+			break
+		}
+	}
+	if contextTool == nil {
+		t.Fatal("context tool missing")
+	}
+	schema, ok := contextTool.InputSchema.(map[string]any)
+	if !ok {
+		t.Fatalf("context input schema = %#v", contextTool.InputSchema)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("context schema properties = %#v", schema["properties"])
+	}
+	if _, ok := properties["approach_summary"]; !ok {
+		t.Errorf("context schema is missing approach_summary: %v", properties)
+	}
+	if _, ok := properties["clear_fields"]; !ok {
+		t.Errorf("context schema is missing clear_fields: %v", properties)
+	}
+	if _, ok := properties["active_reasoning"]; ok {
+		t.Errorf("context schema must not advertise active_reasoning: %v", properties)
+	}
+
+	call, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "context", Arguments: map[string]any{
+		"action":           "update",
+		"id":               "legacy-approach",
+		"summary":          "Legacy client request",
+		"active_reasoning": "concise replay summary",
+	}})
+	if err != nil {
+		t.Fatalf("call context with legacy field: %v", err)
+	}
+	if call.IsError {
+		t.Fatalf("context legacy alias returned error: %v", call.Content)
+	}
+	data, err := json.Marshal(call.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode context response: %v (%s)", err, data)
+	}
+	active, _ := payload["context"].(map[string]any)
+	state, _ := active["state"].(map[string]any)
+	if state["approach_summary"] != "concise replay summary" {
+		t.Fatalf("context state = %v", state)
+	}
+}
+
 func TestMCPAppsDashboard(t *testing.T) {
 	s := newTestServer(t)
 	ts := httptest.NewServer(s.Handler())

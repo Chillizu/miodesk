@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Chillizu/miodesk/internal/adapter"
@@ -135,7 +136,7 @@ func New(cfg *config.Config, ws *workspace.Workspace) *Server {
 			Version:     buildinfo.Version,
 		},
 		&mcp.ServerOptions{
-			Instructions: "miodesk bridges the user's local workspace. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root; paths may be relative to the root. Prefer list before deeper reads, and prefer edit over write for changing existing files — edit batches are atomic. Commands use a compact coding-agent surface: exec_command runs a shell command and either returns its final output or a numeric session_id; keep tty=false for ordinary commands and set tty=true only for genuinely interactive terminal programs. write_stdin resumes that session, polls with empty chars, or writes input; Ctrl-C is terminal input for TTY sessions and cancels pipe sessions. The context tool maintains small cross-session rolling handoffs: once a user establishes a context id, update it at meaningful changes in goals, decisions, blockers, or next steps; checkpoint at explicit or important milestones; resume it in a new session.",
+			Instructions: "miodesk bridges the user's local workspace. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root; paths may be relative to the root. Prefer list before deeper reads, and prefer edit over write for changing existing files — edit batches are atomic. Commands use a compact coding-agent surface: exec_command runs a shell command and either returns its final output or a numeric session_id; keep tty=false for ordinary commands and set tty=true only for genuinely interactive terminal programs. write_stdin resumes that session, polls with empty chars, or writes input; Ctrl-C is terminal input for TTY sessions and cancels pipe sessions. The context tool maintains small cross-session rolling handoffs: update at meaningful changes in goals, decisions, blockers, or next steps; checkpoint at explicit or important milestones; resume in a new session. Use approach_summary for a concise current approach and rationale. For update/checkpoint, clear_fields explicitly clears scalar fields and takes precedence over values supplied in the same request.",
 		},
 	)
 	registerTools(s)
@@ -477,11 +478,20 @@ func registerTools(s *Server) {
 		}
 		return nil, out, nil
 	})
+	contextSchema, err := jsonschema.For[contextstore.Input](nil)
+	if err != nil {
+		panic(fmt.Sprintf("generate context input schema: %v", err))
+	}
+	// The MCP SDK validates against this schema before Input.UnmarshalJSON can
+	// read the retired active_reasoning alias; keep only the top-level object
+	// open, then let the strict custom decoder reject all other unknown names.
+	contextSchema.AdditionalProperties = &jsonschema.Schema{}
 	mcp.AddTool(s.mcp, declared("context", &mcp.Tool{
 		Name:        "context",
 		Title:       "Manage working context",
-		Description: "Maintain a small cross-session rolling handoff. update upserts the active state, checkpoint freezes a milestone, resume returns the latest active handoff, and list discovers available context ids. working_directory is only a pointer to where the work lives inside the workspace; it does not change the miodesk workspace root.",
+		Description: "Maintain a small cross-session rolling handoff. update upserts the active state, checkpoint freezes a milestone, resume returns the latest active handoff, and list discovers available context ids. approach_summary should be a concise summary of the current approach and rationale. For update/checkpoint, clear_fields clears selected scalar fields and takes precedence over values supplied in the same request. working_directory is only a pointer to where the work lives inside the workspace; it does not change the miodesk workspace root.",
 		Annotations: ann(false, false, false, false),
+		InputSchema: contextSchema,
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in contextstore.Input) (result *mcp.CallToolResult, output *contextstore.Output, err error) {
 		finish := s.beginTool(ctx, "context")
 		defer func() { finish(err) }()
