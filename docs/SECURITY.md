@@ -12,15 +12,18 @@ traversal, absolute-path escapes, and symlinks pointing outside the workspace
 are all rejected. `delete` refuses the workspace root itself. Large operations
 are bounded (depth, entry count, byte caps).
 
-## Command tool
+## Command tools
 
-`command` and `command_start` run inside the workspace with the workspace (or
-a sandboxed subdirectory) as cwd. Common privilege-escalation commands
-(`sudo`, `doas`, `su`, `pkexec`, `runuser`, and `runas`) are conservatively
-refused, and at most 32 long-running tasks may be active at once. Output is
-capped. These are guardrails, not an account sandbox: commands can still do
-anything the user's account can do — treat every MCP client you connect as a
-full agent on this machine.
+`exec_command` and `write_stdin` keep every process cwd inside the workspace
+(or a sandboxed subdirectory). A command that outlives the initial yield window
+returns an explicit numeric `session_id`; the process remains subject to the
+same bounded runtime, output cap, and 32-session concurrency limit. Pipe mode
+is the default; `tty=true` creates an interactive Unix PTY but does not weaken
+workspace or privilege-escalation checks. Common privilege-escalation commands
+(`sudo`, `doas`, `su`, `pkexec`, `runuser`, and
+`runas`) are conservatively refused. These are guardrails, not an account
+sandbox: commands can still do anything the user's account can do — treat every
+MCP client you connect as a full agent on this machine.
 
 ## Trust levels
 

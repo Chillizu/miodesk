@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- Added persistent cross-session working contexts: one `context` tool can keep a
+  rolling active handoff, freeze immutable checkpoints, resume the latest state,
+  and list available context ids. `working_directory` is a workspace-contained
+  locator only and does not change the configured workspace root.
+- Declared an explicit deny-by-default MCP Apps CSP for the diagnostics widget:
+  empty network/resource allowlists, no nested-frame allowance, and one shared
+  metadata helper for both resource registration and returned resource contents.
+- Collapsed the old model-facing command lifecycle into a Codex-shaped
+  `exec_command` + `write_stdin` surface. Quick commands finish inline; longer
+  commands return a numeric `session_id`, and later calls consume only new output,
+  can write stdin, or cancel pipe-backed sessions with Ctrl-C. The existing bounded
+  session manager remains internal, so the safety limits survive without exposing
+  lifecycle bookkeeping. `tty=true` now allocates a real Unix PTY for interactive
+  programs; pipe mode remains the default, and terminal multiplexers such as tmux
+  are deliberately not part of the MCP contract.
+- Added a narrow migration shim for stale clients that still call the formerly
+  advertised `command`, `command_start`, `command_poll`, or `command_cancel`
+  tools. The shim rewrites calls into the unified exec surface without
+  re-advertising retired tools and is intended to be removed after client-side
+  schema caches age out.
+- Kept command execution UI-free. The embedded UI is diagnostics-only; command
+  sessions use lightweight native invocation feedback and never advertise an
+  output template or create polling cards.
+- Tightened process lifecycle cleanup: failed/pre-cap exec starts close their
+  stdin resources, server shutdown gives all active exec sessions one shared
+  bounded grace period, while process-backed tunnel providers share bounded
+  stop logic and acquisition timers are explicitly stopped on early return.
 - Added a companion `miodesk-tunnel.service` for configured OpenAI Secure MCP
   Tunnel profiles, so Linux service commands supervise the loopback MCP server
   and outbound tunnel together.

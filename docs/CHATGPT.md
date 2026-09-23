@@ -141,8 +141,15 @@ Authorization 或任何 token。没有安装 service 时，前台运行的日志
 curl --fail http://127.0.0.1:8787/healthz
 ```
 
+如果 ChatGPT 仍显示旧的 `command` / `command_start` / `command_poll` /
+`command_cancel` schema，而本地 `tools/list` 已经显示 `exec_command` /
+`write_stdin`，这是客户端/connector 的 schema 缓存，而不是 server 回退。当前
+server 只 advertise 新工具；一个窄的临时兼容层会接住旧调用，但不会把旧工具
+重新放回 `tools/list`。优先重载 connector/client 来刷新 schema，不要为了迎合
+缓存再次扩张旧工具面。
+
 `Error loading app / Failed to fetch template` 属于 ChatGPT/MCP Apps 获取
 widget resource 失败，不等同于 MCP tool 逻辑失败。常规 read/search/list/
-write/edit/delete/short command 使用 Native-first 返回；只有 status 和长任务
-生命周期结果声明可选 widget。此时先确认 endpoint、Tunnel 选择和
-`miodesk logs`，不要把 widget 错误误判成文件工具不可用。
+write/edit/delete 以及 `exec_command` / `write_stdin` 都使用 Native-first 返回；
+只有 diagnostics `status` 声明可选 widget。此时先确认 endpoint、Tunnel 选择和
+`miodesk logs`，不要把 widget 错误误判成文件或命令工具不可用。
