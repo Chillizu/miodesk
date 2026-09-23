@@ -130,9 +130,52 @@ func TestLegacyCommandCompatibilityRewritesMCPNameHeader(t *testing.T) {
 	}
 }
 
+func TestLegacyCommandCompatibilityUsesBodyToolName(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		header string
+	}{
+		{name: "missing header"},
+		{name: "mismatched header", header: "command"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"command_start","arguments":{"command":"sleep 1"}}}`
+			req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+			if tc.header != "" {
+				req.Header.Set("Mcp-Name", tc.header)
+			}
+			rec := httptest.NewRecorder()
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := legacyToolName(r.Context()); got != "command_start" {
+					t.Errorf("legacy tool context = %q, want command_start", got)
+				}
+				if got := r.Header.Get("Mcp-Name"); got != "exec_command" {
+					t.Errorf("Mcp-Name = %q, want exec_command", got)
+				}
+				rewritten, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("read rewritten body: %v", err)
+				} else if name, _ := decodedToolCall(t, rewritten); name != "exec_command" {
+					t.Errorf("body tool name = %q, want exec_command", name)
+				}
+				in := tools.ExecCommandInput{}
+				applyLegacyExecDefaults(r.Context(), &in)
+				if in.YieldTimeMS != 1 {
+					t.Errorf("yield_time_ms = %d, want command_start default 1", in.YieldTimeMS)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})
+			legacyCommandCompatibility(handler).ServeHTTP(rec, req)
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+			}
+		})
+	}
+}
+
 func TestRewriteLegacyCommandCall(t *testing.T) {
-	body := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"command","arguments":{"command":"echo ok","cwd":"data/Projects/pi-amplifier","timeout":12,"yield-time_ms":999,"tty":true}}}`)
-	rewritten, ok := rewriteLegacyToolCall(body)
+	body := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"command","arguments":{"command":"echo ok","cwd":"data/Projects/pi-amplifier","timeout":12,"yield-time_ms":999,"yield-time-ms":998,"tty":true}}}`)
+	rewritten, _, ok := rewriteLegacyToolCall(body)
 	if !ok {
 		t.Fatal("legacy command was not rewritten")
 	}
@@ -147,7 +190,7 @@ func TestRewriteLegacyCommandCall(t *testing.T) {
 	if args["timeout_ms"] != float64(12_000) {
 		t.Fatalf("timeout_ms = %#v", args["timeout_ms"])
 	}
-	for _, newOnly := range []string{"yield-time_ms", "tty"} {
+	for _, newOnly := range []string{"yield-time_ms", "yield-time-ms", "tty"} {
 		if _, exists := args[newOnly]; exists {
 			t.Fatalf("legacy shim must not inject new-only %s: %#v", newOnly, args)
 		}
@@ -161,7 +204,7 @@ func TestRewriteLegacyCommandCall(t *testing.T) {
 
 func TestRewriteLegacyCommandStartUsesResumableExec(t *testing.T) {
 	body := []byte(`{"jsonrpc":"2.0","id":"start","method":"tools/call","params":{"name":"command_start","arguments":{"command":"sleep 30","timeout":120,"yield-time_ms":999,"tty":true}}}`)
-	rewritten, ok := rewriteLegacyToolCall(body)
+	rewritten, _, ok := rewriteLegacyToolCall(body)
 	if !ok {
 		t.Fatal("legacy command_start was not rewritten")
 	}
@@ -199,7 +242,7 @@ func TestRewriteLegacySessionCalls(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rewritten, ok := rewriteLegacyToolCall([]byte(tc.input))
+			rewritten, _, ok := rewriteLegacyToolCall([]byte(tc.input))
 			if !ok {
 				t.Fatalf("legacy %s was not rewritten", tc.name)
 			}
@@ -259,7 +302,7 @@ func TestApplyLegacyDefaultsOutOfBand(t *testing.T) {
 
 func TestRewriteLegacyToolCallRejectsUnknownRetiredTool(t *testing.T) {
 	body := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"command_wait","arguments":{"id":42}}}`)
-	rewritten, ok := rewriteLegacyToolCall(body)
+	rewritten, _, ok := rewriteLegacyToolCall(body)
 	if ok {
 		t.Fatalf("unknown retired tool unexpectedly rewritten: %s", rewritten)
 	}
@@ -267,7 +310,7 @@ func TestRewriteLegacyToolCallRejectsUnknownRetiredTool(t *testing.T) {
 
 func TestRewriteLegacyToolCallLeavesUnifiedTrafficAlone(t *testing.T) {
 	body := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"exec_command","arguments":{"cmd":"echo ok"}}}`)
-	rewritten, ok := rewriteLegacyToolCall(body)
+	rewritten, _, ok := rewriteLegacyToolCall(body)
 	if ok {
 		t.Fatalf("unified call unexpectedly rewritten: %s", rewritten)
 	}

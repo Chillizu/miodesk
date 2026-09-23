@@ -38,9 +38,8 @@ func legacyCommandCompatibility(next http.Handler) http.Handler {
 			return
 		}
 
-		if rewritten, ok := rewriteLegacyToolCall(body); ok {
+		if rewritten, legacyName, ok := rewriteLegacyToolCall(body); ok {
 			body = rewritten
-			legacyName := r.Header.Get("Mcp-Name")
 			if target := legacyToolTarget(legacyName); target != "" {
 				r = r.WithContext(context.WithValue(r.Context(), legacyToolContextKey{}, legacyName))
 				r.Header.Set("Mcp-Name", target)
@@ -63,31 +62,32 @@ func legacyToolTarget(name string) string {
 	}
 }
 
-func rewriteLegacyToolCall(body []byte) ([]byte, bool) {
+func rewriteLegacyToolCall(body []byte) (rewritten []byte, legacyName string, ok bool) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return body, false
+		return body, "", false
 	}
 
 	var method string
 	if err := json.Unmarshal(envelope["method"], &method); err != nil || method != "tools/call" {
-		return body, false
+		return body, "", false
 	}
 
 	var params map[string]json.RawMessage
 	if err := json.Unmarshal(envelope["params"], &params); err != nil {
-		return body, false
+		return body, "", false
 	}
 
 	var name string
 	if err := json.Unmarshal(params["name"], &name); err != nil {
-		return body, false
+		return body, "", false
 	}
+	legacyName = name
 
 	args := map[string]json.RawMessage{}
 	if raw, ok := params["arguments"]; ok && len(raw) != 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &args); err != nil {
-			return body, false
+			return body, "", false
 		}
 	}
 
@@ -102,7 +102,7 @@ func rewriteLegacyToolCall(body []byte) ([]byte, bool) {
 		rewriteLegacySessionArgs(args, "\x03")
 		name = "write_stdin"
 	default:
-		return body, false
+		return body, "", false
 	}
 
 	nameJSON, _ := json.Marshal(name)
@@ -114,9 +114,9 @@ func rewriteLegacyToolCall(body []byte) ([]byte, bool) {
 
 	rewritten, err := json.Marshal(envelope)
 	if err != nil {
-		return body, false
+		return body, "", false
 	}
-	return rewritten, true
+	return rewritten, legacyName, true
 }
 
 func rewriteLegacyExecArgs(args map[string]json.RawMessage) {
