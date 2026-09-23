@@ -55,10 +55,32 @@ var invocationLabels = map[string]struct{ invoking, invoked string }{
 	"status":       {"Reading miodesk status…", "Status loaded."},
 }
 
-// ToolMeta returns client-facing metadata for one tool. Most tools need none.
-// Exec tools only get lightweight invocation labels. Diagnostics status is the
-// sole tool that attaches a UI resource.
+// ToolMeta returns default client-facing metadata for one tool. Status uses
+// labels only here because only Attach knows whether its widget is available.
 func ToolMeta(name string) map[string]any {
+	if name == "status" {
+		return StatusToolMeta(false)
+	}
+	return invocationMeta(name)
+}
+
+// StatusToolMeta returns invocation labels for the status tool and attaches
+// widget metadata only when the matching resource was successfully assembled.
+func StatusToolMeta(widgetAvailable bool) map[string]any {
+	meta := invocationMeta("status")
+	if !widgetAvailable {
+		return meta
+	}
+	meta["ui"] = map[string]any{
+		"resourceUri": WidgetURI,
+		"visibility":  []string{"model", "app"},
+	}
+	// ChatGPT compatibility alias for _meta.ui.resourceUri.
+	meta["openai/outputTemplate"] = WidgetURI
+	return meta
+}
+
+func invocationMeta(name string) map[string]any {
 	labels, ok := invocationLabels[name]
 	if !ok {
 		return nil
@@ -67,32 +89,24 @@ func ToolMeta(name string) map[string]any {
 		"openai/toolInvocation/invoking": labels.invoking,
 		"openai/toolInvocation/invoked":  labels.invoked,
 	}
-	if name == "status" {
-		meta["ui"] = map[string]any{
-			"resourceUri": WidgetURI,
-			"visibility":  []string{"model", "app"},
-		}
-		// ChatGPT compatibility alias for _meta.ui.resourceUri.
-		meta["openai/outputTemplate"] = WidgetURI
-	}
 	return meta
 }
 
-// Attach registers the status tool and the widget resource on an MCP server.
-// assets must expose the files under web/widget/static.
+// Attach always registers the status tool and registers the widget resources
+// when assembly succeeds. assets must expose the files under web/widget/static.
 func Attach(s *mcp.Server, assets fs.FS, data Data) error {
 	html, err := WidgetHTML(assets)
-	if err != nil {
-		return fmt.Errorf("assemble widget: %w", err)
-	}
-
-	s.AddTool(dashboardTool(), func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	widgetAvailable := err == nil
+	s.AddTool(dashboardTool(widgetAvailable), func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		out, err := data(ctx)
 		if err != nil {
 			return nil, err
 		}
 		return &mcp.CallToolResult{StructuredContent: out}, nil
 	})
+	if err != nil {
+		return fmt.Errorf("assemble widget: %w", err)
+	}
 
 	registerWidget := func(uri, name, title, description string) {
 		resource := &mcp.Resource{
@@ -123,7 +137,7 @@ func Attach(s *mcp.Server, assets fs.FS, data Data) error {
 
 // dashboardTool declares the status render tool with its ChatGPT/MCP Apps
 // metadata and output schema.
-func dashboardTool() *mcp.Tool {
+func dashboardTool(widgetAvailable bool) *mcp.Tool {
 	tool := &mcp.Tool{
 		Name:        "status",
 		Title:       "miodesk status",
@@ -157,7 +171,7 @@ func dashboardTool() *mcp.Tool {
 			"additionalProperties": false,
 		},
 	}
-	tool.SetMeta(ToolMeta("status"))
+	tool.SetMeta(StatusToolMeta(widgetAvailable))
 	return tool
 }
 

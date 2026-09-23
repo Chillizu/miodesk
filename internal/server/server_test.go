@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -60,6 +61,50 @@ func TestToolsReturnsSnapshot(t *testing.T) {
 	second := s.Tools()
 	if second[0].Name != original {
 		t.Fatalf("Tools exposed internal slice: got %q, want %q", second[0].Name, original)
+	}
+}
+
+func TestServerToolListMatchesMetadata(t *testing.T) {
+	s := newTestServer(t)
+	metadata := s.Tools()
+	if len(metadata) != 10 {
+		t.Fatalf("server tool metadata count = %d, want 10", len(metadata))
+	}
+	want := make(map[string]bool, len(metadata))
+	for _, tool := range metadata {
+		want[tool.Name] = true
+	}
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	ctx := context.Background()
+	client := mcp.NewClient(&mcp.Implementation{Name: "miodesk-tool-list-test", Version: "test"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             ts.URL + "/mcp",
+		HTTPClient:           ts.Client(),
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer session.Close()
+
+	listed, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	if len(listed.Tools) != len(metadata) {
+		t.Fatalf("tools/list count = %d, server metadata count = %d", len(listed.Tools), len(metadata))
+	}
+	got := make(map[string]bool, len(listed.Tools))
+	for _, tool := range listed.Tools {
+		got[tool.Name] = true
+	}
+	if !got["status"] {
+		t.Fatal("tools/list is missing status")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("tools/list names = %v, server metadata names = %v", got, want)
 	}
 }
 
