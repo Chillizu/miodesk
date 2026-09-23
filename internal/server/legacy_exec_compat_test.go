@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,94 @@ import (
 
 	"github.com/Chillizu/miodesk/internal/tools"
 )
+
+func TestLegacyCommandCompatibilityRejectsOversizedBody(t *testing.T) {
+	body := strings.NewReader(strings.Repeat("x", (16<<20)+1))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", body)
+	rec := httptest.NewRecorder()
+	called := false
+	h := legacyCommandCompatibility(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	if got, want := rec.Body.String(), "MCP request body exceeds the 16 MiB limit\n"; got != want {
+		t.Fatalf("response body = %q, want %q", got, want)
+	}
+	if called {
+		t.Fatal("oversized request reached the MCP handler")
+	}
+}
+
+func TestLegacyCommandCompatibilityRejectsUnreadableBodyWithoutEcho(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Body = compatibilityErrorBody{}
+	rec := httptest.NewRecorder()
+	called := false
+	legacyCommandCompatibility(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	})).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if got, want := rec.Body.String(), "invalid MCP request body\n"; got != want {
+		t.Fatalf("response body = %q, want %q", got, want)
+	}
+	if called {
+		t.Fatal("unreadable request reached the MCP handler")
+	}
+}
+
+type compatibilityErrorBody struct{}
+
+func (compatibilityErrorBody) Read([]byte) (int, error) { return 0, errors.New("private body marker") }
+func (compatibilityErrorBody) Close() error             { return nil }
+
+func TestLegacyCommandCompatibilityLeavesNonMCPPathsAlone(t *testing.T) {
+	body := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"command","arguments":{"command":"echo ok"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/other", strings.NewReader(body))
+	req.Header.Set("Mcp-Name", "command")
+	rec := httptest.NewRecorder()
+	h := legacyCommandCompatibility(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := legacyToolName(r.Context()); got != "" {
+			t.Fatalf("legacy tool context = %q, want empty", got)
+		}
+		if got := r.Header.Get("Mcp-Name"); got != "command" {
+			t.Fatalf("Mcp-Name = %q, want command", got)
+		}
+		got, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if string(got) != body {
+			t.Fatalf("body changed: %s", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func BenchmarkLegacyBodyLimit(b *testing.B) {
+	body := strings.Repeat("x", (16<<20)+1)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(body)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		legacyCommandCompatibility(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			b.Fatal("oversized request reached the MCP handler")
+		})).ServeHTTP(rec, req)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			b.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+		}
+	}
+}
 
 func TestLegacyCommandCompatibilityRewritesMCPNameHeader(t *testing.T) {
 	body := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"command","arguments":{"command":"echo ok"}}}`

@@ -122,6 +122,100 @@ func TestMCPRoundtripOverHTTP(t *testing.T) {
 	}
 }
 
+func TestServeHTTPReadTimeout(t *testing.T) {
+	processed := make(chan struct{}, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			http.Error(w, "incomplete request", http.StatusBadRequest)
+			return
+		}
+		processed <- struct{}{}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	ts := httptest.NewUnstartedServer(handler)
+	ts.Config = newHTTPServer(handler, 25*time.Millisecond)
+	ts.Start()
+	defer ts.Close()
+
+	reader, writer := io.Pipe()
+	defer writer.CloseWithError(io.ErrClosedPipe)
+	go func() {
+		_, _ = writer.Write([]byte("first"))
+		time.Sleep(100 * time.Millisecond)
+		_, _ = writer.Write([]byte("rest"))
+		_ = writer.Close()
+	}()
+	request, err := http.NewRequest(http.MethodPost, ts.URL+"/mcp", reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	response, err := (&http.Client{Timeout: time.Second}).Do(request)
+	if response != nil {
+		defer response.Body.Close()
+		if err == nil && response.StatusCode == http.StatusNoContent {
+			t.Fatal("handler completed an incomplete request")
+		}
+	} else if err == nil {
+		t.Fatal("slow request returned neither a response nor an error")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("slow request took %s, want at most 1s", elapsed)
+	}
+	select {
+	case <-processed:
+		t.Fatal("handler processed an incomplete MCP request")
+	default:
+	}
+}
+
+func TestServeHTTPReadTimeoutDoesNotLimitHandler(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("read complete request: %v", err)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	ts := httptest.NewUnstartedServer(handler)
+	ts.Config = newHTTPServer(handler, 25*time.Millisecond)
+	ts.Start()
+	defer ts.Close()
+
+	response, err := ts.Client().Post(ts.URL+"/mcp", "application/json", strings.NewReader("complete body"))
+	if err != nil {
+		t.Fatalf("complete request failed after handler delay: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+}
+
+func TestServeHTTPRejectsMalformedMCPJSON(t *testing.T) {
+	s := newTestServer(t)
+	tsrv := httptest.NewServer(s.Handler())
+	defer tsrv.Close()
+
+	const marker = "malformed-private-payload"
+	response, err := tsrv.Client().Post(tsrv.URL+"/mcp", "application/json", strings.NewReader("{\"private\":\""+marker))
+	if err != nil {
+		t.Fatalf("post malformed body: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusBadRequest)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read error response: %v", err)
+	}
+	if bytes.Contains(body, []byte(marker)) {
+		t.Fatalf("malformed request body was echoed: %q", body)
+	}
+}
+
 func TestMCPCurrentProtocolStatelessJSON(t *testing.T) {
 	s := newTestServer(t)
 	ts := httptest.NewServer(s.Handler())

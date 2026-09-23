@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/Chillizu/miodesk/internal/tools"
 )
+
+const maxMCPRequestBytes int64 = 16 << 20
 
 // legacyCommandCompatibility is a narrow migration shim for clients that
 // cached the pre-unified command schema. It rewrites only the four tools that
@@ -18,17 +21,22 @@ import (
 // aged out; new clients must use exec_command + write_stdin directly.
 func legacyCommandCompatibility(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.Body == nil {
+		if r.Method != http.MethodPost || r.URL.Path != "/mcp" || r.Body == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		body, err := io.ReadAll(r.Body)
+		defer r.Body.Close()
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxMCPRequestBytes))
 		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				http.Error(w, "MCP request body exceeds the 16 MiB limit", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "invalid MCP request body", http.StatusBadRequest)
 			return
 		}
-		_ = r.Body.Close()
 
 		if rewritten, ok := rewriteLegacyToolCall(body); ok {
 			body = rewritten

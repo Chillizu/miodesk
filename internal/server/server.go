@@ -37,9 +37,18 @@ import (
 const (
 	// HealthHeader identifies a successful health response as coming from
 	// miodesk without exposing workspace or runtime details.
-	HealthHeader      = "X-Miodesk-Health"
-	HealthHeaderValue = "miodesk"
+	HealthHeader          = "X-Miodesk-Health"
+	HealthHeaderValue     = "miodesk"
+	mcpRequestReadTimeout = 30 * time.Second
 )
+
+func newHTTPServer(handler http.Handler, readTimeout time.Duration) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       readTimeout,
+	}
+}
 
 var previewKindPattern = regexp.MustCompile(`^[a-z0-9-]{0,32}$`)
 
@@ -655,7 +664,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	s.writeState()
 	slog.Info("server_started", "endpoint", s.MCPURL(), "access_mode", s.AccessMode())
 
-	hs := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	hs := newHTTPServer(s.Handler(), mcpRequestReadTimeout)
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- hs.Serve(ln) }()
 
