@@ -54,8 +54,7 @@ type Provider interface {
 // lookPath is a seam so tests can inject stub binaries.
 var lookPath = exec.LookPath
 
-// Timeout normalizes the requested acquisition timeout in seconds.
-func Timeout(t int) int {
+func normalizeTimeout(t int) int {
 	if t <= 0 {
 		return 30
 	}

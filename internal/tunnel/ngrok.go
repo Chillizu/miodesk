@@ -69,7 +69,7 @@ func (n *Ngrok) Start(ctx context.Context, opts Options) (Endpoint, error) {
 	}
 	go func() { _ = cmd.Wait(); close(done) }()
 
-	endpoint, err := n.awaitURL(ctx, done, Timeout(opts.TimeoutSeconds))
+	endpoint, err := n.awaitURL(ctx, done, normalizeTimeout(opts.TimeoutSeconds))
 	if err != nil {
 		n.Stop()
 		return Endpoint{}, err
@@ -78,7 +78,8 @@ func (n *Ngrok) Start(ctx context.Context, opts Options) (Endpoint, error) {
 }
 
 func (n *Ngrok) awaitURL(ctx context.Context, done <-chan struct{}, timeoutSecs int) (Endpoint, error) {
-	deadline := time.After(time.Duration(timeoutSecs) * time.Second)
+	deadline := time.NewTimer(time.Duration(timeoutSecs) * time.Second)
+	defer deadline.Stop()
 	tick := time.NewTicker(300 * time.Millisecond)
 	defer tick.Stop()
 
@@ -87,7 +88,7 @@ func (n *Ngrok) awaitURL(ctx context.Context, done <-chan struct{}, timeoutSecs 
 		select {
 		case <-ctx.Done():
 			return Endpoint{}, ctx.Err()
-		case <-deadline:
+		case <-deadline.C:
 			return Endpoint{}, fmt.Errorf("ngrok did not report a tunnel URL within %ds", timeoutSecs)
 		case <-done:
 			return Endpoint{}, fmt.Errorf("ngrok exited before creating the tunnel (is the authtoken valid?)")
@@ -109,19 +110,7 @@ func (n *Ngrok) Stop() error {
 	cmd := n.cmd
 	done := n.done
 	n.mu.Unlock()
-	if cmd == nil || cmd.Process == nil {
-		return nil
-	}
-	select {
-	case <-done:
-		return nil
-	default:
-		stopProcess(cmd)
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-		}
-	}
+	stopAndWait(cmd, done)
 	return nil
 }
 

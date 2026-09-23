@@ -249,11 +249,11 @@ func TestTimeoutNormalization(t *testing.T) {
 	for _, tc := range []struct{ in, want int }{
 		{0, 30}, {-5, 30}, {10, 10}, {1000, 300},
 	} {
-		if got := Timeout(tc.in); got != tc.want {
-			t.Errorf("Timeout(%d) = %d, want %d", tc.in, got, tc.want)
+		if got := normalizeTimeout(tc.in); got != tc.want {
+			t.Errorf("normalizeTimeout(%d) = %d, want %d", tc.in, got, tc.want)
 		}
 	}
-	if time.Duration(Timeout(0))*time.Second != 30*time.Second {
+	if time.Duration(normalizeTimeout(0))*time.Second != 30*time.Second {
 		t.Error("default timeout should be 30s")
 	}
 }
