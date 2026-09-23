@@ -2,7 +2,13 @@
 
 Date: 2026-09-23
 
-Status: Written design for user review; implementation has not started.
+Status: Phase A local implementation, release gate, candidate MCP smoke,
+service deployment, host-side performance checks, and ChatGPT connector
+readback completed on 2026-09-23. Local code and server checks passed; overall
+connector migration acceptance remains incomplete because the host still
+advertises the old command quartet and exposes no stdin-write action. Keep
+MIO-19 open until a workspace owner/admin refreshes and verifies the unified
+`exec_command`/`write_stdin` actions.
 
 ## 1. Intent and success criteria
 
@@ -32,15 +38,40 @@ Success means:
   identity, running service, MCP `tools/list`, and connector schema are
   checked separately.
 
-The current source baseline is clean at `44ec2b87`; the local tracking ref says
-`main` is five commits ahead. The actual GitHub `main` ref has not been
-verified. `scripts/release-check.sh` passed for the current source. The live
-service is active and the tunnel is open, but its reported `0.2.1-dev` version
-does not identify a source commit. The current connector still exposes the
-retired command quartet, although `command` succeeds through the compatibility
-path in this session. The earlier `yield-time_ms` validation error was not
-reproduced. There are no serial devices attached, so board-level testing is
-not part of this phase.
+The design was drafted from source baseline `44ec2b87`. Phase A code now lives
+on branch `mio/maintenance-phase-a` at implementation commit
+`06193366ae028f5f3500a6c68f8849c113bb92d6`; the smoke client and final audit
+documents are maintained as separate local commits. On 2026-09-23, a read-only
+`git ls-remote` confirmed `origin/main` at `c6a6895dd79804702a7f480baa99c2bd59f2c6da`.
+Nothing was pushed.
+
+The final `scripts/release-check.sh` passed after adding `scripts/mcp-smoke`.
+The installed user service is active on the Phase A binary, which reports
+`0.2.1-dev`, the implementation commit above, and build date
+`2026-09-23T13:10:01Z`. Its SHA-256 is
+`8bfb75d88724f4a9fe6beed730ace24701e97284c65a2afab4d5c21edf3f76b5`.
+The current server returned exactly 10 tools with no retired command quartet;
+status, a short command, a polled long command, stdin echo/cancel, and graceful
+shutdown all passed over Streamable HTTP MCP. The service is active and the
+OpenAI tunnel reports running.
+
+The current Codex task did not expose a miodesk connector tool, and binding the
+supplied ChatGPT project browser tab timed out. A separate verification
+conversation in the `Miodesk` ChatGPT project read the actual host tool list
+after service restart: it still exposes `miodesk_command`,
+`miodesk_command_start`, `miodesk_command_poll`, and
+`miodesk_command_cancel`, not unified exec names. Short `printf` and long
+`sleep 2; printf` calls both completed through those legacy actions; the long
+result uses `session_id`, but no stdin-writing action is available. No
+additionalProperties error occurred in this check. The earlier
+`yield-time_ms` validation error is therefore a historical observation and its
+root cause remains unconfirmed. Official ChatGPT guidance confirms that a
+workspace owner/admin can use Workspace settings → Apps → Miodesk → … → Action
+control → Refresh, review the action diff, enable the current unified actions,
+and save. That settings control is not exposed in the connector conversation,
+so no refresh was applied here. Until the host advertises and verifies
+`exec_command`/`write_stdin`, MIO-19 remains open. There are no serial devices
+attached, so board-level testing is not part of this phase.
 
 ## 2. Chosen approach and decomposition
 
@@ -58,9 +89,11 @@ Three scopes were considered:
 
 This document specifies Phase A. The approved program order is:
 
-- **Phase A — reliability and interface hardening:** MIO-19 / MIO-20, the
-  resource-bound and search issues found in the audit, security wording,
-  edit-history handling, file creation mode, and context field semantics.
+- **Phase A — reliability and interface hardening:** MIO-20 and the local
+  implementation/server checks for MIO-19, resource-bound and search issues
+  found in the audit, security wording, edit-history handling, file creation
+  mode, and context field semantics. The connector migration acceptance for
+  MIO-19 remains open pending host action refresh and verification.
 - **Phase B — permissions and update behavior:** MIO-13 permission profiles
   and read-only mode, followed by MIO-14's default official update source.
   Each receives its own design and implementation plan after Phase A.
@@ -220,19 +253,48 @@ allocations/RSS and response time for request, dense-diff, and edit-history
 limits. It is not hardware validation. Board-level testing can be added only
 when serial hardware is available.
 
-This design does not authorize pushing commits, creating a tag, publishing a
-GitHub release, or overwriting an official release. Any such publication is a
-separate approval gate. Local build/test and reversible local service
-verification belong to the later implementation plan.
+This design did not authorize pushing commits, creating a tag, publishing a
+GitHub release, or overwriting an official release. The implementation plan
+later completed local build/test and reversible service verification; any
+publication remains a separate approval gate.
 
 ## 6. Review notes
 
 - MIO-19's earlier claim that the `yield-time_ms` failure is currently
-  reproduced is stale: the legacy `command` call succeeded in the current
-  session. Schema drift itself remains confirmed because the connector still
-  exposes the retired quartet.
+  reproduced is stale: the post-restart short and long calls succeeded through
+  the legacy connector surface. The early error remains historical and its
+  cause is unconfirmed. Schema drift itself remains confirmed because the
+  connector still exposes the retired quartet and has no stdin-writing action.
 - MIO-20's header/body mismatch is included: the parsed body tool name is the
   semantic source of truth.
-- The local `origin/main` tracking reference is not equivalent to the current
-  GitHub `main`; do not use the old `c6a6895` value as a current remote fact.
-- No Linear, Notion, or Slack record is updated from this unreviewed design.
+- The current GitHub `main` ref was checked read-only on 2026-09-23 and
+  returned `c6a6895dd79804702a7f480baa99c2bd59f2c6da`; later reports should
+  perform another read before treating it as current.
+- ChatGPT connector action refresh guidance was checked against the [official
+  MCP apps documentation](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)
+  on 2026-09-23; workspace UI labels can change.
+- Linear, Notion, and Slack synchronization is tracked by the final integration
+  step and must use only the verified status above.
+
+## 7. Implementation and performance record · 2026-09-23
+
+The candidate binary was 15,979,763 bytes. In an isolated local service run,
+health became available in 6 ms and pre-request idle RSS was 16,124 KiB. After
+installation, `/proc` reported 23,344 KiB RSS for the running service. The MCP
+smoke verified all 10 current tools, status, short exec, long exec polling,
+stdin echo/cancel, and clean shutdown. The service binary hash and source
+identity are recorded above.
+
+Five-iteration host benchmarks (`-benchtime=5x`) measured:
+
+| Benchmark | Time/op | Allocations/op | Peak RSS |
+| --- | ---: | ---: | ---: |
+| `BenchmarkLegacyBodyLimit` | 9.60 ms | 36,236,118 B / 61 allocs | 119,092 KiB |
+| `BenchmarkRecordEditsBounded` | 36.8 µs | 164,910 B / 32 allocs | 15,436 KiB |
+| `BenchmarkDiffLinesBoundedDense` | 4.25 µs | 0 B / 0 allocs | 9,008 KiB |
+
+The request-limit benchmark rejects a body one byte over 16 MiB after reading
+up to the configured cap. Its aggregate heap/RSS cost is a capacity signal for
+a later concurrency-budget review; this phase establishes a per-request cap
+but does not add global request admission control. These are host-side results,
+not hardware validation.
