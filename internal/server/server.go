@@ -26,6 +26,7 @@ import (
 	"github.com/Chillizu/miodesk/internal/adapter"
 	"github.com/Chillizu/miodesk/internal/buildinfo"
 	"github.com/Chillizu/miodesk/internal/config"
+	"github.com/Chillizu/miodesk/internal/contextstore"
 	"github.com/Chillizu/miodesk/internal/logging"
 	"github.com/Chillizu/miodesk/internal/tools"
 	"github.com/Chillizu/miodesk/internal/workspace"
@@ -39,6 +40,8 @@ const (
 	HealthHeader      = "X-Miodesk-Health"
 	HealthHeaderValue = "miodesk"
 )
+
+var previewKindPattern = regexp.MustCompile(`^[a-z0-9-]{0,32}$`)
 
 // Server hosts miodesk's MCP tools for HTTP and stdio clients.
 type Server struct {
@@ -57,8 +60,12 @@ type Server struct {
 	editsMu sync.Mutex
 	edits   []EditRecord
 
-	// Long-running command tasks (start/poll/cancel).
+	// Resumable exec sessions shared by exec_command and write_stdin.
 	commands *tools.Manager
+
+	// Cross-session rolling handoffs. Persistent data lives outside workspaces.
+	contexts   *contextstore.Store
+	contextErr error
 
 	auth *Authorize
 }
@@ -80,12 +87,19 @@ const maxRecentEdits = 10
 
 // New builds a Server with all tools registered against ws.
 func New(cfg *config.Config, ws *workspace.Workspace) *Server {
+	dataDir, contextErr := xdg.DataDir()
+	var contexts *contextstore.Store
+	if contextErr == nil {
+		contexts = contextstore.New(filepath.Join(dataDir, "contexts"))
+	}
 	s := &Server{
-		cfg:      cfg,
-		ws:       ws,
-		started:  time.Now(),
-		stats:    map[string]int64{},
-		commands: tools.NewManager(),
+		cfg:        cfg,
+		ws:         ws,
+		started:    time.Now(),
+		stats:      map[string]int64{},
+		commands:   tools.NewManager(),
+		contexts:   contexts,
+		contextErr: contextErr,
 	}
 	auth, err := NewAuthorize(cfg.Remote.Mode, cfg.Remote.Token)
 	if err != nil {
@@ -103,7 +117,7 @@ func New(cfg *config.Config, ws *workspace.Workspace) *Server {
 			Version:     buildinfo.Version,
 		},
 		&mcp.ServerOptions{
-			Instructions: "miodesk bridges the user's local workspace. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root; paths may be relative to the root. Prefer list before deeper reads, and prefer edit over write for changing existing files — edit batches are atomic. Long commands use command_start with a short user-facing label. UI-capable clients can track the live Task view automatically; use command_poll when you need the task state/output in model reasoning or when no Task UI is available.",
+			Instructions: "miodesk bridges the user's local workspace. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root; paths may be relative to the root. Prefer list before deeper reads, and prefer edit over write for changing existing files — edit batches are atomic. Commands use a compact coding-agent surface: exec_command runs a shell command and either returns its final output or a numeric session_id; keep tty=false for ordinary commands and set tty=true only for genuinely interactive terminal programs. write_stdin resumes that session, polls with empty chars, or writes input; Ctrl-C is terminal input for TTY sessions and cancels pipe sessions. The context tool maintains small cross-session rolling handoffs: once a user establishes a context id, update it at meaningful changes in goals, decisions, blockers, or next steps; checkpoint at explicit or important milestones; resume it in a new session.",
 		},
 	)
 	registerTools(s)
@@ -248,12 +262,6 @@ func (s *Server) MCPStatus() MCPStatus {
 	}
 }
 
-func (s *Server) callCount(tool string) int64 {
-	s.statsMu.Lock()
-	defer s.statsMu.Unlock()
-	return s.stats[tool]
-}
-
 func registerTools(s *Server) {
 	s.tools = []ToolInfo{
 		{Name: "read", Description: "Read a text file inside the workspace"},
@@ -262,17 +270,14 @@ func registerTools(s *Server) {
 		{Name: "write", Description: "Create or overwrite a file inside the workspace"},
 		{Name: "edit", Description: "Apply atomic text edits to workspace files"},
 		{Name: "delete", Description: "Delete a file, symlink, or directory inside the workspace"},
-		{Name: "command", Description: "Run a short command inside the workspace"},
-		{Name: "command_start", Description: "Start a long-running command in the workspace"},
-		{Name: "command_poll", Description: "Poll a long-running command task"},
-		{Name: "command_cancel", Description: "Cancel a long-running command task"},
+		{Name: "exec_command", Description: "Run a command and return output or a resumable session"},
+		{Name: "write_stdin", Description: "Resume, poll, write to, or cancel an exec session"},
+		{Name: "context", Description: "Maintain cross-session rolling handoffs and checkpoints"},
 		{Name: "status", Description: "Server status dashboard data"},
 	}
 
 	// Every annotation is set explicitly: ChatGPT reads these hints to decide
 	// how to frame tool calls.
-	readOnly := ann(true, false, false, true)
-
 	// Optional rich UI metadata comes from the adapter; tools stay
 	// host-agnostic. Native-first tools receive no template metadata.
 	declared := func(name string, t *mcp.Tool) *mcp.Tool {
@@ -286,7 +291,7 @@ func registerTools(s *Server) {
 		Name:        "read",
 		Title:       "Read file",
 		Description: "Read a text file inside the workspace. Supports line-based offset/limit windowing; output is capped at 512 KiB per call.",
-		Annotations: readOnly,
+		Annotations: ann(true, false, false, true),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ReadInput) (result *mcp.CallToolResult, output *tools.ReadOutput, err error) {
 		finish := s.beginTool(ctx, "read")
 		defer func() { finish(err) }()
@@ -300,7 +305,7 @@ func registerTools(s *Server) {
 		Name:        "search",
 		Title:       "Search file contents",
 		Description: "Search file contents inside the workspace. Uses ripgrep when available and a built-in engine otherwise.",
-		Annotations: readOnly,
+		Annotations: ann(true, false, false, true),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.SearchInput) (result *mcp.CallToolResult, output *tools.SearchOutput, err error) {
 		finish := s.beginTool(ctx, "search")
 		defer func() { finish(err) }()
@@ -314,7 +319,7 @@ func registerTools(s *Server) {
 		Name:        "list",
 		Title:       "List directory",
 		Description: "List directory entries inside the workspace with bounded depth and count.",
-		Annotations: readOnly,
+		Annotations: ann(true, false, false, true),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ListInput) (result *mcp.CallToolResult, output *tools.ListOutput, err error) {
 		finish := s.beginTool(ctx, "list")
 		defer func() { finish(err) }()
@@ -367,57 +372,46 @@ func registerTools(s *Server) {
 		}
 		return nil, out, nil
 	})
-	mcp.AddTool(s.mcp, declared("command", &mcp.Tool{
-		Name:        "command",
+	mcp.AddTool(s.mcp, declared("exec_command", &mcp.Tool{
+		Name:        "exec_command",
 		Title:       "Run command",
-		Description: "Run a short command in the workspace and return stdout, stderr, exit code, and elapsed time.",
+		Description: "Run a shell command inside the workspace. Returns final output when it exits within yield_time_ms; otherwise returns a numeric session_id for write_stdin. Set tty=true only for interactive terminal programs; ordinary commands stay pipe-backed by default.",
 		Annotations: ann(false, true, true, false),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.CommandInput) (result *mcp.CallToolResult, output *tools.CommandOutput, err error) {
-		finish := s.beginTool(ctx, "command")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ExecCommandInput) (result *mcp.CallToolResult, output *tools.UnifiedExecOutput, err error) {
+		finish := s.beginTool(ctx, "exec_command")
 		defer func() { finish(err) }()
-		out, err := tools.Command(ctx, s.ws, in)
+		out, err := tools.ExecCommand(ctx, s.ws, s.commands, in)
 		if err != nil {
 			return nil, nil, err
 		}
 		return nil, out, nil
 	})
-	mcp.AddTool(s.mcp, declared("command_start", &mcp.Tool{
-		Name:        "command_start",
-		Title:       "Start long command",
-		Description: "Start a long-running command in the workspace. Include a short user-facing label describing the task. UI-capable clients show one live Task view that updates itself; command_poll remains available when the model needs task output or no UI is present.",
+	mcp.AddTool(s.mcp, declared("write_stdin", &mcp.Tool{
+		Name:        "write_stdin",
+		Title:       "Resume command",
+		Description: "Resume a live exec_command session. Empty chars polls and non-empty chars writes to stdin. Ctrl-C is delivered normally to TTY sessions; for pipe sessions it cancels the process.",
 		Annotations: ann(false, true, true, false),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.TaskCommandInput) (result *mcp.CallToolResult, output *tools.TaskStarted, err error) {
-		finish := s.beginTool(ctx, "command_start")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.WriteStdinInput) (result *mcp.CallToolResult, output *tools.UnifiedExecOutput, err error) {
+		finish := s.beginTool(ctx, "write_stdin")
 		defer func() { finish(err) }()
-		id, err := s.commands.Start(s.ws, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, &tools.TaskStarted{Kind: "task", ID: id, Label: tools.TaskLabel(in.Label), Status: "running"}, nil
-	})
-	mcp.AddTool(s.mcp, declared("command_poll", &mcp.Tool{
-		Name:        "command_poll",
-		Title:       "Poll long command",
-		Description: "Poll a long-running command task by id for status and accumulated output.",
-		Annotations: ann(true, false, false, true),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.TaskID) (result *mcp.CallToolResult, output *tools.PollOutput, err error) {
-		finish := s.beginTool(ctx, "command_poll")
-		defer func() { finish(err) }()
-		out, err := s.commands.Poll(in.ID)
+		out, err := tools.WriteStdin(ctx, s.commands, in)
 		if err != nil {
 			return nil, nil, err
 		}
 		return nil, out, nil
 	})
-	mcp.AddTool(s.mcp, declared("command_cancel", &mcp.Tool{
-		Name:        "command_cancel",
-		Title:       "Cancel long command",
-		Description: "Cancel a long-running command task by id.",
-		Annotations: ann(false, true, false, true),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.TaskID) (result *mcp.CallToolResult, output *tools.PollOutput, err error) {
-		finish := s.beginTool(ctx, "command_cancel")
+	mcp.AddTool(s.mcp, declared("context", &mcp.Tool{
+		Name:        "context",
+		Title:       "Manage working context",
+		Description: "Maintain a small cross-session rolling handoff. update upserts the active state, checkpoint freezes a milestone, resume returns the latest active handoff, and list discovers available context ids. working_directory is only a pointer to where the work lives inside the workspace; it does not change the miodesk workspace root.",
+		Annotations: ann(false, false, false, false),
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in contextstore.Input) (result *mcp.CallToolResult, output *contextstore.Output, err error) {
+		finish := s.beginTool(ctx, "context")
 		defer func() { finish(err) }()
-		out, err := s.commands.Cancel(in.ID)
+		if s.contexts == nil {
+			return nil, nil, fmt.Errorf("context store unavailable: %w", s.contextErr)
+		}
+		out, err := s.contexts.Apply(s.ws, in)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -436,8 +430,8 @@ func ann(readOnly, destructive, openWorld, idempotent bool) *mcp.ToolAnnotations
 	}
 }
 
-// Tools returns metadata about the registered tools.
-func (s *Server) Tools() []ToolInfo { return s.tools }
+// Tools returns an immutable snapshot of registered tool metadata.
+func (s *Server) Tools() []ToolInfo { return append([]ToolInfo(nil), s.tools...) }
 
 // AccessMode reports the active trust level for CLI/doctor output.
 func (s *Server) AccessMode() AccessMode { return s.auth.Mode() }
@@ -455,7 +449,7 @@ func (s *Server) Handler() http.Handler {
 		JSONResponse:               true,
 		DisableLocalhostProtection: s.auth.Mode() != AccessLocal,
 	})
-	mux.Handle("/mcp", mcpHandler)
+	mux.Handle("/mcp", legacyCommandCompatibility(mcpHandler))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(HealthHeader, HealthHeaderValue)
 		w.WriteHeader(http.StatusOK)
@@ -464,14 +458,13 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s.LocalStatus())
 	})
-	// /preview is a development view: every result renderer with mock data,
-	// no MCP involved. kind picks one payload; "all" stacks every mock.
+	// /preview is a development view for the diagnostics widget; no MCP involved.
 	mux.HandleFunc("GET /preview", func(w http.ResponseWriter, r *http.Request) {
 		kind := r.URL.Query().Get("kind")
 		if kind == "" {
 			kind = "all"
 		}
-		if !regexp.MustCompile("^[a-z0-9-]{0,32}$").MatchString(kind) {
+		if !previewKindPattern.MatchString(kind) {
 			http.Error(w, "bad kind", http.StatusBadRequest)
 			return
 		}
@@ -627,7 +620,7 @@ func (s *Server) Status() Status {
 		Tunnel:        s.cfg.Tunnel.Provider,
 		StartedAt:     s.started,
 		UptimeSeconds: int64(time.Since(s.started).Seconds()),
-		Tools:         s.tools,
+		Tools:         s.Tools(),
 		Stats:         ToolCalls{Calls: calls, Total: total},
 	}
 }

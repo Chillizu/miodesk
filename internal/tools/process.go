@@ -3,8 +3,8 @@ package tools
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -16,6 +16,18 @@ import (
 	"github.com/Chillizu/miodesk/internal/workspace"
 )
 
+const (
+	defaultCommandTimeoutSeconds = 120
+	maxCommandTimeoutSeconds     = 600
+)
+
+type processInput struct {
+	command string
+	workdir string
+	timeout int
+	tty     bool
+}
+
 func shell() (string, string) {
 	if runtime.GOOS == "windows" {
 		return "cmd", "/c"
@@ -24,42 +36,41 @@ func shell() (string, string) {
 }
 
 type procHandle struct {
-	id      string
-	label   string
-	dir     string
-	relDir  string
 	started time.Time
+	cancel  context.CancelFunc
+	cmd     *exec.Cmd
+	tty     bool
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	cmd    *exec.Cmd
+	output limitedBuffer
 
-	stdout limitedBuffer
-	stderr limitedBuffer
+	stdinMu sync.Mutex
+	stdin   io.WriteCloser
+	pty     io.ReadWriteCloser
+
+	outputCursorMu sync.Mutex
+	outputCursor   int
+	outputDone     chan struct{}
 
 	// Completion fields are written once right before doneCh closes; readers
 	// observe them only after seeing doneCh closed.
 	exitCode  atomic.Int32
-	timedOut  atomic.Bool
 	elapsedMS atomic.Int64
 	doneCh    chan struct{}
 }
 
-var errTimedOut = errors.New("command timed out")
-
-func newProc(parent context.Context, ws *workspace.Workspace, in CommandInput, capBytes int) (*procHandle, error) {
-	if strings.TrimSpace(in.Command) == "" {
-		return nil, fmt.Errorf("command: command must not be empty")
+func newProc(parent context.Context, ws *workspace.Workspace, in processInput, capBytes int) (*procHandle, error) {
+	if strings.TrimSpace(in.command) == "" {
+		return nil, fmt.Errorf("command must not be empty")
 	}
-	if containsPrivilegeEscalation(in.Command) {
-		return nil, fmt.Errorf("command: refusing privilege escalation commands (sudo/doas/su/pkexec/runas)")
+	if containsPrivilegeEscalation(in.command) {
+		return nil, fmt.Errorf("refusing privilege escalation commands (sudo/doas/su/pkexec/runas)")
 	}
-	dir, err := ws.Resolve(in.CWD)
+	dir, err := ws.Resolve(in.workdir)
 	if err != nil {
 		return nil, err
 	}
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return nil, fmt.Errorf("command: cwd is not a directory: %s", ws.Rel(dir))
+		return nil, fmt.Errorf("workdir is not a directory: %s", ws.Rel(dir))
 	}
 
 	shellBin, flag := shell()
@@ -67,25 +78,34 @@ func newProc(parent context.Context, ws *workspace.Workspace, in CommandInput, c
 		parent = context.Background()
 	}
 	ctx, cancel := context.WithCancel(parent)
-	cmd := exec.CommandContext(ctx, shellBin, flag, in.Command)
-	configureProcess(cmd)
+	cmd := exec.CommandContext(ctx, shellBin, flag, in.command)
 	cmd.Dir = dir
-	// WaitDelay closes the pipes even when grandchildren keep them open.
+	// WaitDelay closes ordinary pipes even when grandchildren keep them open.
 	cmd.WaitDelay = 3 * time.Second
 
 	p := &procHandle{
-		dir:     dir,
-		relDir:  ws.Rel(dir),
 		started: time.Now(),
-		ctx:     ctx,
 		cancel:  cancel,
-		stdout:  limitedBuffer{max: capBytes},
-		stderr:  limitedBuffer{max: capBytes},
+		cmd:     cmd,
+		tty:     in.tty,
+		output:  limitedBuffer{max: capBytes},
 		doneCh:  make(chan struct{}),
 	}
-	cmd.Stdout = &p.stdout
-	cmd.Stderr = &p.stderr
-	p.cmd = cmd
+	if in.tty {
+		configurePTYProcess(cmd)
+		ensureTerminalEnv(cmd)
+		return p, nil
+	}
+
+	configureProcess(cmd)
+	cmd.Stdout = &p.output
+	cmd.Stderr = &p.output
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("stdin pipe: %w", err)
+	}
+	p.stdin = stdin
 	return p, nil
 }
 
@@ -116,19 +136,58 @@ func isShellWordByte(b byte) bool {
 	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_'
 }
 
-// waitWithTimeout waits for the process, killing it on timeout.
-func waitWithTimeout(p *procHandle, timeoutSecs int) error {
-	var timedOut atomic.Bool
-	timer := time.AfterFunc(time.Duration(timeoutSecs)*time.Second, func() {
-		timedOut.Store(true)
-		p.cancel()
-	})
-	defer timer.Stop()
-	waitErr := p.cmd.Wait()
-	if waitErr != nil && timedOut.Load() {
-		return errTimedOut
+func ensureTerminalEnv(cmd *exec.Cmd) {
+	term := strings.TrimSpace(os.Getenv("TERM"))
+	if term != "" && !strings.EqualFold(term, "dumb") {
+		return
 	}
-	return waitErr
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+}
+
+func (p *procHandle) start() error {
+	if !p.tty {
+		return p.cmd.Start()
+	}
+	terminal, err := startPTY(p.cmd)
+	if err != nil {
+		return err
+	}
+	p.pty = terminal
+	p.stdin = terminal
+	p.outputDone = make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&p.output, terminal)
+		close(p.outputDone)
+	}()
+	return nil
+}
+
+// waitWithTimeout waits for the process and cancels it when its total runtime
+// reaches the configured bound.
+func waitWithTimeout(p *procHandle, timeoutSecs int) {
+	timer := time.AfterFunc(time.Duration(timeoutSecs)*time.Second, p.cancel)
+	defer timer.Stop()
+	_ = p.cmd.Wait()
+	p.finishOutput()
+}
+
+func (p *procHandle) finishOutput() {
+	if p.pty == nil {
+		return
+	}
+	// A normal PTY reaches EOF/EIO once the controlling process exits. Give the
+	// reader a brief chance to drain trailing bytes, then close the master so a
+	// descendant that inherited the terminal cannot keep the session alive.
+	select {
+	case <-p.outputDone:
+	case <-time.After(100 * time.Millisecond):
+		_ = p.pty.Close()
+		select {
+		case <-p.outputDone:
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	_ = p.pty.Close()
 }
 
 func exitCodeOf(p *procHandle) int {
@@ -136,6 +195,16 @@ func exitCodeOf(p *procHandle) int {
 		return -1
 	}
 	return p.cmd.ProcessState.ExitCode()
+}
+
+func normalizeCommandTimeout(t int) int {
+	if t <= 0 {
+		return defaultCommandTimeoutSeconds
+	}
+	if t > maxCommandTimeoutSeconds {
+		return maxCommandTimeoutSeconds
+	}
+	return t
 }
 
 // limitedBuffer captures up to max bytes and flags truncation beyond that.
@@ -173,4 +242,44 @@ func (l *limitedBuffer) Truncated() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.truncated
+}
+
+func (l *limitedBuffer) StringFrom(offset int) (string, int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if offset < 0 || offset > l.buf.Len() {
+		offset = 0
+	}
+	data := l.buf.Bytes()
+	return string(append([]byte(nil), data[offset:]...)), len(data)
+}
+
+func (p *procHandle) consumeOutput() string {
+	p.outputCursorMu.Lock()
+	defer p.outputCursorMu.Unlock()
+	out, next := p.output.StringFrom(p.outputCursor)
+	p.outputCursor = next
+	return out
+}
+
+func (p *procHandle) abortBeforeStart() {
+	if p.cancel != nil {
+		p.cancel()
+	}
+	p.stdinMu.Lock()
+	defer p.stdinMu.Unlock()
+	if p.stdin != nil {
+		_ = p.stdin.Close()
+		p.stdin = nil
+	}
+}
+
+func (p *procHandle) writeStdin(chars string) error {
+	p.stdinMu.Lock()
+	defer p.stdinMu.Unlock()
+	if p.stdin == nil {
+		return fmt.Errorf("session stdin is not writable")
+	}
+	_, err := io.WriteString(p.stdin, chars)
+	return err
 }

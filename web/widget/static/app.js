@@ -1,6 +1,4 @@
-/* miodesk standalone page — a compact diagnostics view, not a dashboard.
-   It answers one question: is miodesk working, and where is it? The same
-   renderer set is used; results render through /widget and inside hosts. */
+/* miodesk standalone diagnostics page. */
 
 "use strict";
 
@@ -18,11 +16,6 @@ function refreshStatus() {
     });
 }
 
-applySystemTheme();
+delete document.documentElement.dataset.theme;
 refreshStatus();
 setInterval(refreshStatus, 10000);
-
-function applySystemTheme() {
-  // Standalone page follows the system; hosted pages get the host's theme.
-  delete document.documentElement.dataset.theme;
-}

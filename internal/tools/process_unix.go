@@ -12,7 +12,18 @@ import (
 // makes the existing timeout/cancel contract reliable for shell descendants.
 func configureProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
+	cmd.Cancel = killProcessGroup(cmd)
+}
+
+// PTY startup creates a fresh session and controlling terminal itself. Keep
+// SysProcAttr free for the PTY package, but retain process-group cancellation:
+// the session leader is also the process-group leader, so -pid is the group.
+func configurePTYProcess(cmd *exec.Cmd) {
+	cmd.Cancel = killProcessGroup(cmd)
+}
+
+func killProcessGroup(cmd *exec.Cmd) func() error {
+	return func() error {
 		if cmd.Process == nil {
 			return nil
 		}

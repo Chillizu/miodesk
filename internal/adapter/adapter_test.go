@@ -15,25 +15,25 @@ func TestWidgetHTMLAssembly(t *testing.T) {
 	}
 	for _, want := range []string{
 		"<style>", "</style>", "<script>", "</script>",
-		"MIODESK_ICONS",                 // icon set present
-		"MIODESK_RENDERERS",             // renderers present
-		"bootWidget",                    // bootstrap present
-		"ui/initialize",                 // MCP Apps handshake present
-		"appInfo",                       // MCP Apps view identity present
-		"ui/notifications/tool-result",  // standard result delivery present
-		`method: "tools/call"`,          // task view polls through the MCP Apps bridge
-		`callServerTool("command_poll"`, // one Task iframe updates itself
-		`"Task"`,                        // task renderer title
-		"--miodesk-text",                // design tokens present
-		"code--lines",                   // source code owns its narrow scroll area
-		"container-name: widget",        // outer layout uses container queries
-		"white-space: pre-wrap",         // command output can wrap on narrow hosts
-		"--miodesk-content-max",         // root and result share one width token
+		"MIODESK_ICONS",                // icon set present
+		"renderStatus",                 // diagnostics renderer present
+		"bootWidget",                   // bootstrap present
+		"ui/initialize",                // MCP Apps handshake present
+		"appInfo",                      // MCP Apps view identity present
+		"ui/notifications/tool-result", // standard result delivery present
+		"--miodesk-text",               // host-native design tokens present
+		"container-name: widget",       // narrow-host adaptation remains
+		"--miodesk-content-max",
 		"max-width: calc(var(--miodesk-content-max) + 2 * var(--miodesk-gap))",
 		`["connection", connection]`, // compact status combines local access and tunnel provider
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("assembled widget missing %q", want)
+		}
+	}
+	for _, retired := range []string{`method: "tools/call"`, `command_poll`, `cancelTask`, `"Task"`} {
+		if strings.Contains(html, retired) {
+			t.Errorf("diagnostics-only widget still contains retired task UI %q", retired)
 		}
 	}
 	if strings.Contains(html, "__STYLE__") || strings.Contains(html, "__SCRIPT__") ||
@@ -58,31 +58,49 @@ func TestWidgetHTMLAssembly(t *testing.T) {
 	}
 }
 
-func TestToolMetaKeepsStatusAndTaskRich(t *testing.T) {
+func TestWidgetMetaUsesExplicitDenyByDefaultCSP(t *testing.T) {
+	meta := widgetMeta()
+	ui, ok := meta["ui"].(map[string]any)
+	if !ok {
+		t.Fatalf("widget ui metadata = %v", meta)
+	}
+	if ui["prefersBorder"] != true {
+		t.Errorf("prefersBorder = %v", ui["prefersBorder"])
+	}
+	csp, ok := ui["csp"].(map[string]any)
+	if !ok {
+		t.Fatalf("widget csp metadata = %v", ui)
+	}
+	for _, key := range []string{"connectDomains", "resourceDomains"} {
+		domains, ok := csp[key].([]string)
+		if !ok || len(domains) != 0 {
+			t.Errorf("%s = %#v, want explicit empty allowlist", key, csp[key])
+		}
+	}
+	if _, ok := csp["frameDomains"]; ok {
+		t.Errorf("frameDomains should stay omitted for diagnostics-only UI: %v", csp)
+	}
+	if _, ok := meta["openai/widgetCSP"]; ok {
+		t.Errorf("legacy widgetCSP should not be emitted without redirect_domains: %v", meta)
+	}
+}
+
+func TestToolMetaKeepsStatusRichAndExecNative(t *testing.T) {
 	for _, name := range []string{
-		"read", "search", "list", "write", "edit", "delete", "command",
+		"read", "search", "list", "write", "edit", "delete",
 	} {
 		if got := ToolMeta(name); got != nil {
 			t.Errorf("native-first tool %q unexpectedly has client metadata: %v", name, got)
 		}
 	}
 
-	start := ToolMeta("command_start")
-	startUI, ok := start["ui"].(map[string]any)
-	if !ok || startUI["resourceUri"] != TaskWidgetURI {
-		t.Errorf("command_start task ui metadata = %v", start)
-	}
-	if start["openai/outputTemplate"] != TaskWidgetURI {
-		t.Errorf("command_start task template = %v", start)
-	}
-
-	for _, name := range []string{"command_poll", "command_cancel"} {
+	for _, name := range []string{"exec_command", "write_stdin"} {
 		got := ToolMeta(name)
 		if got == nil {
-			t.Fatalf("command lifecycle tool %q has no invocation metadata", name)
+			t.Fatalf("%q should keep lightweight invocation metadata", name)
 		}
 		if _, ok := got["ui"]; ok {
-			t.Errorf("%q should not create another widget: %v", name, got)
+			t.Errorf("%q should not advertise embedded UI: %v", name, got)
 		}
 		if _, ok := got["openai/outputTemplate"]; ok {
 			t.Errorf("%q should not advertise a widget template: %v", name, got)

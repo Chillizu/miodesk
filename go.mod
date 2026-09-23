@@ -3,6 +3,7 @@ module github.com/Chillizu/miodesk
 go 1.26.6
 
 require (
+	github.com/creack/pty v1.1.24
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 )

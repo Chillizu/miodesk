@@ -3,82 +3,89 @@ package tools
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestCommandShortRun(t *testing.T) {
+func TestUnifiedExecShortRun(t *testing.T) {
 	ws, root := newWS(t)
 	writeFile(t, root, "marker.txt", "here\n")
+	m := NewManager()
+	defer m.Shutdown()
 
-	out, err := Command(context.Background(), ws, CommandInput{
-		Command: "cat marker.txt && echo to-stderr >&2 && exit 3",
-		Timeout: 30,
+	out, err := ExecCommand(context.Background(), ws, m, ExecCommandInput{
+		Cmd:         "cat marker.txt && echo to-stderr >&2 && exit 3",
+		YieldTimeMS: 1000,
+		TimeoutMS:   30_000,
 	})
 	if err != nil {
-		t.Fatalf("Command: %v", err)
+		t.Fatalf("ExecCommand: %v", err)
 	}
-	if out.ExitCode != 3 {
-		t.Errorf("exit code = %d", out.ExitCode)
+	if out.ExitCode == nil || *out.ExitCode != 3 || out.SessionID != nil {
+		t.Errorf("completion = %+v", out)
 	}
-	if out.Stdout != "here\n" {
-		t.Errorf("stdout = %q", out.Stdout)
-	}
-	if !strings.Contains(out.Stderr, "to-stderr") {
-		t.Errorf("stderr = %q", out.Stderr)
-	}
-	if out.CWD != "." || out.TimedOut || out.ElapsedMS < 0 {
-		t.Errorf("output = %+v", out)
+	if !strings.Contains(out.Output, "here\n") || !strings.Contains(out.Output, "to-stderr") {
+		t.Errorf("output = %q", out.Output)
 	}
 }
 
-func TestCommandCwdSubdirectory(t *testing.T) {
+func TestUnifiedExecWorkdirSubdirectory(t *testing.T) {
 	ws, root := newWS(t)
 	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	out, err := Command(context.Background(), ws, CommandInput{Command: "pwd", Timeout: 30})
-	if err != nil {
-		t.Fatalf("Command: %v", err)
-	}
-	if !strings.HasSuffix(out.Stdout, "sub\n") && out.Stdout != ".\n" {
-		// cwd default is the root; sanity only
-		t.Logf("pwd = %q", out.Stdout)
-	}
+	m := NewManager()
+	defer m.Shutdown()
 
-	out, err = Command(context.Background(), ws, CommandInput{Command: "pwd", CWD: "sub", Timeout: 30})
+	out, err := ExecCommand(context.Background(), ws, m, ExecCommandInput{
+		Cmd:         "pwd",
+		Workdir:     "sub",
+		YieldTimeMS: 1000,
+	})
 	if err != nil {
-		t.Fatalf("Command sub: %v", err)
+		t.Fatalf("ExecCommand: %v", err)
 	}
-	if !strings.HasSuffix(strings.TrimSpace(out.Stdout), "sub") {
-		t.Errorf("sub cwd pwd = %q", out.Stdout)
-	}
-	if out.CWD != "sub" {
-		t.Errorf("CWD = %q", out.CWD)
+	if !strings.HasSuffix(strings.TrimSpace(out.Output), "sub") {
+		t.Errorf("sub workdir pwd = %q", out.Output)
 	}
 }
 
-func TestCommandRefusesSudoAndEscape(t *testing.T) {
+func TestUnifiedExecRefusesPrivilegeEscalationAndEscape(t *testing.T) {
 	ws, _ := newWS(t)
-	for _, command := range []string{"sudo rm -rf /", "echo ok; sudo true", "echo $(sudo true)", "doas true", "/usr/bin/sudoedit file", "pkexec true", "su -", "runuser -u root true", "runas.exe cmd"} {
-		if _, err := Command(context.Background(), ws, CommandInput{Command: command}); err == nil {
+	m := NewManager()
+	defer m.Shutdown()
+
+	for _, command := range []string{
+		"sudo rm -rf /",
+		"echo ok; sudo true",
+		"echo $(sudo true)",
+		"doas true",
+		"/usr/bin/sudoedit file",
+		"pkexec true",
+		"su -",
+		"runuser -u root true",
+		"runas.exe cmd",
+	} {
+		if _, err := ExecCommand(context.Background(), ws, m, ExecCommandInput{Cmd: command}); err == nil {
 			t.Errorf("privilege escalation must be refused in %q", command)
 		}
 	}
-	if _, err := Command(context.Background(), ws, CommandInput{Command: "pwd", CWD: "../../"}); err == nil {
-		t.Error("cwd escape must be rejected")
+	if _, err := ExecCommand(context.Background(), ws, m, ExecCommandInput{Cmd: "pwd", Workdir: "../../"}); err == nil {
+		t.Error("workdir escape must be rejected")
 	}
-	if _, err := Command(context.Background(), ws, CommandInput{Command: "   "}); err == nil {
+	if _, err := ExecCommand(context.Background(), ws, m, ExecCommandInput{Cmd: "   "}); err == nil {
 		t.Error("empty command must be rejected")
 	}
 }
 
-func TestCommandHonorsCallerCancellation(t *testing.T) {
+func TestUnifiedExecHonorsCallerCancellation(t *testing.T) {
 	ws, _ := newWS(t)
+	m := NewManager()
+	defer m.Shutdown()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
@@ -87,142 +94,200 @@ func TestCommandHonorsCallerCancellation(t *testing.T) {
 	}()
 
 	start := time.Now()
-	_, err := Command(ctx, ws, CommandInput{Command: "sleep 30", Timeout: 30})
+	_, err := ExecCommand(ctx, ws, m, ExecCommandInput{
+		Cmd:         "sleep 30",
+		YieldTimeMS: 30_000,
+		TimeoutMS:   30_000,
+	})
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Command error = %v, want context.Canceled", err)
+		t.Fatalf("ExecCommand error = %v, want context.Canceled", err)
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("caller cancellation took too long: %v", elapsed)
 	}
 }
 
-func TestCommandTimeout(t *testing.T) {
+func TestUnifiedExecTotalTimeout(t *testing.T) {
 	ws, _ := newWS(t)
+	m := NewManager()
+	defer m.Shutdown()
 	start := time.Now()
-	out, err := Command(context.Background(), ws, CommandInput{
-		Command: "sleep 30",
-		Timeout: 1,
+
+	out, err := ExecCommand(context.Background(), ws, m, ExecCommandInput{
+		Cmd:         "sleep 30",
+		YieldTimeMS: 5000,
+		TimeoutMS:   1000,
 	})
 	if err != nil {
-		t.Fatalf("Command: %v", err)
+		t.Fatalf("ExecCommand: %v", err)
 	}
-	if !out.TimedOut {
-		t.Error("expected timed_out=true")
+	if out.SessionID != nil || out.ExitCode == nil {
+		t.Errorf("timed out command should be completed: %+v", out)
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("timeout kill took too long: %v", elapsed)
 	}
 }
 
-func TestManagerLifecycle(t *testing.T) {
+func TestManagerWaitHonorsContextCancellation(t *testing.T) {
 	ws, _ := newWS(t)
 	m := NewManager()
 	defer m.Shutdown()
 
-	id, err := m.Start(ws, TaskCommandInput{Command: "echo started; sleep 30", Label: "Run lifecycle test"})
+	id, err := m.StartSession(ws, processInput{command: "sleep 30", timeout: 30})
 	if err != nil {
-		t.Fatalf("Start: %v", err)
+		t.Fatalf("StartSession: %v", err)
 	}
-	if !strings.HasPrefix(id, "task-") {
-		t.Errorf("id = %q", id)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err = m.waitFor(ctx, id, 30*time.Second)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waitFor error = %v, want context deadline exceeded", err)
 	}
-
-	// Poll while running.
-	poll, err := m.Poll(id)
+	p, err := m.lookup(id)
 	if err != nil {
-		t.Fatalf("Poll: %v", err)
+		t.Fatalf("lookup after wait cancellation: %v", err)
 	}
-	if poll.Status != "running" {
-		t.Errorf("early status = %q", poll.Status)
-	}
-	if poll.Kind != "task" || poll.Label != "Run lifecycle test" {
-		t.Errorf("early task identity = kind %q label %q", poll.Kind, poll.Label)
-	}
-	if poll.ExitCode != nil {
-		t.Errorf("running task exit code = %v, want nil", *poll.ExitCode)
-	}
-
-	// Wait for output to land, then cancel.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		poll, err = m.Poll(id)
-		if err != nil {
-			t.Fatalf("Poll: %v", err)
-		}
-		if strings.Contains(poll.Stdout, "started") || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if !strings.Contains(poll.Stdout, "started") {
-		t.Errorf("stdout never appeared: %q", poll.Stdout)
-	}
-
-	poll, err = m.Cancel(id)
-	if err != nil {
-		t.Fatalf("Cancel: %v", err)
-	}
-	if poll.Status != "done" {
-		t.Errorf("status after cancel = %q", poll.Status)
-	}
-	if poll.ElapsedMS >= 30*1000 {
-		t.Errorf("cancel did not kill the process: %dms", poll.ElapsedMS)
-	}
-
-	// Unknown task errors.
-	if _, err := m.Poll("task-999"); err == nil {
-		t.Error("unknown task must error")
-	}
-
-	// Short-lived task completes on its own.
-	id2, err := m.Start(ws, TaskCommandInput{Command: "echo quick", Timeout: 30})
-	if err != nil {
-		t.Fatalf("Start 2: %v", err)
-	}
-	deadline = time.Now().Add(5 * time.Second)
-	for {
-		poll, err = m.Poll(id2)
-		if err != nil {
-			t.Fatalf("Poll 2: %v", err)
-		}
-		if poll.Status == "done" || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if poll.Status != "done" || poll.ExitCode == nil || *poll.ExitCode != 0 || !strings.Contains(poll.Stdout, "quick") {
-		t.Errorf("final poll = %+v", poll)
-	}
-	if poll.Label != "Run background task" {
-		t.Errorf("fallback label = %q", poll.Label)
-	}
-	finishedElapsed := poll.ElapsedMS
-	time.Sleep(25 * time.Millisecond)
-	pollAgain, err := m.Poll(id2)
-	if err != nil {
-		t.Fatalf("Poll completed task: %v", err)
-	}
-	if pollAgain.ElapsedMS != finishedElapsed {
-		t.Errorf("completed task elapsed time changed: %d -> %d", finishedElapsed, pollAgain.ElapsedMS)
-	}
-
-	// Cancelling a finished task is a no-op.
-	if _, err := m.Cancel(id2); err != nil {
-		t.Errorf("cancel of finished task: %v", err)
+	select {
+	case <-p.doneCh:
+		t.Error("wait cancellation must not cancel the underlying session")
+	default:
 	}
 }
 
-func TestManagerCapsConcurrentTasks(t *testing.T) {
+func TestUnifiedExecSessionInputAndCancel(t *testing.T) {
+	ws, _ := newWS(t)
+	m := NewManager()
+	defer m.Shutdown()
+
+	out, err := ExecCommand(context.Background(), ws, m, ExecCommandInput{
+		Cmd:         "read line; printf 'got:%s\\n' \"$line\"; sleep 30",
+		YieldTimeMS: 10,
+		TimeoutMS:   30_000,
+	})
+	if err != nil {
+		t.Fatalf("ExecCommand: %v", err)
+	}
+	if out.SessionID == nil || *out.SessionID <= 0 {
+		t.Fatalf("expected live session, got %+v", out)
+	}
+	id := *out.SessionID
+
+	out, err = WriteStdin(context.Background(), m, WriteStdinInput{
+		SessionID:   id,
+		Chars:       "hello\n",
+		YieldTimeMS: 100,
+	})
+	if err != nil {
+		t.Fatalf("WriteStdin input: %v", err)
+	}
+	if !strings.Contains(out.Output, "got:hello") {
+		t.Fatalf("stdin output = %+v", out)
+	}
+	if out.SessionID == nil {
+		t.Fatalf("session should still be live after input: %+v", out)
+	}
+
+	out, err = WriteStdin(context.Background(), m, WriteStdinInput{
+		SessionID:   id,
+		Chars:       "\x03",
+		YieldTimeMS: 10,
+	})
+	if err != nil {
+		t.Fatalf("WriteStdin cancel: %v", err)
+	}
+	if out.SessionID != nil || out.ExitCode == nil {
+		t.Fatalf("cancelled session = %+v", out)
+	}
+}
+
+func TestUnifiedExecConsumesOutputIncrementally(t *testing.T) {
+	ws, _ := newWS(t)
+	m := NewManager()
+	defer m.Shutdown()
+
+	out, err := ExecCommand(context.Background(), ws, m, ExecCommandInput{
+		Cmd:         "echo first; sleep 1; echo second; sleep 30",
+		YieldTimeMS: 50,
+		TimeoutMS:   30_000,
+	})
+	if err != nil {
+		t.Fatalf("ExecCommand: %v", err)
+	}
+	if out.SessionID == nil {
+		t.Fatalf("expected live session: %+v", out)
+	}
+	id := *out.SessionID
+	if !strings.Contains(out.Output, "first") {
+		t.Fatalf("initial output = %q", out.Output)
+	}
+
+	out, err = WriteStdin(context.Background(), m, WriteStdinInput{
+		SessionID:   id,
+		YieldTimeMS: 1500,
+	})
+	if err != nil {
+		t.Fatalf("WriteStdin: %v", err)
+	}
+	if strings.Contains(out.Output, "first") || !strings.Contains(out.Output, "second") {
+		t.Fatalf("incremental output = %q", out.Output)
+	}
+
+	if _, err := WriteStdin(context.Background(), m, WriteStdinInput{
+		SessionID: id,
+		Chars:     "\x03",
+	}); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+}
+
+func TestProcAbortBeforeStartClosesInput(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	cancelled := false
+	p := &procHandle{
+		cancel: func() { cancelled = true },
+		stdin:  writer,
+	}
+
+	p.abortBeforeStart()
+	if !cancelled {
+		t.Fatal("abortBeforeStart did not cancel the process context")
+	}
+	buf := make([]byte, 1)
+	if _, err := reader.Read(buf); !errors.Is(err, io.EOF) {
+		t.Fatalf("stdin pipe remained open after abort: %v", err)
+	}
+}
+
+func TestShutdownProcessesUsesSingleDeadline(t *testing.T) {
+	cancelled := 0
+	procs := []*procHandle{
+		{doneCh: make(chan struct{}), cancel: func() { cancelled++ }},
+		{doneCh: make(chan struct{}), cancel: func() { cancelled++ }},
+		{doneCh: make(chan struct{}), cancel: func() { cancelled++ }},
+	}
+
+	start := time.Now()
+	shutdownProcesses(procs, 50*time.Millisecond)
+	if cancelled != len(procs) {
+		t.Fatalf("cancelled %d processes, want %d", cancelled, len(procs))
+	}
+	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+		t.Fatalf("shutdown deadline multiplied by process count: %v", elapsed)
+	}
+}
+
+func TestManagerCapsConcurrentSessions(t *testing.T) {
 	ws, _ := newWS(t)
 	m := NewManager()
 
 	// Fill the manager with synthetic running handles so the cap can be tested
 	// without spawning dozens of real child processes.
 	m.mu.Lock()
-	for i := 0; i < maxRunningProcs; i++ {
-		id := "task-synthetic-" + strconv.Itoa(i)
-		m.procs[id] = &procHandle{doneCh: make(chan struct{})}
-		m.order = append(m.order, id)
+	for i := 1; i <= maxRunningProcs; i++ {
+		m.procs[i] = &procHandle{doneCh: make(chan struct{})}
+		m.order = append(m.order, i)
 	}
 	m.mu.Unlock()
 	defer func() {
@@ -237,7 +302,7 @@ func TestManagerCapsConcurrentTasks(t *testing.T) {
 		m.mu.Unlock()
 	}()
 
-	if _, err := m.Start(ws, TaskCommandInput{Command: "true"}); err == nil || !strings.Contains(err.Error(), "cap") {
-		t.Fatalf("Start beyond cap error = %v", err)
+	if _, err := m.StartSession(ws, processInput{command: "true"}); err == nil || !strings.Contains(err.Error(), "cap") {
+		t.Fatalf("StartSession beyond cap error = %v", err)
 	}
 }

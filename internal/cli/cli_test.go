@@ -76,7 +76,7 @@ func TestInitThenDoctor(t *testing.T) {
 		"[OK] config",
 		"[OK] workspace",
 		"[OK] mcp",
-		"11 tools registered",
+		"10 tools registered",
 		"Readiness:",
 		"[OK] local use: ready",
 		"[INFO] OpenAI tunnel: not configured (optional)",
@@ -658,7 +658,7 @@ func TestBinaryServeStdio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
-	if len(listed.Tools) != 11 {
+	if len(listed.Tools) != 10 {
 		t.Errorf("tools = %d, want 10", len(listed.Tools))
 	}
 

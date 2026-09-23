@@ -30,8 +30,9 @@ import (
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	// Keep runtime state inside the test sandbox.
+	// Keep persistent and runtime state inside the test sandbox.
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 
 	root := t.TempDir()
@@ -46,6 +47,20 @@ func newTestServer(t *testing.T) *Server {
 	cfg.Workspace.Root = root
 	cfg.Server.Port = 0
 	return New(cfg, ws)
+}
+
+func TestToolsReturnsSnapshot(t *testing.T) {
+	s := newTestServer(t)
+	first := s.Tools()
+	if len(first) == 0 {
+		t.Fatal("expected registered tools")
+	}
+	original := first[0].Name
+	first[0].Name = "mutated"
+	second := s.Tools()
+	if second[0].Name != original {
+		t.Fatalf("Tools exposed internal slice: got %q, want %q", second[0].Name, original)
+	}
 }
 
 func TestMCPRoundtripOverHTTP(t *testing.T) {
@@ -385,7 +400,7 @@ func TestListenServeShutdown(t *testing.T) {
 	if err := json.Unmarshal(statusBody, &status); err != nil {
 		t.Fatalf("decode status: %v", err)
 	}
-	if status.Kind != "status" || status.Name != "miodesk" || status.Port != port || len(status.Tools) != 11 {
+	if status.Kind != "status" || status.Name != "miodesk" || status.Port != port || len(status.Tools) != 10 {
 		t.Errorf("status = %+v", status)
 	}
 	if bytes.Contains(statusBody, []byte(`"edits"`)) {
@@ -552,7 +567,7 @@ func TestRunStdio(t *testing.T) {
 	resp = readJSONLine(t, reader)
 	result, _ = resp["result"].(map[string]any)
 	toolList, _ := result["tools"].([]any)
-	if len(toolList) != 11 {
+	if len(toolList) != 10 {
 		t.Errorf("tools/list returned %d tools", len(toolList))
 	}
 
@@ -651,28 +666,70 @@ func TestMCPNewTools(t *testing.T) {
 		t.Errorf("read after edit = %v", readOut)
 	}
 
-	// command runs in the workspace and reports exit codes.
-	cmdOut := callOK("command", map[string]any{"command": "echo cmd-ok", "timeout": 30})
-	if !strings.Contains(fmt.Sprint(cmdOut["stdout"]), "cmd-ok") {
-		t.Errorf("command output = %v", cmdOut)
+	// Unified exec returns final output for short commands.
+	cmdOut := callOK("exec_command", map[string]any{"cmd": "echo cmd-ok", "yield_time_ms": 1000})
+	if !strings.Contains(fmt.Sprint(cmdOut["output"]), "cmd-ok") || cmdOut["exit_code"] != float64(0) {
+		t.Errorf("exec_command output = %v", cmdOut)
 	}
 
-	// command lifecycle: start → poll → cancel
-	startOut := callOK("command_start", map[string]any{"command": "sleep 30", "label": "Wait for test"})
-	id, _ := startOut["id"].(string)
-	if id == "" || startOut["kind"] != "task" || startOut["label"] != "Wait for test" || startOut["status"] != "running" {
-		t.Fatalf("command_start = %v", startOut)
+	// Long pipe-backed commands yield one numeric session; write_stdin polls and Ctrl-C cancels it.
+	startOut := callOK("exec_command", map[string]any{"cmd": "echo started; sleep 30", "yield_time_ms": 10})
+	sessionID, _ := startOut["session_id"].(float64)
+	if sessionID <= 0 {
+		t.Fatalf("exec_command session = %v", startOut)
 	}
-	pollOut := callOK("command_poll", map[string]any{"id": id})
-	if pollOut["status"] != "running" && pollOut["status"] != "done" {
-		t.Errorf("poll status = %v", pollOut)
+	pollOut := callOK("write_stdin", map[string]any{"session_id": sessionID, "chars": "", "yield_time_ms": 10})
+	if _, ok := pollOut["session_id"]; !ok {
+		t.Errorf("write_stdin should keep a live session: %v", pollOut)
 	}
-	if pollOut["kind"] != "task" || pollOut["label"] != "Wait for test" {
-		t.Errorf("poll task identity = %v", pollOut)
+	cancelOut := callOK("write_stdin", map[string]any{"session_id": sessionID, "chars": "\u0003", "yield_time_ms": 10})
+	if _, ok := cancelOut["session_id"]; ok {
+		t.Errorf("cancelled session should not remain resumable: %v", cancelOut)
 	}
-	cancelOut := callOK("command_cancel", map[string]any{"id": id})
-	if cancelOut["status"] != "done" {
-		t.Errorf("cancel status = %v", cancelOut)
+	if _, ok := cancelOut["exit_code"]; !ok {
+		t.Errorf("cancelled session should expose an exit code: %v", cancelOut)
+	}
+
+	// context lifecycle: rolling update → checkpoint → resume → discovery list.
+	if err := os.Mkdir(filepath.Join(s.ws.Root(), "project"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	contextOut := callOK("context", map[string]any{
+		"action":            "update",
+		"id":                "miodesk-maintenance",
+		"working_directory": "project",
+		"goal":              "keep work continuous across chats",
+		"current_state":     "rolling handoff is wired",
+		"decisions":         []string{"working_directory is a locator, not the workspace root"},
+		"next_steps":        []string{"checkpoint the milestone"},
+	})
+	if contextOut["kind"] != "context" || contextOut["action"] != "update" {
+		t.Fatalf("context update = %v", contextOut)
+	}
+	active, _ := contextOut["context"].(map[string]any)
+	if active["id"] != "miodesk-maintenance" || active["revision"] != float64(1) {
+		t.Fatalf("active context = %v", active)
+	}
+
+	checkpointOut := callOK("context", map[string]any{
+		"action": "checkpoint",
+		"id":     "miodesk-maintenance",
+		"label":  "Context v1 wired",
+	})
+	checkpoint, _ := checkpointOut["checkpoint"].(map[string]any)
+	if checkpoint["id"] != "checkpoint-001" || checkpoint["label"] != "Context v1 wired" {
+		t.Fatalf("context checkpoint = %v", checkpointOut)
+	}
+
+	resumeOut := callOK("context", map[string]any{"action": "resume", "id": "miodesk-maintenance"})
+	resumed, _ := resumeOut["context"].(map[string]any)
+	if resumed["id"] != "miodesk-maintenance" {
+		t.Fatalf("context resume = %v", resumeOut)
+	}
+	listOut := callOK("context", map[string]any{"action": "list"})
+	contexts, _ := listOut["contexts"].([]any)
+	if len(contexts) != 1 {
+		t.Fatalf("context list = %v", listOut)
 	}
 
 	delOut := callOK("delete", map[string]any{"path": "notes.md"})
@@ -734,14 +791,28 @@ func TestMCPAppsDashboard(t *testing.T) {
 	if rc.MIMEType != "text/html;profile=mcp-app" {
 		t.Errorf("mimeType = %q", rc.MIMEType)
 	}
-	if !strings.Contains(rc.Text, "<style>") || !strings.Contains(rc.Text, "MIODESK_RENDERERS") {
-		t.Error("resource text should be the assembled dashboard HTML")
+	if !strings.Contains(rc.Text, "<style>") || !strings.Contains(rc.Text, "renderStatus") {
+		t.Error("resource text should be the assembled diagnostics HTML")
 	}
 	if !strings.Contains(rc.Text, "--color-background-primary") || !strings.Contains(rc.Text, "safeAreaInsets") {
 		t.Error("widget should consume MCP Apps host style variables and safe-area context")
 	}
-	if ui, ok := rc.Meta["ui"].(map[string]any); !ok || ui["prefersBorder"] != true {
-		t.Errorf("contents _meta.ui = %v", rc.Meta)
+	resourceUI, ok := rc.Meta["ui"].(map[string]any)
+	if !ok || resourceUI["prefersBorder"] != true {
+		t.Fatalf("contents _meta.ui = %v", rc.Meta)
+	}
+	resourceCSP, ok := resourceUI["csp"].(map[string]any)
+	if !ok {
+		t.Fatalf("contents _meta.ui.csp = %v", resourceUI)
+	}
+	for _, key := range []string{"connectDomains", "resourceDomains"} {
+		domains, ok := resourceCSP[key].([]any)
+		if !ok || len(domains) != 0 {
+			t.Errorf("contents csp.%s = %#v, want explicit empty allowlist", key, resourceCSP[key])
+		}
+	}
+	if _, ok := resourceCSP["frameDomains"]; ok {
+		t.Errorf("contents csp.frameDomains should be omitted: %v", resourceCSP)
 	}
 	for _, legacyURI := range []string{
 		"ui://miodesk/status.html",
@@ -751,6 +822,8 @@ func TestMCPAppsDashboard(t *testing.T) {
 		"ui://miodesk/status-v5.html",
 		"ui://miodesk/status-v6.html",
 		"ui://miodesk/status-v7.html",
+		"ui://miodesk/status-v8.html",
+		"ui://miodesk/status-v9.html",
 	} {
 		legacyRead, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: legacyURI})
 		if err != nil {
@@ -761,36 +834,67 @@ func TestMCPAppsDashboard(t *testing.T) {
 		}
 	}
 
-	taskRead, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: adapter.TaskWidgetURI})
-	if err != nil {
-		t.Fatalf("task resources/read: %v", err)
-	}
-	if len(taskRead.Contents) != 1 || taskRead.Contents[0].URI != adapter.TaskWidgetURI || taskRead.Contents[0].Text != rc.Text {
-		t.Errorf("task resource should reuse the current self-contained widget")
-	}
-
-	// Status and command_start declare UI resources; command_poll/cancel stay
-	// native so repeated lifecycle calls never create extra iframes.
+	// Only status declares a UI resource. Unified exec tools keep native
+	// invocation labels but never attach an output template.
 	listed, err := sess.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
 	var status *mcp.Tool
-	var commandStart *mcp.Tool
+	var execCommand *mcp.Tool
+	var writeStdin *mcp.Tool
 	var read2 *mcp.Tool
 	for _, tl := range listed.Tools {
 		switch tl.Name {
 		case "status":
 			status = tl
-		case "command_start":
-			commandStart = tl
+		case "exec_command":
+			execCommand = tl
+		case "write_stdin":
+			writeStdin = tl
 		case "read":
 			read2 = tl
 		}
 	}
-	if status == nil || commandStart == nil || read2 == nil {
-		t.Fatal("status/command_start/read tools missing")
+	if status == nil || execCommand == nil || writeStdin == nil || read2 == nil {
+		t.Fatal("status/unified exec/read tools missing")
 	}
+	for _, legacy := range []string{"command", "command_start", "command_poll", "command_wait", "command_cancel"} {
+		for _, tl := range listed.Tools {
+			if tl.Name == legacy {
+				t.Errorf("legacy command tool %q should not be model-facing", legacy)
+			}
+		}
+	}
+	assertSchemaProperties := func(tl *mcp.Tool, want []string, reject []string) {
+		t.Helper()
+		if tl.OutputSchema == nil {
+			t.Errorf("%s should declare an inferred outputSchema", tl.Name)
+		}
+		schema, ok := tl.InputSchema.(map[string]any)
+		if !ok {
+			t.Errorf("%s inputSchema = %#v", tl.Name, tl.InputSchema)
+			return
+		}
+		props, ok := schema["properties"].(map[string]any)
+		if !ok {
+			t.Errorf("%s properties = %#v", tl.Name, schema["properties"])
+			return
+		}
+		for _, key := range want {
+			if _, ok := props[key]; !ok {
+				t.Errorf("%s schema missing %q: %#v", tl.Name, key, props)
+			}
+		}
+		for _, key := range reject {
+			if _, ok := props[key]; ok {
+				t.Errorf("%s schema should not expose legacy field %q: %#v", tl.Name, key, props)
+			}
+		}
+	}
+	assertSchemaProperties(execCommand, []string{"cmd", "workdir", "tty", "yield_time_ms", "timeout_ms"}, []string{"command", "label", "id"})
+	assertSchemaProperties(writeStdin, []string{"session_id", "chars", "yield_time_ms"}, []string{"id", "command"})
+
 	ui, _ := status.Meta["ui"].(map[string]any)
 	if ui == nil || ui["resourceUri"] != adapter.WidgetURI {
 		t.Errorf("status _meta.ui = %v", status.Meta)
@@ -798,9 +902,13 @@ func TestMCPAppsDashboard(t *testing.T) {
 	if status.Meta["openai/outputTemplate"] != adapter.WidgetURI {
 		t.Errorf("ChatGPT alias missing: %v", status.Meta)
 	}
-	startUI, _ := commandStart.Meta["ui"].(map[string]any)
-	if startUI == nil || startUI["resourceUri"] != adapter.TaskWidgetURI || commandStart.Meta["openai/outputTemplate"] != adapter.TaskWidgetURI {
-		t.Errorf("command_start task UI metadata = %v", commandStart.Meta)
+	for _, tl := range []*mcp.Tool{execCommand, writeStdin} {
+		if _, ok := tl.Meta["ui"]; ok {
+			t.Errorf("%s should not advertise embedded UI: %v", tl.Name, tl.Meta)
+		}
+		if _, ok := tl.Meta["openai/outputTemplate"]; ok {
+			t.Errorf("%s should not advertise an output template: %v", tl.Name, tl.Meta)
+		}
 	}
 	if status.Annotations == nil || !status.Annotations.ReadOnlyHint {
 		t.Errorf("status annotations = %+v", status.Annotations)
@@ -817,13 +925,14 @@ func TestMCPAppsDashboard(t *testing.T) {
 	}
 
 	for _, tl := range listed.Tools {
-		_, hasUI := tl.Meta["ui"]
+		uiMeta, _ := tl.Meta["ui"].(map[string]any)
+		_, hasResource := uiMeta["resourceUri"]
 		_, hasTemplate := tl.Meta["openai/outputTemplate"]
-		wantUI := tl.Name == "status" || tl.Name == "command_start"
-		if hasUI != wantUI || hasTemplate != wantUI {
-			t.Errorf("%s UI metadata present = (%v, %v), want = %v; meta = %v", tl.Name, hasUI, hasTemplate, wantUI, tl.Meta)
+		wantResource := tl.Name == "status"
+		if hasResource != wantResource || hasTemplate != wantResource {
+			t.Errorf("%s resource metadata present = (%v, %v), want = %v; meta = %v", tl.Name, hasResource, hasTemplate, wantResource, tl.Meta)
 		}
-		if tl.Name == "command_start" || tl.Name == "command_poll" || tl.Name == "command_cancel" {
+		if tl.Name == "exec_command" || tl.Name == "write_stdin" {
 			if tl.Meta["openai/toolInvocation/invoking"] == nil || tl.Meta["openai/toolInvocation/invoked"] == nil {
 				t.Errorf("%s should keep native invocation labels: %v", tl.Name, tl.Meta)
 			}
