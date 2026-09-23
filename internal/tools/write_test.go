@@ -199,6 +199,43 @@ func TestEditRejectsAggregateBatchBytesWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestEditReportsTruncatedDiffAndStillCommitsAtomically(t *testing.T) {
+	ws, root := newWS(t)
+	denseOld := strings.Repeat("\n", 20001)
+	writeFile(t, root, "dense.txt", denseOld)
+	writeFile(t, root, "small.txt", "old\n")
+
+	out, err := Edit(context.Background(), ws, EditInput{Operations: []EditOperation{
+		{Path: "dense.txt", Old: denseOld, New: "changed\n"},
+		{Path: "small.txt", Old: "old", New: "new"},
+	}})
+	if err != nil {
+		t.Fatalf("Edit: %v", err)
+	}
+	if len(out.Files) != 2 {
+		t.Fatalf("changed files = %d, want 2", len(out.Files))
+	}
+	results := make(map[string]EditFileResult, len(out.Files))
+	for _, result := range out.Files {
+		results[result.Path] = result
+	}
+	if !results["dense.txt"].DiffTruncated {
+		t.Fatal("dense diff should report diff_truncated=true")
+	}
+	if results["small.txt"].DiffTruncated {
+		t.Fatal("small diff should not be truncated")
+	}
+	for name, want := range map[string]string{"dense.txt": "changed\n", "small.txt": "new\n"} {
+		data, readErr := os.ReadFile(filepath.Join(root, name))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(data) != want {
+			t.Errorf("%s = %q, want %q", name, data, want)
+		}
+	}
+}
+
 func TestEditAmbiguityRequiresReplaceAll(t *testing.T) {
 	ws, root := newWS(t)
 	writeFile(t, root, "f.txt", "x\nx\nx\n")

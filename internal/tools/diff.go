@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // DiffLine is one line of a generated diff. Old/New are 1-based line numbers
@@ -23,6 +24,8 @@ type DiffGroup struct {
 const (
 	diffContext  = 3
 	diffMergeGap = 2 * diffContext
+	maxDiffLines = 20_000
+	maxDiffBytes = 1 << 20
 )
 
 // diffMaxCells bounds the LCS dynamic-programming table; larger middles fall
@@ -30,19 +33,260 @@ const (
 // only so tests can shrink it.
 var diffMaxCells = 4 << 20
 
-// DiffLines computes change groups between two file contents. Identical
-// inputs yield no groups.
+// DiffLines computes standard bounded change groups between two file
+// contents. Identical inputs yield no groups.
 func DiffLines(oldText, newText string) []DiffGroup {
+	if oldText == newText {
+		return nil
+	}
+	groups, _ := DiffLinesBounded(oldText, newText, maxDiffLines, maxDiffBytes)
+	return groups
+}
+
+// DiffLinesBounded computes change groups while limiting input line work and
+// the JSON-encoded groups returned. The bool reports that some or all output
+// was omitted to stay within either budget.
+func DiffLinesBounded(oldText, newText string, maxLines, maxBytes int) ([]DiffGroup, bool) {
+	if maxLines < 0 || maxBytes < 2 {
+		return nil, true
+	}
+	if oldText == newText {
+		return []DiffGroup{}, false
+	}
+	oldCount := diffInputLineCount(oldText)
+	newCount := diffInputLineCount(newText)
+	if oldCount > maxLines || newCount > maxLines-oldCount {
+		return []DiffGroup{}, true
+	}
+
 	oldLines := splitLines(oldText)
 	newLines := splitLines(newText)
 	if equalLines(oldLines, newLines) {
-		return nil
+		return []DiffGroup{}, false
 	}
 	ops := diffOps(oldLines, newLines)
 	if len(ops) == 0 {
-		return nil
+		return []DiffGroup{}, false
 	}
-	return buildGroups(oldLines, newLines, ops)
+	groups := buildGroups(oldLines, newLines, ops)
+	if len(groups) == 0 {
+		return []DiffGroup{}, false
+	}
+
+	bounded := make([]DiffGroup, 0, len(groups))
+	usedLines := 0
+	usedBytes := 2 // JSON array brackets.
+	for _, group := range groups {
+		lineCount := 1 + len(group.Lines) // Header plus serialized diff lines.
+		if lineCount > maxLines-usedLines {
+			return bounded, true
+		}
+		separatorBytes := 0
+		if len(bounded) > 0 {
+			separatorBytes = 1
+		}
+		groupBytes, ok := diffGroupJSONSize(group, maxBytes-usedBytes-separatorBytes)
+		if !ok {
+			return bounded, true
+		}
+		usedBytes += separatorBytes + groupBytes
+		if usedBytes > maxBytes {
+			return bounded, true
+		}
+		usedLines += lineCount
+		bounded = append(bounded, group)
+	}
+	return bounded, false
+}
+
+func diffInputLineCount(text string) int {
+	if text == "" {
+		return 0
+	}
+	count := strings.Count(text, "\n")
+	if !strings.HasSuffix(text, "\n") {
+		count++
+	}
+	return count
+}
+
+func diffOutputLineCount(groups []DiffGroup) int {
+	count := 0
+	for _, group := range groups {
+		count += 1 + len(group.Lines)
+	}
+	return count
+}
+
+func diffSliceJSONSize(groups []DiffGroup, maxBytes int) (int, bool) {
+	if groups == nil {
+		return addJSONSize(0, len("null"), maxBytes)
+	}
+	size := 2 // JSON array brackets.
+	if size > maxBytes {
+		return 0, false
+	}
+	for i, group := range groups {
+		separatorBytes := 0
+		if i > 0 {
+			separatorBytes = 1
+		}
+		var ok bool
+		size, ok = addJSONSize(size, separatorBytes, maxBytes)
+		if !ok {
+			return 0, false
+		}
+		groupBytes, ok := diffGroupJSONSize(group, maxBytes-size)
+		if !ok {
+			return 0, false
+		}
+		size, ok = addJSONSize(size, groupBytes, maxBytes)
+		if !ok {
+			return 0, false
+		}
+	}
+	return size, true
+}
+
+func diffGroupJSONSize(group DiffGroup, maxBytes int) (int, bool) {
+	size, ok := addJSONSize(0, len(`{"header":`), maxBytes)
+	if !ok {
+		return 0, false
+	}
+	stringBytes, ok := jsonStringSize(group.Header, maxBytes-size)
+	if !ok {
+		return 0, false
+	}
+	size, ok = addJSONSize(size, stringBytes, maxBytes)
+	if !ok {
+		return 0, false
+	}
+	size, ok = addJSONSize(size, len(`,"lines":[`), maxBytes)
+	if !ok {
+		return 0, false
+	}
+	for i, line := range group.Lines {
+		if i > 0 {
+			size, ok = addJSONSize(size, 1, maxBytes)
+			if !ok {
+				return 0, false
+			}
+		}
+		lineBytes, ok := diffLineJSONSize(line, maxBytes-size)
+		if !ok {
+			return 0, false
+		}
+		size, ok = addJSONSize(size, lineBytes, maxBytes)
+		if !ok {
+			return 0, false
+		}
+	}
+	size, ok = addJSONSize(size, len(`]}`), maxBytes)
+	return size, ok
+}
+
+func diffLineJSONSize(line DiffLine, maxBytes int) (int, bool) {
+	size, ok := addJSONSize(0, len(`{"type":`), maxBytes)
+	if !ok {
+		return 0, false
+	}
+	typeBytes, ok := jsonStringSize(line.Type, maxBytes-size)
+	if !ok {
+		return 0, false
+	}
+	size, ok = addJSONSize(size, typeBytes, maxBytes)
+	if !ok {
+		return 0, false
+	}
+	if line.Old != 0 {
+		size, ok = addJSONSize(size, len(`,"old":`)+jsonIntSize(line.Old), maxBytes)
+		if !ok {
+			return 0, false
+		}
+	}
+	if line.New != 0 {
+		size, ok = addJSONSize(size, len(`,"new":`)+jsonIntSize(line.New), maxBytes)
+		if !ok {
+			return 0, false
+		}
+	}
+	size, ok = addJSONSize(size, len(`,"text":`), maxBytes)
+	if !ok {
+		return 0, false
+	}
+	textBytes, ok := jsonStringSize(line.Text, maxBytes-size)
+	if !ok {
+		return 0, false
+	}
+	size, ok = addJSONSize(size, textBytes, maxBytes)
+	if !ok {
+		return 0, false
+	}
+	return addJSONSize(size, 1, maxBytes) // Closing object brace.
+}
+
+func jsonStringSize(text string, maxBytes int) (int, bool) {
+	size := 2 // JSON quotes.
+	if size > maxBytes {
+		return 0, false
+	}
+	for i := 0; i < len(text); {
+		b := text[i]
+		if b < utf8.RuneSelf {
+			delta := 1
+			switch b {
+			case '"', '\\', '\b', '\f', '\n', '\r', '\t':
+				delta = 2
+			case '<', '>', '&':
+				delta = 6 // encoding/json HTML escapes these as \\u00XX.
+			default:
+				if b < 0x20 {
+					delta = 6
+				}
+			}
+			var ok bool
+			size, ok = addJSONSize(size, delta, maxBytes)
+			if !ok {
+				return 0, false
+			}
+			i++
+			continue
+		}
+		r, runeBytes := utf8.DecodeRuneInString(text[i:])
+		delta := runeBytes
+		if r == utf8.RuneError && runeBytes == 1 {
+			delta = utf8.RuneLen(utf8.RuneError) // encoding/json replaces invalid bytes with U+FFFD.
+		} else if r == '\u2028' || r == '\u2029' {
+			delta = 6
+		}
+		var ok bool
+		size, ok = addJSONSize(size, delta, maxBytes)
+		if !ok {
+			return 0, false
+		}
+		i += runeBytes
+	}
+	return size, true
+}
+
+func jsonIntSize(value int) int {
+	size := 0
+	if value <= 0 {
+		size++
+		value = -value
+	}
+	for value > 0 {
+		size++
+		value /= 10
+	}
+	return size
+}
+
+func addJSONSize(size, delta, maxBytes int) (int, bool) {
+	if size < 0 || delta < 0 || size > maxBytes || delta > maxBytes-size {
+		return 0, false
+	}
+	return size + delta, true
 }
 
 type diffOp struct {

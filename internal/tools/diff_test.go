@@ -1,10 +1,105 @@
 package tools
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestDiffLinesBoundedStopsBeforeSplittingDenseInput(t *testing.T) {
+	groups, truncated := DiffLinesBounded(strings.Repeat("\n", 20001), "changed\n", 20000, 1<<20)
+	if !truncated {
+		t.Fatal("dense input should be truncated before splitting")
+	}
+	lines := 0
+	for _, group := range groups {
+		lines += 1 + len(group.Lines)
+	}
+	if lines > 20000 {
+		t.Fatalf("serialized diff lines = %d, want at most 20000", lines)
+	}
+	encoded, err := json.Marshal(groups)
+	if err != nil {
+		t.Fatalf("marshal bounded diff: %v", err)
+	}
+	if len(encoded) > 1<<20 {
+		t.Fatalf("serialized diff is %d bytes, want at most %d", len(encoded), 1<<20)
+	}
+}
+
+func TestDiffLinesBoundedCountsGroupHeadersAgainstLineBudget(t *testing.T) {
+	groups, truncated := DiffLinesBounded("a\nb\nc\n", "x\ny\nz\n", 6, 1<<20)
+	if !truncated {
+		t.Fatal("group header should consume the line budget")
+	}
+	if len(groups) != 0 {
+		t.Fatalf("groups = %d, want no partial group", len(groups))
+	}
+}
+
+func TestDiffLinesBoundedCapsJSONEscapes(t *testing.T) {
+	text := strings.Repeat("<", 200_000) + "\"\\\b\f\n\r\t\x00\x1f"
+	groups, truncated := DiffLinesBounded("", text, 20000, 1<<20)
+	if !truncated {
+		t.Fatal("escaped JSON output should be truncated")
+	}
+	encoded, err := json.Marshal(groups)
+	if err != nil {
+		t.Fatalf("marshal bounded diff: %v", err)
+	}
+	if len(encoded) > 1<<20 {
+		t.Fatalf("serialized diff is %d bytes, want at most %d", len(encoded), 1<<20)
+	}
+}
+
+func TestDiffJSONSizeMatchesEncodingJSON(t *testing.T) {
+	texts := []string{
+		"plain text",
+		"<tag>&value",
+		"quote \" slash \\",
+		"controls\b\f\n\r\t\x00\x1f",
+		"separators\u2028\u2029",
+		"unicode 雪🙂",
+		string([]byte{0xff, 'x', 0xc0, 0xaf}),
+	}
+	for _, text := range texts {
+		encoded, err := json.Marshal(text)
+		if err != nil {
+			t.Fatalf("marshal %q: %v", text, err)
+		}
+		got, ok := jsonStringSize(text, len(encoded))
+		if !ok || got != len(encoded) {
+			t.Errorf("jsonStringSize(%q) = %d, %v; encoding/json size = %d", text, got, ok, len(encoded))
+		}
+
+		groups := []DiffGroup{{
+			Header: text,
+			Lines:  []DiffLine{{Type: "add", New: 123, Text: text}},
+		}}
+		encoded, err = json.Marshal(groups)
+		if err != nil {
+			t.Fatalf("marshal groups with %q: %v", text, err)
+		}
+		got, ok = diffSliceJSONSize(groups, len(encoded))
+		if !ok || got != len(encoded) {
+			t.Errorf("diffSliceJSONSize(%q) = %d, %v; encoding/json size = %d", text, got, ok, len(encoded))
+		}
+	}
+}
+
+func BenchmarkDiffLinesBoundedDense(b *testing.B) {
+	oldText := strings.Repeat("old\n", 20001)
+	newText := strings.Repeat("new\n", 20001)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, truncated := DiffLinesBounded(oldText, newText, 20000, 1<<20)
+		if !truncated {
+			b.Fatal("dense diff should be truncated")
+		}
+	}
+}
 
 func TestDiffIdentical(t *testing.T) {
 	if got := DiffLines("a\nb\n", "a\nb\n"); got != nil {
