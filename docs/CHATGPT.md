@@ -145,8 +145,8 @@ curl --fail http://127.0.0.1:8787/healthz
 `command_cancel` schema，而本地 `tools/list` 已经显示 `exec_command` /
 `write_stdin`，这是客户端/connector 的 schema 缓存，而不是 server 回退。当前
 server 只 advertise 新工具；一个窄的临时兼容层会接住旧调用，但不会把旧工具
-重新放回 `tools/list`。优先重载 connector/client 来刷新 schema，不要为了迎合
-缓存再次扩张旧工具面。
+重新放回 `tools/list`，也不会向旧调用注入新 schema 才有的可选字段。优先重载
+connector/client 来刷新 schema，不要为了迎合缓存再次扩张旧工具面。
 
 `Error loading app / Failed to fetch template` 属于 ChatGPT/MCP Apps 获取
 widget resource 失败，不等同于 MCP tool 逻辑失败。常规 read/search/list/

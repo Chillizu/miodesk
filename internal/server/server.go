@@ -380,6 +380,7 @@ func registerTools(s *Server) {
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ExecCommandInput) (result *mcp.CallToolResult, output *tools.UnifiedExecOutput, err error) {
 		finish := s.beginTool(ctx, "exec_command")
 		defer func() { finish(err) }()
+		applyLegacyExecDefaults(ctx, &in)
 		out, err := tools.ExecCommand(ctx, s.ws, s.commands, in)
 		if err != nil {
 			return nil, nil, err
@@ -394,6 +395,7 @@ func registerTools(s *Server) {
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.WriteStdinInput) (result *mcp.CallToolResult, output *tools.UnifiedExecOutput, err error) {
 		finish := s.beginTool(ctx, "write_stdin")
 		defer func() { finish(err) }()
+		applyLegacyWriteStdinDefaults(ctx, &in)
 		out, err := tools.WriteStdin(ctx, s.commands, in)
 		if err != nil {
 			return nil, nil, err

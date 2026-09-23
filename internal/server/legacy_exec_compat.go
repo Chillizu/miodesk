@@ -2,17 +2,13 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strconv"
-)
 
-const (
-	legacyShortCommandYieldMS = 30_000
-	legacyStartCommandYieldMS = 1
-	legacyPollYieldMS         = 1
-	legacyCancelYieldMS       = 1_000
+	"github.com/Chillizu/miodesk/internal/tools"
 )
 
 // legacyCommandCompatibility is a narrow migration shim for clients that
@@ -36,7 +32,9 @@ func legacyCommandCompatibility(next http.Handler) http.Handler {
 
 		if rewritten, ok := rewriteLegacyToolCall(body); ok {
 			body = rewritten
-			if target := legacyToolTarget(r.Header.Get("Mcp-Name")); target != "" {
+			legacyName := r.Header.Get("Mcp-Name")
+			if target := legacyToolTarget(legacyName); target != "" {
+				r = r.WithContext(context.WithValue(r.Context(), legacyToolContextKey{}, legacyName))
 				r.Header.Set("Mcp-Name", target)
 			}
 		}
@@ -86,17 +84,14 @@ func rewriteLegacyToolCall(body []byte) ([]byte, bool) {
 	}
 
 	switch name {
-	case "command":
-		rewriteLegacyExecArgs(args, legacyShortCommandYieldMS)
-		name = "exec_command"
-	case "command_start":
-		rewriteLegacyExecArgs(args, legacyStartCommandYieldMS)
+	case "command", "command_start":
+		rewriteLegacyExecArgs(args)
 		name = "exec_command"
 	case "command_poll":
-		rewriteLegacySessionArgs(args, "", legacyPollYieldMS)
+		rewriteLegacySessionArgs(args, "")
 		name = "write_stdin"
 	case "command_cancel":
-		rewriteLegacySessionArgs(args, "\x03", legacyCancelYieldMS)
+		rewriteLegacySessionArgs(args, "\x03")
 		name = "write_stdin"
 	default:
 		return body, false
@@ -116,32 +111,30 @@ func rewriteLegacyToolCall(body []byte) ([]byte, bool) {
 	return rewritten, true
 }
 
-func rewriteLegacyExecArgs(args map[string]json.RawMessage, defaultYieldMS int) {
+func rewriteLegacyExecArgs(args map[string]json.RawMessage) {
+	// Cached legacy connector calls can leak unified-only transport fields.
+	// Strip them before unified schema validation; legacy timing semantics are
+	// restored later via context-aware defaults after decoding.
+	delete(args, "yield-time_ms")
+	delete(args, "yield-time-ms")
+	delete(args, "tty")
+
 	moveRawArg(args, "command", "cmd")
 	moveRawArg(args, "cwd", "workdir")
 
-	timeoutMS := 0
 	if raw, ok := args["timeout"]; ok {
 		if seconds, err := rawInt(raw); err == nil && seconds > 0 {
-			timeoutMS = seconds * 1000
-			args["timeout_ms"] = rawJSONInt(timeoutMS)
+			args["timeout_ms"] = rawJSONInt(seconds * 1000)
 		}
 		delete(args, "timeout")
 	}
-
-	yieldMS := defaultYieldMS
-	if timeoutMS > 0 && timeoutMS < yieldMS {
-		yieldMS = timeoutMS
-	}
-	if _, ok := args["yield-time_ms"]; !ok {
-		args["yield-time_ms"] = rawJSONInt(yieldMS)
-	}
-	if _, ok := args["tty"]; !ok {
-		args["tty"] = json.RawMessage("false")
-	}
 }
 
-func rewriteLegacySessionArgs(args map[string]json.RawMessage, chars string, yieldMS int) {
+func rewriteLegacySessionArgs(args map[string]json.RawMessage, chars string) {
+	// Poll/cancel calls may receive the same leaked unified timing field.
+	delete(args, "yield-time_ms")
+	delete(args, "yield-time-ms")
+
 	if raw, ok := args["id"]; ok {
 		if id, err := rawInt(raw); err == nil {
 			args["session_id"] = rawJSONInt(id)
@@ -152,9 +145,6 @@ func rewriteLegacySessionArgs(args map[string]json.RawMessage, chars string, yie
 	}
 
 	delete(args, "timeout")
-	if _, ok := args["yield-time_ms"]; !ok {
-		args["yield-time_ms"] = rawJSONInt(yieldMS)
-	}
 	if chars != "" {
 		encoded, _ := json.Marshal(chars)
 		args["chars"] = encoded
@@ -186,4 +176,35 @@ func rawInt(raw json.RawMessage) (int, error) {
 
 func rawJSONInt(value int) json.RawMessage {
 	return json.RawMessage(strconv.Itoa(value))
+}
+
+type legacyToolContextKey struct{}
+
+func applyLegacyExecDefaults(ctx context.Context, in *tools.ExecCommandInput) {
+	if in == nil || in.YieldTimeMS != 0 {
+		return
+	}
+	switch legacyToolName(ctx) {
+	case "command":
+		in.YieldTimeMS = 30_000
+	case "command_start":
+		in.YieldTimeMS = 1
+	}
+}
+
+func applyLegacyWriteStdinDefaults(ctx context.Context, in *tools.WriteStdinInput) {
+	if in == nil || in.YieldTimeMS != 0 {
+		return
+	}
+	switch legacyToolName(ctx) {
+	case "command_poll":
+		in.YieldTimeMS = 1
+	case "command_cancel":
+		in.YieldTimeMS = 1_000
+	}
+}
+
+func legacyToolName(ctx context.Context) string {
+	name, _ := ctx.Value(legacyToolContextKey{}).(string)
+	return name
 }

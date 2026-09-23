@@ -19,9 +19,9 @@
   are deliberately not part of the MCP contract.
 - Added a narrow migration shim for stale clients that still call the formerly
   advertised `command`, `command_start`, `command_poll`, or `command_cancel`
-  tools. The shim rewrites calls into the unified exec surface without
-  re-advertising retired tools and is intended to be removed after client-side
-  schema caches age out.
+  tools. The shim rewrites only fields that existed in the retired schemas,
+  never injects new-only optional arguments, does not re-advertise retired
+  tools, and is intended to be removed after client-side schema caches age out.
 - Kept command execution UI-free. The embedded UI is diagnostics-only; command
   sessions use lightweight native invocation feedback and never advertise an
   output template or create polling cards.
