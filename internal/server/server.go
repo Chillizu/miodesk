@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -66,8 +67,9 @@ type Server struct {
 	stats   map[string]int64
 
 	// Recent edit results feed the widget's diff viewer.
-	editsMu sync.Mutex
-	edits   []EditRecord
+	editsMu   sync.Mutex
+	edits     []EditRecord
+	editBytes int
 
 	// Resumable exec sessions shared by exec_command and write_stdin.
 	commands *tools.Manager
@@ -91,8 +93,15 @@ type EditRecord struct {
 	Files []tools.EditFileResult `json:"files"`
 }
 
-// maxRecentEdits bounds the in-memory edit history.
-const maxRecentEdits = 10
+// Edit history is kept only in memory and bounded by record count and an
+// estimate of retained diff text plus slice/struct overhead.
+const (
+	maxRecentEdits       = 10
+	maxRecentEditBytes   = 2 << 20
+	editHistoryFileCost  = 32
+	editHistoryGroupCost = 64
+	editHistoryLineCost  = 64
+)
 
 // New builds a Server with all tools registered against ws.
 func New(cfg *config.Config, ws *workspace.Workspace) *Server {
@@ -177,9 +186,26 @@ func (s *Server) beginTool(ctx context.Context, tool string) func(error) {
 func (s *Server) recordEdits(files []tools.EditFileResult) {
 	s.editsMu.Lock()
 	defer s.editsMu.Unlock()
-	s.edits = append([]EditRecord{{At: time.Now(), Files: cloneEditFiles(files)}}, s.edits...)
-	if len(s.edits) > maxRecentEdits {
-		s.edits = s.edits[:maxRecentEdits]
+
+	// Clone diff strings as well as their slices so a small cached hunk cannot
+	// keep an entire source file's backing string alive.
+	record := EditRecord{At: time.Now(), Files: cloneEditFilesForHistory(files)}
+	recordBytes := editFilesDiffBytes(record.Files)
+	if recordBytes > maxRecentEditBytes {
+		for i := range record.Files {
+			if len(record.Files[i].Diff) > 0 {
+				record.Files[i].Diff = nil
+				record.Files[i].DiffTruncated = true
+			}
+		}
+		recordBytes = editFilesDiffBytes(record.Files)
+	}
+	s.edits = append([]EditRecord{record}, s.edits...)
+	s.editBytes += recordBytes
+	for len(s.edits) > maxRecentEdits || s.editBytes > maxRecentEditBytes {
+		oldest := len(s.edits) - 1
+		s.editBytes -= editFilesDiffBytes(s.edits[oldest].Files)
+		s.edits = s.edits[:oldest]
 	}
 }
 
@@ -225,6 +251,46 @@ func cloneDiffGroups(src []tools.DiffGroup) []tools.DiffGroup {
 		dst[i].Lines = append([]tools.DiffLine(nil), src[i].Lines...)
 	}
 	return dst
+}
+
+func cloneEditFilesForHistory(src []tools.EditFileResult) []tools.EditFileResult {
+	dst := cloneEditFiles(src)
+	for i := range dst {
+		for j := range dst[i].Diff {
+			dst[i].Diff[j].Header = strings.Clone(src[i].Diff[j].Header)
+			for k := range dst[i].Diff[j].Lines {
+				dst[i].Diff[j].Lines[k].Type = strings.Clone(src[i].Diff[j].Lines[k].Type)
+				dst[i].Diff[j].Lines[k].Text = strings.Clone(src[i].Diff[j].Lines[k].Text)
+			}
+		}
+	}
+	return dst
+}
+
+func recentEditDiffBytes(records []EditRecord) int {
+	total := 0
+	for i := range records {
+		total += editFilesDiffBytes(records[i].Files)
+	}
+	return total
+}
+
+func editFilesDiffBytes(files []tools.EditFileResult) int {
+	total := 0
+	for i := range files {
+		if len(files[i].Diff) > 0 {
+			total += editHistoryFileCost
+		}
+		for j := range files[i].Diff {
+			group := &files[i].Diff[j]
+			total += editHistoryGroupCost + len(group.Header)
+			for k := range group.Lines {
+				line := &group.Lines[k]
+				total += editHistoryLineCost + len(line.Type) + len(line.Text)
+			}
+		}
+	}
+	return total
 }
 
 // LocalStatus keeps the standalone diagnostics renderer's kind discriminator

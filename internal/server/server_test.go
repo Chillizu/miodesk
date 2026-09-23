@@ -63,6 +63,111 @@ func TestToolsReturnsSnapshot(t *testing.T) {
 	}
 }
 
+func TestRecentEditHistoryEvictsOldestAndStaysWithinByteBudget(t *testing.T) {
+	s := newTestServer(t)
+	for i := 0; i < 11; i++ {
+		s.recordEdits(testEditFilesWithDiff(fmt.Sprintf("edit-%02d", i)))
+	}
+	records := s.recentEdits()
+	if len(records) != maxRecentEdits {
+		t.Fatalf("recent edit records = %d, want %d", len(records), maxRecentEdits)
+	}
+	if got := records[0].Files[0].Diff[0].Lines[0].Text; got != "edit-10" {
+		t.Errorf("newest record text = %q, want edit-10", got)
+	}
+	if got := records[len(records)-1].Files[0].Diff[0].Lines[0].Text; got != "edit-01" {
+		t.Errorf("oldest retained record text = %q, want edit-01", got)
+	}
+
+	largeText := strings.Repeat("x", 768<<10)
+	for i := 0; i < 3; i++ {
+		s.recordEdits(testEditFilesWithDiff(largeText))
+	}
+	largeRecords := s.recentEdits()
+	if len(largeRecords) != 2 {
+		t.Fatalf("records after byte eviction = %d, want two 768 KiB records", len(largeRecords))
+	}
+	if got := recentEditDiffBytes(largeRecords); got > maxRecentEditBytes {
+		t.Fatalf("retained recent diff bytes = %d, cap %d", got, maxRecentEditBytes)
+	}
+	if got := recentEditDiffBytes(largeRecords); got != s.editBytes {
+		t.Errorf("tracked edit bytes = %d, measured retained bytes = %d", s.editBytes, got)
+	}
+}
+
+func TestRecordEditsDoesNotMutateToolResultWhenTruncatingCache(t *testing.T) {
+	s := newTestServer(t)
+	files := testEditFilesWithDiff(strings.Repeat("large", (maxRecentEditBytes/5)+1))
+	s.recordEdits(files)
+	if len(files) != 1 || len(files[0].Diff) == 0 || files[0].DiffTruncated {
+		t.Fatal("recordEdits mutated the tool result while truncating its cache copy")
+	}
+
+	records := s.recentEdits()
+	if len(records) != 1 || len(records[0].Files) != 1 {
+		t.Fatalf("recent edits = %+v", records)
+	}
+	cached := records[0].Files[0]
+	if cached.Path != files[0].Path || cached.Bytes != files[0].Bytes || cached.Lines != files[0].Lines {
+		t.Errorf("cached summary = %+v, want path/byte/line summary from %+v", cached, files[0])
+	}
+	if cached.Diff != nil || !cached.DiffTruncated {
+		t.Errorf("cached oversized diff = %+v, want nil diff and truncated flag", cached)
+	}
+}
+
+func BenchmarkRecordEditsBounded(b *testing.B) {
+	files := benchmarkEditFilesNearDiffCap(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s := &Server{}
+		s.recordEdits(files)
+		if s.editBytes > maxRecentEditBytes {
+			b.Fatalf("retained edit bytes = %d, cap %d", s.editBytes, maxRecentEditBytes)
+		}
+	}
+}
+
+func benchmarkEditFilesNearDiffCap(b *testing.B) []tools.EditFileResult {
+	b.Helper()
+	oldLines := make([]string, 16)
+	newLines := make([]string, 16)
+	for i := range oldLines {
+		oldLines[i] = "old"
+		newLines[i] = oldLines[i]
+	}
+	largeLine := strings.Repeat("<", 80_000)
+	newLines[1] = largeLine
+	newLines[14] = largeLine
+	oldText := strings.Join(oldLines, "\n") + "\n"
+	newText := strings.Join(newLines, "\n") + "\n"
+	groups, truncated := tools.DiffLinesBounded(oldText, newText, 20_000, 1<<20)
+	if truncated {
+		b.Fatal("benchmark diff unexpectedly truncated")
+	}
+	encoded, err := json.Marshal(groups)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if len(encoded) < 900_000 || len(encoded) > 1<<20 {
+		b.Fatalf("benchmark diff JSON size = %d; want 900000..%d bytes", len(encoded), 1<<20)
+	}
+	return []tools.EditFileResult{{Path: "large.txt", Bytes: len(newText), Lines: len(newLines), Diff: groups}}
+}
+
+func testEditFilesWithDiff(text string) []tools.EditFileResult {
+	return []tools.EditFileResult{{
+		Path:  "file.txt",
+		Bytes: len(text),
+		Lines: 1,
+		Diff: []tools.DiffGroup{{
+			Header: "@@ -1,0 +1,1 @@",
+			Lines:  []tools.DiffLine{{Type: "add", New: 1, Text: text}},
+		}},
+	}}
+}
+
 func TestMCPRoundtripOverHTTP(t *testing.T) {
 	s := newTestServer(t)
 	ts := httptest.NewServer(s.Handler())
