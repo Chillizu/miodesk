@@ -138,9 +138,11 @@ flow.
   As of the decoupling phase, its unit has **no `Requires=miodesk.service`**;
   it retains only `After=` ordering when both start simultaneously, and restarts
   independently. Core-only service actions do not touch the tunnel and vice
-  versa. A previous live installation must be explicitly reinstalled to adopt
-  the new unit content. Installation writes + `daemon-reload` but never enables
-  either unit implicitly.
+  versa. Some historical/custom live units additionally have `PartOf=` and `Wants=`
+  relationships and may depend on an `EnvironmentFile=` for credentials; inspect
+  and validate the actual unit/profile before migration. Installing source code
+  alone never updates systemd units. Installation writes + `daemon-reload` but
+  never enables either unit implicitly.
 - Checked: 2026-10-09 (isolated systemctl-stub lifecycle regression; no live unit migration)
 
 ## Legacy public tunnel adapters

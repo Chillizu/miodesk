@@ -97,8 +97,11 @@ miodesk tunnel service start
 官方 `tunnel-client`。它们共享 `http://127.0.0.1:8787/mcp`，但不互相启停。
 原先的 `miodesk connect` 仍是兼容性的前台双进程快捷命令。
 
-历史版本的 tunnel unit 包含 `Requires=miodesk.service`；升级后请显式运行
-`miodesk tunnel service install` 重写 unit，并在维护窗口安排重启。
+历史安装的 tunnel unit 可能包含 `PartOf=miodesk.service`、`Wants=` 或
+`Requires=miodesk.service`，仍会和 Core 发生连带启停。升级后先检查
+`systemctl --user cat miodesk-tunnel.service`，确认现有 `EnvironmentFile=` 与
+密钥引用的迁移方案，再显式运行 `miodesk tunnel service install` 重写 unit，
+并在维护窗口安排 Tunnel 重启及 ChatGPT 重连验收。
 不应把 Core 的更新当作重启 Tunnel 的理由。确认运行正常后可分别启用：
 
 ```sh

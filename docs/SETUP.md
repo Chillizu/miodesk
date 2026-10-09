@@ -154,9 +154,14 @@ systemctl --user enable miodesk
 systemctl --user enable miodesk-tunnel
 ```
 
-To migrate from a previously installed combined unit, after upgrading the
-binary run `miodesk tunnel service install` to rewrite the old tunnel unit
-without `Requires=`; schedule a controlled tunnel restart afterward. The
+To migrate from a previously installed combined unit, inspect the **actual**
+unit (`systemctl --user cat miodesk-tunnel.service`) for `Requires=miodesk.service`,
+`Wants=miodesk.service` or `PartOf=miodesk.service` dependencies. An existing
+custom unit may also use `EnvironmentFile=` to supply authentication. Verify
+that the tunnel-client profile and key-file reference can work without that
+environment file **before** rewriting the unit with
+`miodesk tunnel service install`; schedule a controlled tunnel restart and
+ChatGPT reconnect test afterward. Upgrading Core alone does not migrate units. The
 legacy `miodesk connect` foreground mode still starts both when explicitly
 requested, but should not be used while another tunnel-client is running.
 

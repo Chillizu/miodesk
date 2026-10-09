@@ -132,10 +132,14 @@ systemctl --user enable miodesk-tunnel  # optional
 `miodesk tunnel service <verb>` operates **only** on the tunnel. Neither
 requires or silently restarts the other. The older `miodesk connect` combined
 foreground command remains available for compatibility, but is not needed for
-two independent systemd units. Existing installations should reinstall the
-old `miodesk-tunnel.service` explicitly after upgrading to remove its previous
-`Requires=miodesk.service` dependency. Do this during a maintenance window;
-editing source code alone does not rewrite installed systemd units.
+two independent systemd units. Some older/custom installations have tunnel unit relationships like
+`PartOf=miodesk.service`, `Wants=miodesk.service`, or `Requires=miodesk.service`.
+Inspect the **installed** `miodesk-tunnel.service` before migration. If any of
+these are present, validate your tunnel-client profile and runtime-key reference,
+then explicitly run `miodesk tunnel service install` and schedule a controlled
+tunnel restart to apply the independent unit. Merely upgrading Core does not
+rewrite systemd units; do not replace a working custom unit without first
+checking its `EnvironmentFile=` and credentials setup.
 
 ## Commands
 
