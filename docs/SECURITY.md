@@ -46,8 +46,10 @@ browser.
 
 ### OpenAI Secure MCP Tunnel
 
-The default `miodesk connect` path is OpenAI Secure MCP Tunnel. It keeps the
-server on loopback and lets the official local `tunnel-client` make an outbound
+For an explicitly configured OpenAI connection, the optional Secure MCP
+Tunnel forwards requests to the same loopback Core. The compatibility command
+`miodesk connect` can still launch both in the foreground, while independent
+systemd units are preferred for persistent service. The official `tunnel-client` makes an outbound
 HTTPS connection. This is not a public listener on the configured local port;
 the tunnel ID, runtime key, workspace association, and control-plane policy
 are managed by OpenAI and the external client. See `docs/SETUP.md` for the

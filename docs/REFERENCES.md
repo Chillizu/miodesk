@@ -134,11 +134,14 @@ flow.
 - Used by: `internal/service`
 - Decision: keep the local MCP server and OpenAI tunnel-client as separate
   systemd user services. `miodesk.service` owns the loopback server;
-  `miodesk-tunnel.service` runs the externally-owned tunnel-client profile,
-  requires/starts after the server, and restarts independently. Install writes
-  + `daemon-reload` but does not implicitly enable either unit.
-- Checked: 2026-09-08 (live install/status, forced tunnel crash/restart, and
-  ChatGPT-side reconnect verification on Linux)
+  `miodesk-tunnel.service` runs the externally-owned tunnel-client profile.
+  As of the decoupling phase, its unit has **no `Requires=miodesk.service`**;
+  it retains only `After=` ordering when both start simultaneously, and restarts
+  independently. Core-only service actions do not touch the tunnel and vice
+  versa. A previous live installation must be explicitly reinstalled to adopt
+  the new unit content. Installation writes + `daemon-reload` but never enables
+  either unit implicitly.
+- Checked: 2026-10-09 (isolated systemctl-stub lifecycle regression; no live unit migration)
 
 ## Legacy public tunnel adapters
 
@@ -210,8 +213,8 @@ or the primary CLI's connection discovery.
   token) / token (bearer, constant-time compare, token never printed) /
   unsafe (explicit opt-in via `--unsafe-remote` or remote.mode="unsafe",
   Origin checks disabled and documented as part of the risk). OpenAI Secure
-  MCP Tunnel is the default remote path; token mode is retained for custom or
-  legacy public ingress. The MCP SDK owns Streamable HTTP negotiation; raw
+  MCP Tunnel is an optional remote path; fresh Core setup is local-only. Token
+  mode is retained for custom or legacy public ingress. The MCP SDK owns Streamable HTTP negotiation; raw
   transport behavior is tested with current protocol headers.
 - Checked: 2026-09-07
 
@@ -239,8 +242,21 @@ or the primary CLI's connection discovery.
   association; `tunnel-client` polls OpenAI and forwards to the local `/mcp`.
   The official guide explicitly requires keeping `tunnel-client run` healthy
   and lists a VM/systemd service as a supported deployment pattern, so Linux
-  service installation may supervise tunnel-client as a companion process.
+  service installation may supervise tunnel-client as a separate, optional unit.
   miodesk still does not parse the profile or copy runtime key material.
+- Checked: 2026-10-09 (official guide reconfirmed for independent HTTP MCP server and tunnel-client)
+
+## ChatGPT action schema refresh (2026-10-09)
+
+- URL: https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt
+- Used by: `plugins/miodesk`, `docs/CHATGPT.md`
+- Decision: ChatGPT connector actions are not automatically enabled when the
+  underlying MCP server changes. A workspace owner/admin uses Refresh in
+  Action control to import changed tool definitions, and new actions start
+  disabled. A tunnel only transports MCP traffic; miodesk cannot silently
+  change ChatGPT-side permissions. Maintain stable tool schemas and verify
+  both `tools/list` locally and actual host action inventory before deploying.
+- Checked: 2026-10-09, official Help Center.
 
 ## Structured diagnostics
 

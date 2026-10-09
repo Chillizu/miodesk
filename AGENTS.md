@@ -1,6 +1,6 @@
 # AGENTS.md — miodesk
 
-Status: milestones 1–3 implemented — sandboxed file tools, compact `exec_command` / `write_stdin` sessions, persistent cross-session `context` handoffs/checkpoints, diff viewer, token stats, systemd service, new-device `setup`, OpenAI Secure MCP Tunnel as the default connection, custom endpoint compatibility, `tunnel list/doctor`, self-update via release manifest (`update --from`), and `scripts/build-release.sh` packaging. `internal/adapter` keeps lightweight invocation labels and registers a read-only structured `status` tool; the server publishes no MCP Apps UI resources or templates. Remote access has a three-tier trust model (`internal/server/security.go`: local / token / unsafe; OpenAI Tunnel keeps the local server on loopback, while token/unsafe modes remain for custom or legacy public entrances; Origin validation follows the MCP transport spec). Remaining polish: OAuth 2.1 for custom ChatGPT connectors, native Windows ConPTY support, and Windows service/paths. Tunnel-client commands and ChatGPT field names are documented from official sources in docs/REFERENCES.md — re-verify there before changing provider commands or MCP metadata.
+Status: milestones 1–3 implemented — sandboxed file tools, compact `exec_command` / `write_stdin` sessions, persistent cross-session `context` handoffs/checkpoints, diff viewer, token stats, systemd service, new-device `setup`, optional OpenAI Secure MCP Tunnel as a separate client, custom endpoint compatibility, `tunnel list/doctor`, self-update via release manifest (`update --from`), and `scripts/build-release.sh` packaging. `internal/adapter` keeps lightweight invocation labels and registers a read-only structured `status` tool; the server publishes no MCP Apps UI resources or templates. Remote access has a three-tier trust model (`internal/server/security.go`: local / token / unsafe; OpenAI Tunnel keeps the local server on loopback, while token/unsafe modes remain for custom or legacy public entrances; Origin validation follows the MCP transport spec). Remaining polish: OAuth 2.1 for custom ChatGPT connectors, native Windows ConPTY support, and Windows service/paths. Tunnel-client commands and ChatGPT field names are documented from official sources in docs/REFERENCES.md — re-verify there before changing provider commands or MCP metadata.
 
 ## What this is
 
@@ -28,7 +28,7 @@ docs/
 ```
 
 - **Transports** (stdio, Streamable HTTP) ≠ **adapters** (mcp, chatgpt, future) ≠ **core tools** (read, search, list, write, edit, delete, exec sessions). Tools must not know about ChatGPT-specific metadata; host workarounds stay in the host's adapter.
-- **Tunnel is pluggable**: OpenAI Secure MCP Tunnel is the default remote path; `custom` remains available for an operator-owned HTTPS endpoint, and older provider values remain readable for compatibility. Core never hard-depends on a provider and never contains provider-specific URLs/params. `--provider custom --url ...` means miodesk does NOT own/build the public endpoint.
+- **Tunnel is pluggable**: fresh configurations default to local-only MCP. OpenAI Secure MCP Tunnel is an explicit optional client; `custom` remains available for an operator-owned HTTPS endpoint, and older provider values remain readable for compatibility. Core never hard-depends on a provider and never contains provider-specific URLs/params. `--provider custom --url ...` means miodesk does NOT own/build the public endpoint.
 - **Workspace is the security boundary.** All file tools are sandboxed to the workspace root. Validate on canonical/resolved paths (`filepath.EvalSymlinks`) — never string-prefix checks. Must block: `../` escape, absolute-path escape, symlink escape, writes outside workspace. Large ops need limit/offset/depth/truncation.
 - **Command surface**: model-facing execution is `exec_command` + `write_stdin`. `exec_command` defaults to the workspace and either finishes inline or returns a numeric `session_id`; pipe mode is the default and `tty=true` opts into the PTY backend for genuinely interactive programs. `write_stdin` resumes/polls/writes that session. Never sudo, auto-escalate, or install deps silently; every wait and total runtime stays bounded. PTY is an implementation detail and tmux must not become a required protocol or dependency. `edit` batches are atomic: any failed op ⇒ zero partial writes.
 - **Legacy exec compatibility is temporary and one-way.** `internal/server/legacy_exec_compat.go` may translate the formerly advertised `command`, `command_start`, `command_poll`, and `command_cancel` calls from stale client caches into the unified exec surface. Those retired tools must never reappear in `tools/list`; the shim must not grow new behavior or inject arguments that were absent from the retired schemas. Let unified-tool defaults handle new-only options. Remove the shim once stale connector schemas have aged out.
@@ -37,7 +37,7 @@ docs/
 
 ## CLI contract
 
-Subcommands: `setup`, `init`, `serve`, `connect`, `status`, `doctor`, `config`, `workspace`, `tunnel`, `service`, `logs`, `update`, `version`. Fresh `setup` defaults to a loopback server plus OpenAI Secure MCP Tunnel; it does not install dependencies or start daemons silently. Style: fast, quiet, predictable. `[OK] / [WARN] / [INFO]` prefixes. Errors explain what/why/how to fix, e.g.:
+Subcommands: `setup`, `init`, `serve`, `connect`, `status`, `doctor`, `config`, `workspace`, `tunnel`, `service`, `logs`, `update`, `version`. Fresh `setup` defaults to a loopback server only; OpenAI Tunnel is opt-in; it does not install dependencies or start daemons silently. Style: fast, quiet, predictable. `[OK] / [WARN] / [INFO]` prefixes. Errors explain what/why/how to fix, e.g.:
 
 ```
 Error: port 8787 is already in use
@@ -71,7 +71,7 @@ Never implement protocol details from model memory or old blog posts. Check offi
 - MCP spec (2026-07-28): https://modelcontextprotocol.io/specification/2026-07-28/index.md — index: https://modelcontextprotocol.io/llms.txt
 - Official Go MCP SDK — use it, don't re-implement JSON-RPC/MCP: https://github.com/modelcontextprotocol/go-sdk
 - OpenAI/ChatGPT MCP & UI: https://developers.openai.com/llms.txt
-- OpenAI Secure MCP Tunnel: https://developers.openai.com/api/docs/guides/secure-mcp-tunnels (default remote path; keep the local MCP server on loopback)
+- OpenAI Secure MCP Tunnel: https://developers.openai.com/api/docs/guides/secure-mcp-tunnels (optional outbound connection; keep local MCP server on loopback)
 - XDG base dirs: https://specifications.freedesktop.org/basedir-spec/latest/
 
 Record confirmed findings (topic, official URL, version, relevant module, decision, checked date) in `docs/REFERENCES.md` so later agents don't re-search.
