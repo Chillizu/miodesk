@@ -161,7 +161,25 @@ custom unit may also use `EnvironmentFile=` to supply authentication. Verify
 that the tunnel-client profile and key-file reference can work without that
 environment file **before** rewriting the unit with
 `miodesk tunnel service install`; schedule a controlled tunnel restart and
-ChatGPT reconnect test afterward. Upgrading Core alone does not migrate units. The
+ChatGPT reconnect test afterward. If an existing unit has `EnvironmentFile=`,
+the installer **refuses to overwrite it** to prevent credential loss. Preserve
+that unit and use a reviewed systemd drop-in to clear **only** the Core
+lifecycle coupling (for example, for a unit with `PartOf=miodesk.service` and
+`Wants=network-online.target miodesk.service`):
+
+```ini
+# ~/.config/systemd/user/miodesk-tunnel.service.d/independent.conf
+[Unit]
+PartOf=
+Wants=
+Wants=network-online.target
+```
+
+Run `systemctl --user daemon-reload`, inspect `systemctl --user show
+miodesk-tunnel.service -p PartOf -p Wants -p Requires`, and only then run a
+controlled Core restart to prove the tunnel PID remains unchanged. Review any
+other original dependency lines first; an override can remove important
+custom dependencies. Upgrading Core alone does not migrate units. The
 legacy `miodesk connect` foreground mode still starts both when explicitly
 requested, but should not be used while another tunnel-client is running.
 

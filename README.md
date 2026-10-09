@@ -139,7 +139,10 @@ these are present, validate your tunnel-client profile and runtime-key reference
 then explicitly run `miodesk tunnel service install` and schedule a controlled
 tunnel restart to apply the independent unit. Merely upgrading Core does not
 rewrite systemd units; do not replace a working custom unit without first
-checking its `EnvironmentFile=` and credentials setup.
+checking its `EnvironmentFile=` and credentials setup. The new installer
+refuses to overwrite any pre-existing unit using `EnvironmentFile=`; preserve
+its credential source and use a reviewed systemd drop-in to remove the old
+Core dependency without touching the running tunnel (see `docs/SETUP.md`).
 
 ## Commands
 

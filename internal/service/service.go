@@ -134,6 +134,19 @@ func InstallTunnel(clientPath, profileDir, profile string) error {
 	if err != nil {
 		return err
 	}
+	// An existing unit may inject working credentials through EnvironmentFile.
+	// A fresh generated unit omits that directive; replacing it silently can
+	// disconnect a live ChatGPT tunnel (the YAML may reference a different key).
+	// Fail closed and require a deliberate credential-preserving migration.
+	if current, err := os.ReadFile(path); err == nil {
+		for _, line := range strings.Split(string(current), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "EnvironmentFile=") {
+				return fmt.Errorf("existing tunnel unit uses EnvironmentFile; refusing to overwrite credentials: preserve this unit and remove Core lifecycle coupling with a reviewed systemd drop-in, or migrate credentials explicitly")
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect existing tunnel unit: %w", err)
+	}
 	if err := writeUnitContent(TunnelUnitContent(clientPath, profileDir, profile), path, ".miodesk-tunnel.service-*"); err != nil {
 		return err
 	}

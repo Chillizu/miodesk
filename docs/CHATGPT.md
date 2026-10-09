@@ -100,8 +100,10 @@ miodesk tunnel service start
 历史安装的 tunnel unit 可能包含 `PartOf=miodesk.service`、`Wants=` 或
 `Requires=miodesk.service`，仍会和 Core 发生连带启停。升级后先检查
 `systemctl --user cat miodesk-tunnel.service`，确认现有 `EnvironmentFile=` 与
-密钥引用的迁移方案，再显式运行 `miodesk tunnel service install` 重写 unit，
-并在维护窗口安排 Tunnel 重启及 ChatGPT 重连验收。
+密钥引用的迁移方案，再考虑运行 `miodesk tunnel service install` 重写 unit。
+如果原 Unit 使用 `EnvironmentFile=`，安装器会保护其密钥来源并拒绝覆盖；
+此时可在核对其他依赖后，使用 systemd drop-in 清除 `PartOf=` 与指向 Core 的
+`Wants=`，并重新执行 `daemon-reload`，无需替换凭据。
 不应把 Core 的更新当作重启 Tunnel 的理由。确认运行正常后可分别启用：
 
 ```sh
