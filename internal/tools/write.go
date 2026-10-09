@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,18 +65,37 @@ func Write(ctx context.Context, ws *workspace.Workspace, in WriteInput) (*WriteO
 // crash mid-write never leaves a half-written target.
 func writeFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	mode := os.FileMode(0o644)
+	mode := os.FileMode(0o666)
+	preserveMode := false
 	if fi, err := os.Stat(path); err == nil {
 		// Replacing an existing file should not unexpectedly remove its
 		// executable/read-only mode bits. The rename still requires a writable
 		// parent, just like any other atomic replacement.
 		mode = fi.Mode().Perm()
+		preserveMode = true
 	}
-	tmp, err := os.CreateTemp(dir, ".miodesk-write-*")
-	if err != nil {
-		return err
+	var tmp *os.File
+	var tmpName string
+	for attempt := 0; attempt < 10; attempt++ {
+		var suffix [8]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return fmt.Errorf("write: generate temporary name: %w", err)
+		}
+		candidate := filepath.Join(dir, fmt.Sprintf(".miodesk-write-%x", suffix[:]))
+		candidateFile, err := os.OpenFile(candidate, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		tmp = candidateFile
+		tmpName = candidate
+		break
 	}
-	tmpName := tmp.Name()
+	if tmp == nil {
+		return fmt.Errorf("write: could not allocate a temporary file after 10 attempts")
+	}
 	defer os.Remove(tmpName)
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
@@ -87,8 +108,10 @@ func writeFileAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, mode); err != nil {
-		return err
+	if preserveMode {
+		if err := os.Chmod(tmpName, mode); err != nil {
+			return err
+		}
 	}
 	return os.Rename(tmpName, path)
 }

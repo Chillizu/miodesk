@@ -277,6 +277,42 @@ func TestSearchBuiltin(t *testing.T) {
 	if _, err := Search(context.Background(), ws, SearchInput{Query: "  "}); err == nil {
 		t.Error("empty query should error")
 	}
+
+	// A selected file is scanned only through the builtin byte boundary. Early
+	// matches remain useful, but results must disclose that later bytes were not
+	// searched even when the match-count limit was not reached.
+	selected := "match before cap\n" + strings.Repeat("x\n", int(fallbackMaxFileBytes/2)) + "match after cap\n"
+	writeFile(t, root, "large-selected.txt", selected)
+	out, err = Search(context.Background(), ws, SearchInput{Query: "match", Path: "large-selected.txt", MaxResults: 10})
+	if err != nil {
+		t.Fatalf("Search selected large file: %v", err)
+	}
+	if len(out.Matches) != 1 || !out.Truncated {
+		t.Errorf("selected large-file search = %+v, want one early match and truncated=true", out)
+	}
+
+	// Directory fallback skips individual files above its size cap, but must
+	// still return ordinary-file matches and disclose the skipped content.
+	writeFile(t, root, "fallback/a-large.txt", strings.Repeat("x", int(fallbackMaxFileBytes)+1)+"\nlate-directory-hit\n")
+	writeFile(t, root, "fallback/b-small.txt", "ordinary directory hit\n")
+	out, err = Search(context.Background(), ws, SearchInput{Query: "directory hit", Path: "fallback", MaxResults: 10})
+	if err != nil {
+		t.Fatalf("Search fallback directory: %v", err)
+	}
+	if len(out.Matches) != 1 || out.Matches[0].File != "fallback/b-small.txt" || !out.Truncated {
+		t.Errorf("fallback directory search = %+v, want ordinary match and truncated=true", out)
+	}
+
+	// An overlong scanner token is also an incomplete scan, even with no
+	// matches and a high max_results value.
+	writeFile(t, root, "overlong.txt", strings.Repeat("x", (1<<20)+1)+"\n")
+	out, err = Search(context.Background(), ws, SearchInput{Query: "never-present", Path: "overlong.txt", MaxResults: 10})
+	if err != nil {
+		t.Fatalf("Search overlong line: %v", err)
+	}
+	if len(out.Matches) != 0 || !out.Truncated {
+		t.Errorf("overlong-line search = %+v, want no matches and truncated=true", out)
+	}
 }
 
 func TestSearchRipgrep(t *testing.T) {

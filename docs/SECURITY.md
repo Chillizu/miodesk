@@ -12,21 +12,26 @@ traversal, absolute-path escapes, and symlinks pointing outside the workspace
 are all rejected. `delete` refuses the workspace root itself. Large operations
 are bounded (depth, entry count, byte caps).
 
-## Command tool
+## Command tools
 
-`command` and `command_start` run inside the workspace with the workspace (or
-a sandboxed subdirectory) as cwd. Common privilege-escalation commands
-(`sudo`, `doas`, `su`, `pkexec`, `runuser`, and `runas`) are conservatively
-refused, and at most 32 long-running tasks may be active at once. Output is
-capped. These are guardrails, not an account sandbox: commands can still do
-anything the user's account can do — treat every MCP client you connect as a
+`exec_command` and `write_stdin` run with the current user's operating-system
+permissions. The command's working directory is resolved inside the configured
+workspace (or a workspace-contained subdirectory), but that only constrains
+`cwd`; commands are not confined by an OS filesystem sandbox and can access
+other resources permitted to the account. A command that outlives the initial
+yield window returns an explicit numeric `session_id`; the process remains
+subject to the same bounded runtime, output cap, and 32-session concurrency
+limit. Pipe mode is the default; `tty=true` creates an interactive Unix PTY.
+Common privilege-escalation commands (`sudo`, `doas`, `su`, `pkexec`,
+`runuser`, and `runas`) are conservatively refused. That refusal is a
+guardrail, not an account sandbox — treat every MCP client you connect as a
 full agent on this machine.
 
 ## Trust levels
 
 | mode (`[remote]` in config.toml) | who can reach the tools | when to use |
 | -------------------------------- | ----------------------- | ----------- |
-| `""` / `local` (default)         | local processes only    | stdio clients, local MCP hosts, the local widget |
+| `""` / `local` (default)         | local processes only    | stdio clients and local MCP hosts |
 | `token`                          | anyone presenting the bearer token | custom or legacy public ingress |
 | `unsafe`                         | anyone with the URL     | short-lived debugging, explicitly requested |
 
@@ -74,15 +79,20 @@ send headers. Never combine it with a long-lived tunnel.
 - The token lives in `config.toml` (user-only file under the XDG config
   directory).
 - It is never included in `/api/status`, `miodesk status`, `miodesk doctor`,
-  the widget, error messages, or debug output — enforced by tests.
+  error messages, or debug output — enforced by tests.
 - Requests are compared with a constant-time comparison.
 - `/healthz` is the only unauthenticated endpoint and returns no data.
 
 ## Data surfaces
 
-`/api/status`, `/api/edits`, `/widget`, and the MCP endpoint all carry no
-secrets; they expose workspace paths and usage counters only. When a tunnel is
-active, everything reachable is gated by the active trust level.
+`/api/status` does not contain bearer tokens or edited file text; it exposes
+local diagnostics such as workspace paths and usage counters.
+`/api/edits` can contain edited workspace text. It is retained in memory only
+(up to 10 records and 2 MiB of diff data) and is controlled by the configured
+access mode: local/origin validation, bearer-token authentication, or the
+explicitly unsafe mode. MCP tool results can also contain workspace content
+requested by the client, such as file reads or command output. When a tunnel is
+active, every reachable surface follows the active trust level.
 
 ## Logging
 
@@ -92,9 +102,11 @@ elapsed time. The default stderr sink is collected by the systemd user journal;
 set `[logging].format = "json"` for machine-readable records or
 `MIODESK_LOG=debug` for health checks and other verbose diagnostics.
 
-Logging intentionally omits file contents, command lines, bearer tokens,
-Authorization headers, and tool arguments. `miodesk logs` also redacts the
-configured bearer token defensively before displaying journal output.
+HTTP request logs contain metadata, not request bodies. MCP tool logging omits
+raw arguments and result payloads; failure entries can still include an error
+summary. Logs do not include file contents, command lines, bearer tokens, or
+Authorization headers. `miodesk logs` also redacts the configured bearer token
+defensively before displaying journal output.
 
 ## Reporting
 

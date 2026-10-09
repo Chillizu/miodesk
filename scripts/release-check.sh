@@ -15,19 +15,25 @@ if [[ -n "$(git ls-files -- 'miodesk' 'miodesk-*' 'dist/*')" ]]; then
   exit 1
 fi
 
-formatted="$(git ls-files '*.go' | xargs gofmt -l)"
+formatted="$(
+  while IFS= read -r -d '' file; do
+    if [[ -f "$file" ]]; then
+      gofmt -l "$file"
+    fi
+  done < <(git ls-files -co --exclude-standard -z -- '*.go')
+)"
 if [[ -n "$formatted" ]]; then
   echo "[FAIL] gofmt required:" >&2
   printf '%s\n' "$formatted" >&2
   exit 1
 fi
 
-echo "[INFO] go vet ./..."
-go vet ./...
+echo "[INFO] go vet -all ./..."
+go vet -all ./...
 echo "[INFO] go mod verify"
 go mod verify
-echo "[INFO] go test -race ./..."
-go test -race ./...
+echo "[INFO] go test -race -vet=all ./..."
+go test -race -vet=all ./...
 echo "[INFO] go build ./cmd/miodesk"
 build_dir="$(mktemp -d)"
 trap 'rm -rf "$build_dir"' EXIT

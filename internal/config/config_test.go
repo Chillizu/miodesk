@@ -23,14 +23,36 @@ func TestDefault(t *testing.T) {
 	if cfg.Tunnel.OpenAI.Profile != DefaultOpenAIProfile {
 		t.Errorf("OpenAI profile = %q", cfg.Tunnel.OpenAI.Profile)
 	}
-	if cfg.Widget.Theme != "auto" {
-		t.Errorf("widget theme = %q", cfg.Widget.Theme)
-	}
 	if cfg.Logging.Level != "info" || cfg.Logging.Format != "text" {
 		t.Errorf("logging defaults = %+v", cfg.Logging)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config should validate: %v", err)
+	}
+}
+
+func TestLegacyWidgetConfigIgnored(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	legacy := "[server]\nport = 8787\n\n[widget]\ntheme = \"dark\"\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load legacy widget config: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate legacy config: %v", err)
+	}
+	if err := cfg.Save(path); err != nil {
+		t.Fatalf("save legacy config: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "[widget]") {
+		t.Errorf("saved config retains retired widget table: %s", data)
 	}
 }
 
@@ -67,9 +89,6 @@ details = "expanded"
 	}
 	if cfg.Tunnel.Provider != "cloudflare" {
 		t.Errorf("provider = %q", cfg.Tunnel.Provider)
-	}
-	if cfg.Widget.Theme != "dark" {
-		t.Errorf("theme = %q", cfg.Widget.Theme)
 	}
 }
 
@@ -190,11 +209,6 @@ func TestValidateRejectsBadValues(t *testing.T) {
 		t.Error("negative port should be rejected")
 	}
 	cfg = Default()
-	cfg.Widget.Theme = "midnight"
-	if err := cfg.Validate(); err == nil {
-		t.Error("unknown theme should be rejected")
-	}
-	cfg = Default()
 	cfg.Tunnel.Provider = "heroku"
 	if err := cfg.Validate(); err == nil {
 		t.Error("unknown provider should be rejected")
@@ -230,20 +244,5 @@ func TestLoggingValidation(t *testing.T) {
 	cfg.Logging.Format = "yaml"
 	if err := cfg.Validate(); err == nil {
 		t.Error("unknown logging.format should be rejected")
-	}
-}
-
-func TestWidgetDeadConfigRemoved(t *testing.T) {
-	// widget.token_stats / widget.details were removed; unknown keys in the
-	// widget table must not silently persist as config.
-	cfg := Default()
-	cfg.Widget.Theme = "dark"
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := cfg.Save(path); err != nil {
-		t.Fatal(err)
-	}
-	data, _ := os.ReadFile(path)
-	if strings.Contains(string(data), "token_stats") || strings.Contains(string(data), "details") {
-		t.Errorf("dead widget config keys persisted:\n%s", data)
 	}
 }

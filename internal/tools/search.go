@@ -210,8 +210,8 @@ func searchBuiltin(ctx context.Context, ws *workspace.Workspace, path string, in
 	}
 	out := &SearchOutput{Kind: "search", Query: in.Query, Matches: []Match{}, Engine: "builtin"}
 	if !fi.IsDir() {
-		out.Matches = searchOneFile(ws, path, in, limit, 0)
-		out.Truncated = len(out.Matches) >= limit
+		out.Matches, out.Truncated = searchOneFile(ws, path, in, limit, 0)
+		out.Truncated = out.Truncated || len(out.Matches) >= limit
 		return out, nil
 	}
 
@@ -232,7 +232,9 @@ func searchBuiltin(ctx context.Context, ws *workspace.Workspace, path string, in
 		if d.Type()&fs.ModeSymlink != 0 {
 			return nil // do not follow symlinks; sandbox re-checks targets
 		}
-		out.Matches = append(out.Matches, searchOneFile(ws, p, in, limit-len(out.Matches), fallbackMaxFileBytes)...)
+		matches, truncated := searchOneFile(ws, p, in, limit-len(out.Matches), fallbackMaxFileBytes)
+		out.Matches = append(out.Matches, matches...)
+		out.Truncated = out.Truncated || truncated
 		if len(out.Matches) >= limit {
 			out.Truncated = true
 			return fs.SkipAll
@@ -245,23 +247,27 @@ func searchBuiltin(ctx context.Context, ws *workspace.Workspace, path string, in
 	return out, nil
 }
 
-// searchOneFile returns matches from one file, capped at remaining.
-// sizeCap of 0 means no file-size limit.
-func searchOneFile(ws *workspace.Workspace, path string, in SearchInput, remaining int, sizeCap int64) []Match {
+// searchOneFile returns matches from one file, capped at remaining, and marks
+// whether file-size limits or a scanner error left the scan incomplete.
+// sizeCap of 0 means no pre-scan file-size limit.
+func searchOneFile(ws *workspace.Workspace, path string, in SearchInput, remaining int, sizeCap int64) ([]Match, bool) {
 	if remaining <= 0 {
-		return nil
+		return nil, false
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return nil, true
 	}
 	defer f.Close()
 
-	if sizeCap > 0 {
-		if fi, err := f.Stat(); err != nil || fi.Size() > sizeCap {
-			return nil
-		}
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, true
 	}
+	if sizeCap > 0 && fi.Size() > sizeCap {
+		return nil, true
+	}
+	truncated := fi.Size() > fallbackMaxFileBytes
 
 	query := []byte(in.Query)
 	if !in.CaseSensitive {
@@ -287,8 +293,8 @@ func searchOneFile(ws *workspace.Workspace, path string, in SearchInput, remaini
 		}
 		matches = append(matches, Match{File: ws.Rel(path), Line: lineNo, Text: text})
 		if len(matches) >= remaining {
-			return matches
+			return matches, truncated
 		}
 	}
-	return matches
+	return matches, truncated || sc.Err() != nil
 }

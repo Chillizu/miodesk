@@ -1,0 +1,28 @@
+{
+  "name": "miodesk",
+  "version": "0.2.1",
+  "description": "Local workspace tools and session handoffs through a connected miodesk MCP server.",
+  "author": {
+    "name": "miodesk"
+  },
+  "keywords": [],
+  "skills": "./skills",
+  "interface": {
+    "displayName": "miodesk",
+    "shortDescription": "Inspect and work in your local workspace through MCP.",
+    "longDescription": "Use the connected miodesk server to inspect files, make scoped edits, run bounded commands, check connection status, and resume work across sessions. Requires a running miodesk service and connection; results are text and structured data.",
+    "developerName": "miodesk",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Execute"
+    ],
+    "defaultPrompt": [
+      "Use miodesk to inspect or update this workspace."
+    ],
+    "logo": "./assets/miodesk-logo.png",
+    "composerIcon": "./assets/miodesk-logo.png"
+  },
+  "apps": "./.app.json"
+}

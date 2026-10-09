@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -150,6 +151,88 @@ func TestEditExactReplace(t *testing.T) {
 	}
 	if len(out.Files[0].Diff) == 0 {
 		t.Error("edit result should include a diff")
+	}
+}
+
+func TestEditRejectsOversizedNewContentWithoutWriting(t *testing.T) {
+	ws, root := newWS(t)
+	writeFile(t, root, "f.txt", "original")
+
+	_, err := Edit(context.Background(), ws, EditInput{Operations: []EditOperation{
+		{Path: "f.txt", Old: "original", New: strings.Repeat("x", MaxEditBytes+1)},
+	}})
+	if err == nil {
+		t.Fatal("oversized replacement unexpectedly succeeded")
+	}
+	data, readErr := os.ReadFile(filepath.Join(root, "f.txt"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "original" {
+		t.Fatalf("file changed after rejected edit: %q", data)
+	}
+}
+
+func TestEditRejectsAggregateBatchBytesWithoutWriting(t *testing.T) {
+	ws, root := newWS(t)
+	original := strings.Repeat("a", MaxEditBytes)
+	operations := make([]EditOperation, 0, 5)
+	for i := 0; i < 5; i++ {
+		name := "file-" + strconv.Itoa(i) + ".txt"
+		writeFile(t, root, name, original)
+		operations = append(operations, EditOperation{Path: name, Old: "a", New: "b", ReplaceAll: true})
+	}
+
+	_, err := Edit(context.Background(), ws, EditInput{Operations: operations})
+	if err == nil || !strings.Contains(err.Error(), "batch") {
+		t.Fatalf("aggregate edit error = %v, want batch byte limit", err)
+	}
+	for i := 0; i < 5; i++ {
+		name := "file-" + strconv.Itoa(i) + ".txt"
+		data, readErr := os.ReadFile(filepath.Join(root, name))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(data) != original {
+			t.Errorf("%s changed after rejected batch", name)
+		}
+	}
+}
+
+func TestEditReportsTruncatedDiffAndStillCommitsAtomically(t *testing.T) {
+	ws, root := newWS(t)
+	denseOld := strings.Repeat("\n", 20001)
+	writeFile(t, root, "dense.txt", denseOld)
+	writeFile(t, root, "small.txt", "old\n")
+
+	out, err := Edit(context.Background(), ws, EditInput{Operations: []EditOperation{
+		{Path: "dense.txt", Old: denseOld, New: "changed\n"},
+		{Path: "small.txt", Old: "old", New: "new"},
+	}})
+	if err != nil {
+		t.Fatalf("Edit: %v", err)
+	}
+	if len(out.Files) != 2 {
+		t.Fatalf("changed files = %d, want 2", len(out.Files))
+	}
+	results := make(map[string]EditFileResult, len(out.Files))
+	for _, result := range out.Files {
+		results[result.Path] = result
+	}
+	if !results["dense.txt"].DiffTruncated {
+		t.Fatal("dense diff should report diff_truncated=true")
+	}
+	if results["small.txt"].DiffTruncated {
+		t.Fatal("small diff should not be truncated")
+	}
+	for name, want := range map[string]string{"dense.txt": "changed\n", "small.txt": "new\n"} {
+		data, readErr := os.ReadFile(filepath.Join(root, name))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(data) != want {
+			t.Errorf("%s = %q, want %q", name, data, want)
+		}
 	}
 }
 

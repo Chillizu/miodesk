@@ -8,3 +8,5 @@ import "os/exec"
 // Object can provide descendant-tree cancellation, but would require a
 // platform-specific handle lifecycle beyond this release's scope.
 func configureProcess(cmd *exec.Cmd) {}
+
+func configurePTYProcess(cmd *exec.Cmd) {}

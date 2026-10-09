@@ -11,8 +11,10 @@ import (
 )
 
 const (
-	// MaxEditBytes caps the file size the edit tool will load.
+	// MaxEditBytes caps both existing and resulting file content per edit path.
 	MaxEditBytes = 2 << 20
+	// MaxEditBatchBytes caps old and new content across one atomic edit batch.
+	MaxEditBatchBytes = 16 << 20
 	// MaxEditOps bounds one atomic batch.
 	MaxEditOps = 100
 )
@@ -37,10 +39,11 @@ type EditOperation struct {
 }
 
 type EditFileResult struct {
-	Path  string      `json:"path"`
-	Bytes int         `json:"bytes"`
-	Lines int         `json:"lines"`
-	Diff  []DiffGroup `json:"diff"`
+	Path          string      `json:"path"`
+	Bytes         int         `json:"bytes"`
+	Lines         int         `json:"lines"`
+	Diff          []DiffGroup `json:"diff"`
+	DiffTruncated bool        `json:"diff_truncated"`
 }
 
 type EditOutput struct {
@@ -77,6 +80,7 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 
 	// Phase 1: validate and compute every new content in memory.
 	edits := make([]preparedEdit, 0, len(order))
+	totalEditBytes := 0
 	for _, key := range order {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -108,6 +112,13 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 			if err != nil {
 				return nil, err
 			}
+			if len(content) > MaxEditBytes {
+				return nil, fmt.Errorf("edit: %s result is %d bytes, cap is %d", ws.Rel(path), len(content), MaxEditBytes)
+			}
+		}
+		totalEditBytes += len(data) + len(content)
+		if totalEditBytes > MaxEditBatchBytes {
+			return nil, fmt.Errorf("edit: old and new content total is %d bytes, batch cap is %d", totalEditBytes, MaxEditBatchBytes)
 		}
 		edits = append(edits, preparedEdit{
 			path: path,
@@ -121,8 +132,46 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 			},
 		})
 	}
+	changedRemaining := 0
+	for i := range edits {
+		if edits[i].old != edits[i].new {
+			changedRemaining++
+		}
+	}
+	remainingDiffLines := maxDiffLines
+	remainingDiffBytes := maxDiffBytes
+	diffBudgetExhausted := false
+	for i := range edits {
+		e := &edits[i]
+		if e.old == e.new {
+			continue
+		}
+		changedRemaining--
+		if diffBudgetExhausted {
+			e.result.Diff = []DiffGroup{}
+			e.result.DiffTruncated = true
+			remainingDiffBytes -= 2 // Reserved empty JSON array for this file.
+			continue
+		}
+		fileByteBudget := remainingDiffBytes - 2*changedRemaining
+		e.result.Diff, e.result.DiffTruncated = DiffLinesBounded(e.old, e.new, remainingDiffLines, fileByteBudget)
+		usedBytes, ok := diffSliceJSONSize(e.result.Diff, remainingDiffBytes)
+		if !ok {
+			return nil, fmt.Errorf("edit: internal diff byte budget exceeded")
+		}
+		usedLines := diffOutputLineCount(e.result.Diff)
+		if usedLines > remainingDiffLines {
+			return nil, fmt.Errorf("edit: internal diff line budget exceeded")
+		}
+		remainingDiffBytes -= usedBytes
+		remainingDiffLines -= usedLines
+		if remainingDiffLines <= 0 || remainingDiffBytes < 2 {
+			diffBudgetExhausted = true
+		}
+	}
 
-	// Phase 2: everything validated — commit all changed files together.
+	// Phase 2: all edit content and bounded diff results are prepared before
+	// committing every changed file together.
 	if err := commitEdits(ctx, edits); err != nil {
 		return nil, err
 	}
@@ -132,7 +181,6 @@ func Edit(ctx context.Context, ws *workspace.Workspace, in EditInput) (*EditOutp
 		if e.old == e.new {
 			continue
 		}
-		e.result.Diff = DiffLines(e.old, e.new)
 		out.Files = append(out.Files, e.result)
 	}
 	out.Kind = "edit"

@@ -1,4 +1,4 @@
-// Package server wires miodesk's MCP server, widget, and status API together
+// Package server wires miodesk's MCP server and status API together
 // and owns their HTTP and stdio lifecycles. MCP protocol handling is the
 // official Go SDK's job; miodesk contributes tools and transport hosting.
 package server
@@ -8,37 +8,46 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Chillizu/miodesk/internal/adapter"
 	"github.com/Chillizu/miodesk/internal/buildinfo"
 	"github.com/Chillizu/miodesk/internal/config"
+	"github.com/Chillizu/miodesk/internal/contextstore"
 	"github.com/Chillizu/miodesk/internal/logging"
 	"github.com/Chillizu/miodesk/internal/tools"
 	"github.com/Chillizu/miodesk/internal/workspace"
 	"github.com/Chillizu/miodesk/internal/xdg"
-	widget "github.com/Chillizu/miodesk/web/widget"
 )
 
 const (
 	// HealthHeader identifies a successful health response as coming from
 	// miodesk without exposing workspace or runtime details.
-	HealthHeader      = "X-Miodesk-Health"
-	HealthHeaderValue = "miodesk"
+	HealthHeader          = "X-Miodesk-Health"
+	HealthHeaderValue     = "miodesk"
+	mcpRequestReadTimeout = 30 * time.Second
 )
+
+func newHTTPServer(handler http.Handler, readTimeout time.Duration) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       readTimeout,
+	}
+}
 
 // Server hosts miodesk's MCP tools for HTTP and stdio clients.
 type Server struct {
@@ -53,39 +62,58 @@ type Server struct {
 	statsMu sync.Mutex
 	stats   map[string]int64
 
-	// Recent edit results feed the widget's diff viewer.
-	editsMu sync.Mutex
-	edits   []EditRecord
+	// Recent edit results feed the JSON edit-history API.
+	editsMu   sync.Mutex
+	edits     []EditRecord
+	editBytes int
 
-	// Long-running command tasks (start/poll/cancel).
+	// Resumable exec sessions shared by exec_command and write_stdin.
 	commands *tools.Manager
+
+	// Cross-session rolling handoffs. Persistent data lives outside workspaces.
+	contexts   *contextstore.Store
+	contextErr error
 
 	auth *Authorize
 }
 
-// ToolInfo describes one registered tool for the widget and status output.
+// ToolInfo describes one registered tool for local status output.
 type ToolInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
-// EditRecord is one applied edit batch, kept for the widget's diff viewer.
+// EditRecord is one applied edit batch kept for the JSON edit-history API.
 type EditRecord struct {
 	At    time.Time              `json:"at"`
 	Files []tools.EditFileResult `json:"files"`
 }
 
-// maxRecentEdits bounds the in-memory edit history.
-const maxRecentEdits = 10
+// Edit history is kept only in memory and bounded by record count and an
+// estimate of retained diff text plus slice/struct overhead.
+const (
+	maxRecentEdits       = 10
+	maxRecentEditBytes   = 2 << 20
+	editHistoryFileCost  = 32
+	editHistoryGroupCost = 64
+	editHistoryLineCost  = 64
+)
 
 // New builds a Server with all tools registered against ws.
 func New(cfg *config.Config, ws *workspace.Workspace) *Server {
+	dataDir, contextErr := xdg.DataDir()
+	var contexts *contextstore.Store
+	if contextErr == nil {
+		contexts = contextstore.New(filepath.Join(dataDir, "contexts"))
+	}
 	s := &Server{
-		cfg:      cfg,
-		ws:       ws,
-		started:  time.Now(),
-		stats:    map[string]int64{},
-		commands: tools.NewManager(),
+		cfg:        cfg,
+		ws:         ws,
+		started:    time.Now(),
+		stats:      map[string]int64{},
+		commands:   tools.NewManager(),
+		contexts:   contexts,
+		contextErr: contextErr,
 	}
 	auth, err := NewAuthorize(cfg.Remote.Mode, cfg.Remote.Token)
 	if err != nil {
@@ -99,25 +127,19 @@ func New(cfg *config.Config, ws *workspace.Workspace) *Server {
 		&mcp.Implementation{
 			Name:        "miodesk",
 			Title:       "miodesk",
-			Description: "Local workspace bridge: sandboxed file tools and commands for AI clients.",
+			Description: "Local workspace bridge: workspace-sandboxed file tools; commands run with the current user's permissions from a workspace-contained working directory.",
 			Version:     buildinfo.Version,
 		},
 		&mcp.ServerOptions{
-			Instructions: "miodesk bridges the user's local workspace. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root; paths may be relative to the root. Prefer list before deeper reads, and prefer edit over write for changing existing files — edit batches are atomic. Long commands use command_start with a short user-facing label. UI-capable clients can track the live Task view automatically; use command_poll when you need the task state/output in model reasoning or when no Task UI is available.",
+			Instructions: "miodesk bridges the user's local workspace. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root; paths may be relative to the root. Prefer list before deeper reads, and prefer edit over write for changing existing files — edit batches are atomic. Commands run with the current user's permissions; exec_command.workdir selects a workspace-contained working directory and does not restrict OS filesystem access. exec_command either returns final output or a numeric session_id; keep tty=false for ordinary commands and set tty=true only for genuinely interactive terminal programs. write_stdin resumes that session, polls with empty chars, or writes input; Ctrl-C is terminal input for TTY sessions and cancels pipe sessions. The context tool maintains small cross-session rolling handoffs: update at meaningful changes in goals, decisions, blockers, or next steps; checkpoint at explicit or important milestones; resume in a new session. Use approach_summary for a concise current approach and rationale. For update/checkpoint, clear_fields explicitly clears scalar fields and takes precedence over values supplied in the same request.",
 		},
 	)
 	registerTools(s)
-	// The ChatGPT / MCP Apps dashboard is host-facing UI metadata; it lives
-	// in the adapter, never in the core tools.
-	if err := adapter.Attach(s.mcp, widget.Static, func(ctx context.Context) (out any, err error) {
+	adapter.RegisterStatus(s.mcp, func(ctx context.Context) (out any, err error) {
 		finish := s.beginTool(ctx, "status")
 		defer func() { finish(err) }()
 		return s.MCPStatus(), nil
-	}); err != nil {
-		// Broken embedded assets are a build error; degrade to text-only
-		// rather than refusing to serve.
-		slog.Warn("dashboard widget unavailable", "err", err)
-	}
+	})
 	return s
 }
 
@@ -154,9 +176,26 @@ func (s *Server) beginTool(ctx context.Context, tool string) func(error) {
 func (s *Server) recordEdits(files []tools.EditFileResult) {
 	s.editsMu.Lock()
 	defer s.editsMu.Unlock()
-	s.edits = append([]EditRecord{{At: time.Now(), Files: cloneEditFiles(files)}}, s.edits...)
-	if len(s.edits) > maxRecentEdits {
-		s.edits = s.edits[:maxRecentEdits]
+
+	// Clone diff strings as well as their slices so a small cached hunk cannot
+	// keep an entire source file's backing string alive.
+	record := EditRecord{At: time.Now(), Files: cloneEditFilesForHistory(files)}
+	recordBytes := editFilesDiffBytes(record.Files)
+	if recordBytes > maxRecentEditBytes {
+		for i := range record.Files {
+			if len(record.Files[i].Diff) > 0 {
+				record.Files[i].Diff = nil
+				record.Files[i].DiffTruncated = true
+			}
+		}
+		recordBytes = editFilesDiffBytes(record.Files)
+	}
+	s.edits = append([]EditRecord{record}, s.edits...)
+	s.editBytes += recordBytes
+	for len(s.edits) > maxRecentEdits || s.editBytes > maxRecentEditBytes {
+		oldest := len(s.edits) - 1
+		s.editBytes -= editFilesDiffBytes(s.edits[oldest].Files)
+		s.edits = s.edits[:oldest]
 	}
 }
 
@@ -169,7 +208,7 @@ func (s *Server) recentEdits() []EditRecord {
 // cloneEditRecords returns an immutable snapshot for JSON/API consumers. The
 // handler must release editsMu before encoding so a slow client cannot block
 // an edit call; copying nested slices also prevents later mutations from
-// changing an already-returned dashboard.
+// changing an already-returned response.
 func cloneEditRecords(src []EditRecord) []EditRecord {
 	if src == nil {
 		return nil
@@ -204,8 +243,48 @@ func cloneDiffGroups(src []tools.DiffGroup) []tools.DiffGroup {
 	return dst
 }
 
-// LocalStatus keeps the standalone diagnostics renderer's kind discriminator
-// while leaving edit history on the dedicated /api/edits endpoint.
+func cloneEditFilesForHistory(src []tools.EditFileResult) []tools.EditFileResult {
+	dst := cloneEditFiles(src)
+	for i := range dst {
+		for j := range dst[i].Diff {
+			dst[i].Diff[j].Header = strings.Clone(src[i].Diff[j].Header)
+			for k := range dst[i].Diff[j].Lines {
+				dst[i].Diff[j].Lines[k].Type = strings.Clone(src[i].Diff[j].Lines[k].Type)
+				dst[i].Diff[j].Lines[k].Text = strings.Clone(src[i].Diff[j].Lines[k].Text)
+			}
+		}
+	}
+	return dst
+}
+
+func recentEditDiffBytes(records []EditRecord) int {
+	total := 0
+	for i := range records {
+		total += editFilesDiffBytes(records[i].Files)
+	}
+	return total
+}
+
+func editFilesDiffBytes(files []tools.EditFileResult) int {
+	total := 0
+	for i := range files {
+		if len(files[i].Diff) > 0 {
+			total += editHistoryFileCost
+		}
+		for j := range files[i].Diff {
+			group := &files[i].Diff[j]
+			total += editHistoryGroupCost + len(group.Header)
+			for k := range group.Lines {
+				line := &group.Lines[k]
+				total += editHistoryLineCost + len(line.Type) + len(line.Text)
+			}
+		}
+	}
+	return total
+}
+
+// LocalStatus keeps the JSON diagnostics kind discriminator while leaving edit
+// history on the dedicated /api/edits endpoint.
 type LocalStatus struct {
 	Kind string `json:"kind"`
 	Status
@@ -215,10 +294,9 @@ func (s *Server) LocalStatus() LocalStatus {
 	return LocalStatus{Kind: "status", Status: s.Status()}
 }
 
-// MCPStatus is intentionally smaller than the local Status payload. ChatGPT
-// only needs the fields rendered by the inline status view; detailed tool
-// metadata and edit history already exist elsewhere and should not be repeated
-// into model context.
+// MCPStatus is intentionally smaller than the local Status payload. Clients
+// get a compact structured summary; tool metadata and edit history stay on
+// local JSON endpoints instead of being repeated into model context.
 type MCPStatus struct {
 	Kind          string `json:"kind"`
 	Name          string `json:"name"`
@@ -248,12 +326,6 @@ func (s *Server) MCPStatus() MCPStatus {
 	}
 }
 
-func (s *Server) callCount(tool string) int64 {
-	s.statsMu.Lock()
-	defer s.statsMu.Unlock()
-	return s.stats[tool]
-}
-
 func registerTools(s *Server) {
 	s.tools = []ToolInfo{
 		{Name: "read", Description: "Read a text file inside the workspace"},
@@ -262,17 +334,14 @@ func registerTools(s *Server) {
 		{Name: "write", Description: "Create or overwrite a file inside the workspace"},
 		{Name: "edit", Description: "Apply atomic text edits to workspace files"},
 		{Name: "delete", Description: "Delete a file, symlink, or directory inside the workspace"},
-		{Name: "command", Description: "Run a short command inside the workspace"},
-		{Name: "command_start", Description: "Start a long-running command in the workspace"},
-		{Name: "command_poll", Description: "Poll a long-running command task"},
-		{Name: "command_cancel", Description: "Cancel a long-running command task"},
-		{Name: "status", Description: "Server status dashboard data"},
+		{Name: "exec_command", Description: "Run a command and return output or a resumable session"},
+		{Name: "write_stdin", Description: "Resume, poll, write to, or cancel an exec session"},
+		{Name: "context", Description: "Maintain cross-session rolling handoffs and checkpoints"},
+		{Name: "status", Description: "Server status data"},
 	}
 
 	// Every annotation is set explicitly: ChatGPT reads these hints to decide
 	// how to frame tool calls.
-	readOnly := ann(true, false, false, true)
-
 	// Optional rich UI metadata comes from the adapter; tools stay
 	// host-agnostic. Native-first tools receive no template metadata.
 	declared := func(name string, t *mcp.Tool) *mcp.Tool {
@@ -286,7 +355,7 @@ func registerTools(s *Server) {
 		Name:        "read",
 		Title:       "Read file",
 		Description: "Read a text file inside the workspace. Supports line-based offset/limit windowing; output is capped at 512 KiB per call.",
-		Annotations: readOnly,
+		Annotations: ann(true, false, false, true),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ReadInput) (result *mcp.CallToolResult, output *tools.ReadOutput, err error) {
 		finish := s.beginTool(ctx, "read")
 		defer func() { finish(err) }()
@@ -300,7 +369,7 @@ func registerTools(s *Server) {
 		Name:        "search",
 		Title:       "Search file contents",
 		Description: "Search file contents inside the workspace. Uses ripgrep when available and a built-in engine otherwise.",
-		Annotations: readOnly,
+		Annotations: ann(true, false, false, true),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.SearchInput) (result *mcp.CallToolResult, output *tools.SearchOutput, err error) {
 		finish := s.beginTool(ctx, "search")
 		defer func() { finish(err) }()
@@ -314,7 +383,7 @@ func registerTools(s *Server) {
 		Name:        "list",
 		Title:       "List directory",
 		Description: "List directory entries inside the workspace with bounded depth and count.",
-		Annotations: readOnly,
+		Annotations: ann(true, false, false, true),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ListInput) (result *mcp.CallToolResult, output *tools.ListOutput, err error) {
 		finish := s.beginTool(ctx, "list")
 		defer func() { finish(err) }()
@@ -367,57 +436,57 @@ func registerTools(s *Server) {
 		}
 		return nil, out, nil
 	})
-	mcp.AddTool(s.mcp, declared("command", &mcp.Tool{
-		Name:        "command",
+	mcp.AddTool(s.mcp, declared("exec_command", &mcp.Tool{
+		Name:        "exec_command",
 		Title:       "Run command",
-		Description: "Run a short command in the workspace and return stdout, stderr, exit code, and elapsed time.",
+		Description: "Run a shell command with the current user's permissions and a workspace-contained working directory. The command is not confined by an OS filesystem sandbox and may access resources permitted to the account. Returns final output when it exits within yield_time_ms; otherwise returns a numeric session_id for write_stdin. Set tty=true only for interactive terminal programs; ordinary commands stay pipe-backed by default.",
 		Annotations: ann(false, true, true, false),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.CommandInput) (result *mcp.CallToolResult, output *tools.CommandOutput, err error) {
-		finish := s.beginTool(ctx, "command")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ExecCommandInput) (result *mcp.CallToolResult, output *tools.UnifiedExecOutput, err error) {
+		finish := s.beginTool(ctx, "exec_command")
 		defer func() { finish(err) }()
-		out, err := tools.Command(ctx, s.ws, in)
+		applyLegacyExecDefaults(ctx, &in)
+		out, err := tools.ExecCommand(ctx, s.ws, s.commands, in)
 		if err != nil {
 			return nil, nil, err
 		}
 		return nil, out, nil
 	})
-	mcp.AddTool(s.mcp, declared("command_start", &mcp.Tool{
-		Name:        "command_start",
-		Title:       "Start long command",
-		Description: "Start a long-running command in the workspace. Include a short user-facing label describing the task. UI-capable clients show one live Task view that updates itself; command_poll remains available when the model needs task output or no UI is present.",
+	mcp.AddTool(s.mcp, declared("write_stdin", &mcp.Tool{
+		Name:        "write_stdin",
+		Title:       "Resume command",
+		Description: "Resume a live exec_command session. Empty chars polls and non-empty chars writes to stdin. Ctrl-C is delivered normally to TTY sessions; for pipe sessions it cancels the process.",
 		Annotations: ann(false, true, true, false),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.TaskCommandInput) (result *mcp.CallToolResult, output *tools.TaskStarted, err error) {
-		finish := s.beginTool(ctx, "command_start")
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.WriteStdinInput) (result *mcp.CallToolResult, output *tools.UnifiedExecOutput, err error) {
+		finish := s.beginTool(ctx, "write_stdin")
 		defer func() { finish(err) }()
-		id, err := s.commands.Start(s.ws, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, &tools.TaskStarted{Kind: "task", ID: id, Label: tools.TaskLabel(in.Label), Status: "running"}, nil
-	})
-	mcp.AddTool(s.mcp, declared("command_poll", &mcp.Tool{
-		Name:        "command_poll",
-		Title:       "Poll long command",
-		Description: "Poll a long-running command task by id for status and accumulated output.",
-		Annotations: ann(true, false, false, true),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.TaskID) (result *mcp.CallToolResult, output *tools.PollOutput, err error) {
-		finish := s.beginTool(ctx, "command_poll")
-		defer func() { finish(err) }()
-		out, err := s.commands.Poll(in.ID)
+		applyLegacyWriteStdinDefaults(ctx, &in)
+		out, err := tools.WriteStdin(ctx, s.commands, in)
 		if err != nil {
 			return nil, nil, err
 		}
 		return nil, out, nil
 	})
-	mcp.AddTool(s.mcp, declared("command_cancel", &mcp.Tool{
-		Name:        "command_cancel",
-		Title:       "Cancel long command",
-		Description: "Cancel a long-running command task by id.",
-		Annotations: ann(false, true, false, true),
-	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.TaskID) (result *mcp.CallToolResult, output *tools.PollOutput, err error) {
-		finish := s.beginTool(ctx, "command_cancel")
+	contextSchema, err := jsonschema.For[contextstore.Input](nil)
+	if err != nil {
+		panic(fmt.Sprintf("generate context input schema: %v", err))
+	}
+	// The MCP SDK validates against this schema before Input.UnmarshalJSON can
+	// read the retired active_reasoning alias; keep only the top-level object
+	// open, then let the strict custom decoder reject all other unknown names.
+	contextSchema.AdditionalProperties = &jsonschema.Schema{}
+	mcp.AddTool(s.mcp, declared("context", &mcp.Tool{
+		Name:        "context",
+		Title:       "Manage working context",
+		Description: "Maintain a small cross-session rolling handoff. update upserts the active state, checkpoint freezes a milestone, resume returns the latest active handoff, and list discovers available context ids. approach_summary should be a concise summary of the current approach and rationale. For update/checkpoint, clear_fields clears selected scalar fields and takes precedence over values supplied in the same request. working_directory is only a pointer to where the work lives inside the workspace; it does not change the miodesk workspace root.",
+		Annotations: ann(false, false, false, false),
+		InputSchema: contextSchema,
+	}), func(ctx context.Context, req *mcp.CallToolRequest, in contextstore.Input) (result *mcp.CallToolResult, output *contextstore.Output, err error) {
+		finish := s.beginTool(ctx, "context")
 		defer func() { finish(err) }()
-		out, err := s.commands.Cancel(in.ID)
+		if s.contexts == nil {
+			return nil, nil, fmt.Errorf("context store unavailable: %w", s.contextErr)
+		}
+		out, err := s.contexts.Apply(s.ws, in)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -436,14 +505,13 @@ func ann(readOnly, destructive, openWorld, idempotent bool) *mcp.ToolAnnotations
 	}
 }
 
-// Tools returns metadata about the registered tools.
-func (s *Server) Tools() []ToolInfo { return s.tools }
+// Tools returns an immutable snapshot of registered tool metadata.
+func (s *Server) Tools() []ToolInfo { return append([]ToolInfo(nil), s.tools...) }
 
 // AccessMode reports the active trust level for CLI/doctor output.
 func (s *Server) AccessMode() AccessMode { return s.auth.Mode() }
 
-// Handler assembles the HTTP surface: MCP at /mcp, widget at /, status at
-// /api/status, recent edits at /api/edits, health at /healthz.
+// Handler serves MCP, health, status JSON, and recent edits JSON.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// The current MCP HTTP protocol (2026-07-28) is sessionless. JSON responses
@@ -455,7 +523,7 @@ func (s *Server) Handler() http.Handler {
 		JSONResponse:               true,
 		DisableLocalhostProtection: s.auth.Mode() != AccessLocal,
 	})
-	mux.Handle("/mcp", mcpHandler)
+	mux.Handle("/mcp", legacyCommandCompatibility(mcpHandler))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(HealthHeader, HealthHeaderValue)
 		w.WriteHeader(http.StatusOK)
@@ -463,34 +531,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s.LocalStatus())
-	})
-	// /preview is a development view: every result renderer with mock data,
-	// no MCP involved. kind picks one payload; "all" stacks every mock.
-	mux.HandleFunc("GET /preview", func(w http.ResponseWriter, r *http.Request) {
-		kind := r.URL.Query().Get("kind")
-		if kind == "" {
-			kind = "all"
-		}
-		if !regexp.MustCompile("^[a-z0-9-]{0,32}$").MatchString(kind) {
-			http.Error(w, "bad kind", http.StatusBadRequest)
-			return
-		}
-		html, err := adapter.PreviewHTML(widget.Static, kind)
-		if err != nil {
-			http.Error(w, "widget unavailable", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(html))
-	})
-	mux.HandleFunc("GET /widget", func(w http.ResponseWriter, _ *http.Request) {
-		html, err := adapter.WidgetHTML(widget.Static)
-		if err != nil {
-			http.Error(w, "widget unavailable", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(html))
 	})
 	mux.HandleFunc("GET /api/edits", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -500,9 +540,6 @@ func (s *Server) Handler() http.Handler {
 		}
 		_ = json.NewEncoder(w).Encode(edits)
 	})
-	if static, err := fs.Sub(widget.Static, "static"); err == nil {
-		mux.Handle("/", http.FileServerFS(static))
-	}
 	return s.requestLogger(s.auth.Middleware(mux))
 }
 
@@ -577,7 +614,7 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 	})
 }
 
-// ToolCalls is the real usage data behind the widget's token-stats strip.
+// ToolCalls is the real usage data exposed by status.
 type ToolCalls struct {
 	Calls map[string]int64 `json:"calls"`
 	Total int64            `json:"total"`
@@ -610,10 +647,6 @@ func (s *Server) Status() Status {
 	}
 	s.statsMu.Unlock()
 
-	theme := s.cfg.Widget.Theme
-	if theme == "" {
-		theme = "auto"
-	}
 	remote := string(s.auth.Mode())
 	return Status{
 		Name:          "miodesk",
@@ -622,12 +655,12 @@ func (s *Server) Status() Status {
 		Workspace:     s.ws.Root(),
 		Endpoint:      s.MCPURL(),
 		Port:          int(s.port.Load()),
-		Theme:         theme,
+		Theme:         "auto",
 		Remote:        remote,
 		Tunnel:        s.cfg.Tunnel.Provider,
 		StartedAt:     s.started,
 		UptimeSeconds: int64(time.Since(s.started).Seconds()),
-		Tools:         s.tools,
+		Tools:         s.Tools(),
 		Stats:         ToolCalls{Calls: calls, Total: total},
 	}
 }
@@ -660,7 +693,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	s.writeState()
 	slog.Info("server_started", "endpoint", s.MCPURL(), "access_mode", s.AccessMode())
 
-	hs := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	hs := newHTTPServer(s.Handler(), mcpRequestReadTimeout)
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- hs.Serve(ln) }()
 
@@ -697,7 +730,7 @@ func (s *Server) RunStdio(ctx context.Context) error {
 	return err
 }
 
-// URL is the widget/status base URL, for display after Listen.
+// URL is the local HTTP base URL, for display after Listen.
 func (s *Server) URL() string    { return s.baseURL("") }
 func (s *Server) MCPURL() string { return s.baseURL("/mcp") }
 

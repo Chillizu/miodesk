@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,7 +22,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/Chillizu/miodesk/internal/adapter"
 	"github.com/Chillizu/miodesk/internal/config"
 	"github.com/Chillizu/miodesk/internal/logging"
 	"github.com/Chillizu/miodesk/internal/tools"
@@ -30,8 +30,9 @@ import (
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	// Keep runtime state inside the test sandbox.
+	// Keep persistent and runtime state inside the test sandbox.
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 
 	root := t.TempDir()
@@ -46,6 +47,206 @@ func newTestServer(t *testing.T) *Server {
 	cfg.Workspace.Root = root
 	cfg.Server.Port = 0
 	return New(cfg, ws)
+}
+
+func TestHandlerRemovesWidgetRoutesAndKeepsJSONAPIs(t *testing.T) {
+	ts := httptest.NewServer(newTestServer(t).Handler())
+	defer ts.Close()
+	for _, path := range []string{"/", "/widget", "/preview"} {
+		resp, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", path, resp.StatusCode)
+		}
+	}
+	for _, path := range []string{"/healthz", "/api/status", "/api/edits"} {
+		resp, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, resp.StatusCode)
+		}
+		if path == "/api/status" {
+			var got struct {
+				Kind  string `json:"kind"`
+				Theme string `json:"theme"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Kind != "status" || got.Theme != "auto" {
+				t.Errorf("status = %+v, want kind=status theme=auto", got)
+			}
+		}
+		resp.Body.Close()
+	}
+}
+
+func TestToolsReturnsSnapshot(t *testing.T) {
+	s := newTestServer(t)
+	first := s.Tools()
+	if len(first) == 0 {
+		t.Fatal("expected registered tools")
+	}
+	original := first[0].Name
+	first[0].Name = "mutated"
+	second := s.Tools()
+	if second[0].Name != original {
+		t.Fatalf("Tools exposed internal slice: got %q, want %q", second[0].Name, original)
+	}
+}
+
+func TestServerToolListMatchesMetadata(t *testing.T) {
+	s := newTestServer(t)
+	metadata := s.Tools()
+	if len(metadata) != 10 {
+		t.Fatalf("server tool metadata count = %d, want 10", len(metadata))
+	}
+	want := make(map[string]bool, len(metadata))
+	for _, tool := range metadata {
+		want[tool.Name] = true
+	}
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	ctx := context.Background()
+	client := mcp.NewClient(&mcp.Implementation{Name: "miodesk-tool-list-test", Version: "test"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             ts.URL + "/mcp",
+		HTTPClient:           ts.Client(),
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer session.Close()
+
+	listed, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	if len(listed.Tools) != len(metadata) {
+		t.Fatalf("tools/list count = %d, server metadata count = %d", len(listed.Tools), len(metadata))
+	}
+	got := make(map[string]bool, len(listed.Tools))
+	for _, tool := range listed.Tools {
+		got[tool.Name] = true
+	}
+	if !got["status"] {
+		t.Fatal("tools/list is missing status")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("tools/list names = %v, server metadata names = %v", got, want)
+	}
+}
+
+func TestRecentEditHistoryEvictsOldestAndStaysWithinByteBudget(t *testing.T) {
+	s := newTestServer(t)
+	for i := 0; i < 11; i++ {
+		s.recordEdits(testEditFilesWithDiff(fmt.Sprintf("edit-%02d", i)))
+	}
+	records := s.recentEdits()
+	if len(records) != maxRecentEdits {
+		t.Fatalf("recent edit records = %d, want %d", len(records), maxRecentEdits)
+	}
+	if got := records[0].Files[0].Diff[0].Lines[0].Text; got != "edit-10" {
+		t.Errorf("newest record text = %q, want edit-10", got)
+	}
+	if got := records[len(records)-1].Files[0].Diff[0].Lines[0].Text; got != "edit-01" {
+		t.Errorf("oldest retained record text = %q, want edit-01", got)
+	}
+
+	largeText := strings.Repeat("x", 768<<10)
+	for i := 0; i < 3; i++ {
+		s.recordEdits(testEditFilesWithDiff(largeText))
+	}
+	largeRecords := s.recentEdits()
+	if len(largeRecords) != 2 {
+		t.Fatalf("records after byte eviction = %d, want two 768 KiB records", len(largeRecords))
+	}
+	if got := recentEditDiffBytes(largeRecords); got > maxRecentEditBytes {
+		t.Fatalf("retained recent diff bytes = %d, cap %d", got, maxRecentEditBytes)
+	}
+	if got := recentEditDiffBytes(largeRecords); got != s.editBytes {
+		t.Errorf("tracked edit bytes = %d, measured retained bytes = %d", s.editBytes, got)
+	}
+}
+
+func TestRecordEditsDoesNotMutateToolResultWhenTruncatingCache(t *testing.T) {
+	s := newTestServer(t)
+	files := testEditFilesWithDiff(strings.Repeat("large", (maxRecentEditBytes/5)+1))
+	s.recordEdits(files)
+	if len(files) != 1 || len(files[0].Diff) == 0 || files[0].DiffTruncated {
+		t.Fatal("recordEdits mutated the tool result while truncating its cache copy")
+	}
+
+	records := s.recentEdits()
+	if len(records) != 1 || len(records[0].Files) != 1 {
+		t.Fatalf("recent edits = %+v", records)
+	}
+	cached := records[0].Files[0]
+	if cached.Path != files[0].Path || cached.Bytes != files[0].Bytes || cached.Lines != files[0].Lines {
+		t.Errorf("cached summary = %+v, want path/byte/line summary from %+v", cached, files[0])
+	}
+	if cached.Diff != nil || !cached.DiffTruncated {
+		t.Errorf("cached oversized diff = %+v, want nil diff and truncated flag", cached)
+	}
+}
+
+func BenchmarkRecordEditsBounded(b *testing.B) {
+	files := benchmarkEditFilesNearDiffCap(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s := &Server{}
+		s.recordEdits(files)
+		if s.editBytes > maxRecentEditBytes {
+			b.Fatalf("retained edit bytes = %d, cap %d", s.editBytes, maxRecentEditBytes)
+		}
+	}
+}
+
+func benchmarkEditFilesNearDiffCap(b *testing.B) []tools.EditFileResult {
+	b.Helper()
+	oldLines := make([]string, 16)
+	newLines := make([]string, 16)
+	for i := range oldLines {
+		oldLines[i] = "old"
+		newLines[i] = oldLines[i]
+	}
+	largeLine := strings.Repeat("<", 80_000)
+	newLines[1] = largeLine
+	newLines[14] = largeLine
+	oldText := strings.Join(oldLines, "\n") + "\n"
+	newText := strings.Join(newLines, "\n") + "\n"
+	groups, truncated := tools.DiffLinesBounded(oldText, newText, 20_000, 1<<20)
+	if truncated {
+		b.Fatal("benchmark diff unexpectedly truncated")
+	}
+	encoded, err := json.Marshal(groups)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if len(encoded) < 900_000 || len(encoded) > 1<<20 {
+		b.Fatalf("benchmark diff JSON size = %d; want 900000..%d bytes", len(encoded), 1<<20)
+	}
+	return []tools.EditFileResult{{Path: "large.txt", Bytes: len(newText), Lines: len(newLines), Diff: groups}}
+}
+
+func testEditFilesWithDiff(text string) []tools.EditFileResult {
+	return []tools.EditFileResult{{
+		Path:  "file.txt",
+		Bytes: len(text),
+		Lines: 1,
+		Diff: []tools.DiffGroup{{
+			Header: "@@ -1,0 +1,1 @@",
+			Lines:  []tools.DiffLine{{Type: "add", New: 1, Text: text}},
+		}},
+	}}
 }
 
 func TestMCPRoundtripOverHTTP(t *testing.T) {
@@ -104,6 +305,100 @@ func TestMCPRoundtripOverHTTP(t *testing.T) {
 	}
 	if !call.IsError {
 		t.Error("escape path must produce an error result")
+	}
+}
+
+func TestServeHTTPReadTimeout(t *testing.T) {
+	processed := make(chan struct{}, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			http.Error(w, "incomplete request", http.StatusBadRequest)
+			return
+		}
+		processed <- struct{}{}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	ts := httptest.NewUnstartedServer(handler)
+	ts.Config = newHTTPServer(handler, 25*time.Millisecond)
+	ts.Start()
+	defer ts.Close()
+
+	reader, writer := io.Pipe()
+	defer writer.CloseWithError(io.ErrClosedPipe)
+	go func() {
+		_, _ = writer.Write([]byte("first"))
+		time.Sleep(100 * time.Millisecond)
+		_, _ = writer.Write([]byte("rest"))
+		_ = writer.Close()
+	}()
+	request, err := http.NewRequest(http.MethodPost, ts.URL+"/mcp", reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	response, err := (&http.Client{Timeout: time.Second}).Do(request)
+	if response != nil {
+		defer response.Body.Close()
+		if err == nil && response.StatusCode == http.StatusNoContent {
+			t.Fatal("handler completed an incomplete request")
+		}
+	} else if err == nil {
+		t.Fatal("slow request returned neither a response nor an error")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("slow request took %s, want at most 1s", elapsed)
+	}
+	select {
+	case <-processed:
+		t.Fatal("handler processed an incomplete MCP request")
+	default:
+	}
+}
+
+func TestServeHTTPReadTimeoutDoesNotLimitHandler(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("read complete request: %v", err)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	ts := httptest.NewUnstartedServer(handler)
+	ts.Config = newHTTPServer(handler, 25*time.Millisecond)
+	ts.Start()
+	defer ts.Close()
+
+	response, err := ts.Client().Post(ts.URL+"/mcp", "application/json", strings.NewReader("complete body"))
+	if err != nil {
+		t.Fatalf("complete request failed after handler delay: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+}
+
+func TestServeHTTPRejectsMalformedMCPJSON(t *testing.T) {
+	s := newTestServer(t)
+	tsrv := httptest.NewServer(s.Handler())
+	defer tsrv.Close()
+
+	const marker = "malformed-private-payload"
+	response, err := tsrv.Client().Post(tsrv.URL+"/mcp", "application/json", strings.NewReader("{\"private\":\""+marker))
+	if err != nil {
+		t.Fatalf("post malformed body: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusBadRequest)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read error response: %v", err)
+	}
+	if bytes.Contains(body, []byte(marker)) {
+		t.Fatalf("malformed request body was echoed: %q", body)
 	}
 }
 
@@ -364,12 +659,11 @@ func TestListenServeShutdown(t *testing.T) {
 
 	resp, err = http.Get(base + "/")
 	if err != nil {
-		t.Fatalf("widget: %v", err)
+		t.Fatalf("root: %v", err)
 	}
-	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(body), "<title>miodesk</title>") {
-		t.Error("widget index not served at /")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("root = %d, want 404", resp.StatusCode)
 	}
 
 	resp, err = http.Get(base + "/api/status")
@@ -385,7 +679,7 @@ func TestListenServeShutdown(t *testing.T) {
 	if err := json.Unmarshal(statusBody, &status); err != nil {
 		t.Fatalf("decode status: %v", err)
 	}
-	if status.Kind != "status" || status.Name != "miodesk" || status.Port != port || len(status.Tools) != 11 {
+	if status.Kind != "status" || status.Name != "miodesk" || status.Port != port || len(status.Tools) != 10 {
 		t.Errorf("status = %+v", status)
 	}
 	if bytes.Contains(statusBody, []byte(`"edits"`)) {
@@ -552,7 +846,7 @@ func TestRunStdio(t *testing.T) {
 	resp = readJSONLine(t, reader)
 	result, _ = resp["result"].(map[string]any)
 	toolList, _ := result["tools"].([]any)
-	if len(toolList) != 11 {
+	if len(toolList) != 10 {
 		t.Errorf("tools/list returned %d tools", len(toolList))
 	}
 
@@ -611,6 +905,36 @@ func TestMCPNewTools(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer sess.Close()
+	initialize := sess.InitializeResult()
+	if initialize == nil || initialize.ServerInfo == nil {
+		t.Fatal("initialize result must include server description")
+	}
+	implementationDescription := strings.ToLower(initialize.ServerInfo.Description)
+	if !strings.Contains(implementationDescription, "file tools") || !strings.Contains(implementationDescription, "current user's permissions") {
+		t.Errorf("implementation description does not distinguish file and command boundaries: %q", initialize.ServerInfo.Description)
+	}
+	instructions := strings.ToLower(initialize.Instructions)
+	for _, want := range []string{"file tool", "sandboxed inside the workspace root", "current user's permissions", "workspace-contained working directory", "does not restrict os filesystem access"} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("server instructions missing security wording %q: %q", want, initialize.Instructions)
+		}
+	}
+	listed, err := sess.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	var execDescription string
+	for _, tool := range listed.Tools {
+		if tool.Name == "exec_command" {
+			execDescription = strings.ToLower(tool.Description)
+			break
+		}
+	}
+	for _, want := range []string{"current user's permissions", "workspace-contained working directory", "not confined by an os filesystem sandbox"} {
+		if !strings.Contains(execDescription, want) {
+			t.Errorf("exec_command description missing security wording %q: %q", want, execDescription)
+		}
+	}
 
 	callOK := func(name string, args map[string]any) map[string]any {
 		t.Helper()
@@ -651,28 +975,70 @@ func TestMCPNewTools(t *testing.T) {
 		t.Errorf("read after edit = %v", readOut)
 	}
 
-	// command runs in the workspace and reports exit codes.
-	cmdOut := callOK("command", map[string]any{"command": "echo cmd-ok", "timeout": 30})
-	if !strings.Contains(fmt.Sprint(cmdOut["stdout"]), "cmd-ok") {
-		t.Errorf("command output = %v", cmdOut)
+	// Unified exec returns final output for short commands.
+	cmdOut := callOK("exec_command", map[string]any{"cmd": "echo cmd-ok", "yield_time_ms": 1000})
+	if !strings.Contains(fmt.Sprint(cmdOut["output"]), "cmd-ok") || cmdOut["exit_code"] != float64(0) {
+		t.Errorf("exec_command output = %v", cmdOut)
 	}
 
-	// command lifecycle: start → poll → cancel
-	startOut := callOK("command_start", map[string]any{"command": "sleep 30", "label": "Wait for test"})
-	id, _ := startOut["id"].(string)
-	if id == "" || startOut["kind"] != "task" || startOut["label"] != "Wait for test" || startOut["status"] != "running" {
-		t.Fatalf("command_start = %v", startOut)
+	// Long pipe-backed commands yield one numeric session; write_stdin polls and Ctrl-C cancels it.
+	startOut := callOK("exec_command", map[string]any{"cmd": "echo started; sleep 30", "yield_time_ms": 10})
+	sessionID, _ := startOut["session_id"].(float64)
+	if sessionID <= 0 {
+		t.Fatalf("exec_command session = %v", startOut)
 	}
-	pollOut := callOK("command_poll", map[string]any{"id": id})
-	if pollOut["status"] != "running" && pollOut["status"] != "done" {
-		t.Errorf("poll status = %v", pollOut)
+	pollOut := callOK("write_stdin", map[string]any{"session_id": sessionID, "chars": "", "yield_time_ms": 10})
+	if _, ok := pollOut["session_id"]; !ok {
+		t.Errorf("write_stdin should keep a live session: %v", pollOut)
 	}
-	if pollOut["kind"] != "task" || pollOut["label"] != "Wait for test" {
-		t.Errorf("poll task identity = %v", pollOut)
+	cancelOut := callOK("write_stdin", map[string]any{"session_id": sessionID, "chars": "\u0003", "yield_time_ms": 10})
+	if _, ok := cancelOut["session_id"]; ok {
+		t.Errorf("cancelled session should not remain resumable: %v", cancelOut)
 	}
-	cancelOut := callOK("command_cancel", map[string]any{"id": id})
-	if cancelOut["status"] != "done" {
-		t.Errorf("cancel status = %v", cancelOut)
+	if _, ok := cancelOut["exit_code"]; !ok {
+		t.Errorf("cancelled session should expose an exit code: %v", cancelOut)
+	}
+
+	// context lifecycle: rolling update → checkpoint → resume → discovery list.
+	if err := os.Mkdir(filepath.Join(s.ws.Root(), "project"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	contextOut := callOK("context", map[string]any{
+		"action":            "update",
+		"id":                "miodesk-maintenance",
+		"working_directory": "project",
+		"goal":              "keep work continuous across chats",
+		"current_state":     "rolling handoff is wired",
+		"decisions":         []string{"working_directory is a locator, not the workspace root"},
+		"next_steps":        []string{"checkpoint the milestone"},
+	})
+	if contextOut["kind"] != "context" || contextOut["action"] != "update" {
+		t.Fatalf("context update = %v", contextOut)
+	}
+	active, _ := contextOut["context"].(map[string]any)
+	if active["id"] != "miodesk-maintenance" || active["revision"] != float64(1) {
+		t.Fatalf("active context = %v", active)
+	}
+
+	checkpointOut := callOK("context", map[string]any{
+		"action": "checkpoint",
+		"id":     "miodesk-maintenance",
+		"label":  "Context v1 wired",
+	})
+	checkpoint, _ := checkpointOut["checkpoint"].(map[string]any)
+	if checkpoint["id"] != "checkpoint-001" || checkpoint["label"] != "Context v1 wired" {
+		t.Fatalf("context checkpoint = %v", checkpointOut)
+	}
+
+	resumeOut := callOK("context", map[string]any{"action": "resume", "id": "miodesk-maintenance"})
+	resumed, _ := resumeOut["context"].(map[string]any)
+	if resumed["id"] != "miodesk-maintenance" {
+		t.Fatalf("context resume = %v", resumeOut)
+	}
+	listOut := callOK("context", map[string]any{"action": "list"})
+	contexts, _ := listOut["contexts"].([]any)
+	if len(contexts) != 1 {
+		t.Fatalf("context list = %v", listOut)
 	}
 
 	delOut := callOK("delete", map[string]any{"path": "notes.md"})
@@ -689,7 +1055,7 @@ func TestMCPNewTools(t *testing.T) {
 		t.Errorf("stats = %+v", status.Stats)
 	}
 
-	// /api/edits serves the recorded edit for the diff viewer.
+	// /api/edits serves the recorded edit through the JSON API.
 	resp, err := http.Get(ts.URL + "/api/edits")
 	if err != nil {
 		t.Fatal(err)
@@ -704,7 +1070,83 @@ func TestMCPNewTools(t *testing.T) {
 	}
 }
 
-func TestMCPAppsDashboard(t *testing.T) {
+func TestContextAcceptsLegacyActiveReasoningInput(t *testing.T) {
+	s := newTestServer(t)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	ctx := context.Background()
+	client := mcp.NewClient(&mcp.Implementation{Name: "miodesk-context-alias-test", Version: "test"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             ts.URL + "/mcp",
+		HTTPClient:           ts.Client(),
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer session.Close()
+
+	listed, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	var contextTool *mcp.Tool
+	for _, tool := range listed.Tools {
+		if tool.Name == "context" {
+			contextTool = tool
+			break
+		}
+	}
+	if contextTool == nil {
+		t.Fatal("context tool missing")
+	}
+	schema, ok := contextTool.InputSchema.(map[string]any)
+	if !ok {
+		t.Fatalf("context input schema = %#v", contextTool.InputSchema)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("context schema properties = %#v", schema["properties"])
+	}
+	if _, ok := properties["approach_summary"]; !ok {
+		t.Errorf("context schema is missing approach_summary: %v", properties)
+	}
+	if _, ok := properties["clear_fields"]; !ok {
+		t.Errorf("context schema is missing clear_fields: %v", properties)
+	}
+	if _, ok := properties["active_reasoning"]; ok {
+		t.Errorf("context schema must not advertise active_reasoning: %v", properties)
+	}
+
+	call, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "context", Arguments: map[string]any{
+		"action":           "update",
+		"id":               "legacy-approach",
+		"summary":          "Legacy client request",
+		"active_reasoning": "concise replay summary",
+	}})
+	if err != nil {
+		t.Fatalf("call context with legacy field: %v", err)
+	}
+	if call.IsError {
+		t.Fatalf("context legacy alias returned error: %v", call.Content)
+	}
+	data, err := json.Marshal(call.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode context response: %v (%s)", err, data)
+	}
+	active, _ := payload["context"].(map[string]any)
+	state, _ := active["state"].(map[string]any)
+	if state["approach_summary"] != "concise replay summary" {
+		t.Fatalf("context state = %v", state)
+	}
+}
+
+func TestMCPStatusWithoutAppsUI(t *testing.T) {
 	s := newTestServer(t)
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
@@ -721,87 +1163,73 @@ func TestMCPAppsDashboard(t *testing.T) {
 	}
 	defer sess.Close()
 
-	// The widget resource is readable with the MCP Apps media type, holds
-	// the inlined dashboard, and carries the ui meta.
-	read, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: adapter.WidgetURI})
+	resources, err := sess.ListResources(ctx, &mcp.ListResourcesParams{})
 	if err != nil {
-		t.Fatalf("resources/read: %v", err)
+		t.Fatalf("resources/list: %v", err)
 	}
-	if len(read.Contents) != 1 {
-		t.Fatalf("contents = %d", len(read.Contents))
-	}
-	rc := read.Contents[0]
-	if rc.MIMEType != "text/html;profile=mcp-app" {
-		t.Errorf("mimeType = %q", rc.MIMEType)
-	}
-	if !strings.Contains(rc.Text, "<style>") || !strings.Contains(rc.Text, "MIODESK_RENDERERS") {
-		t.Error("resource text should be the assembled dashboard HTML")
-	}
-	if !strings.Contains(rc.Text, "--color-background-primary") || !strings.Contains(rc.Text, "safeAreaInsets") {
-		t.Error("widget should consume MCP Apps host style variables and safe-area context")
-	}
-	if ui, ok := rc.Meta["ui"].(map[string]any); !ok || ui["prefersBorder"] != true {
-		t.Errorf("contents _meta.ui = %v", rc.Meta)
-	}
-	for _, legacyURI := range []string{
-		"ui://miodesk/status.html",
-		"ui://miodesk/status-v2.html",
-		"ui://miodesk/status-v3.html",
-		"ui://miodesk/status-v4.html",
-		"ui://miodesk/status-v5.html",
-		"ui://miodesk/status-v6.html",
-		"ui://miodesk/status-v7.html",
-	} {
-		legacyRead, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: legacyURI})
-		if err != nil {
-			t.Fatalf("legacy resources/read %q: %v", legacyURI, err)
-		}
-		if len(legacyRead.Contents) != 1 || legacyRead.Contents[0].URI != legacyURI || legacyRead.Contents[0].Text != rc.Text {
-			t.Errorf("legacy resource %q was not served as the current widget", legacyURI)
-		}
+	if len(resources.Resources) != 0 {
+		t.Fatalf("resources/list = %+v, want empty", resources.Resources)
 	}
 
-	taskRead, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: adapter.TaskWidgetURI})
-	if err != nil {
-		t.Fatalf("task resources/read: %v", err)
-	}
-	if len(taskRead.Contents) != 1 || taskRead.Contents[0].URI != adapter.TaskWidgetURI || taskRead.Contents[0].Text != rc.Text {
-		t.Errorf("task resource should reuse the current self-contained widget")
-	}
-
-	// Status and command_start declare UI resources; command_poll/cancel stay
-	// native so repeated lifecycle calls never create extra iframes.
 	listed, err := sess.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
 	var status *mcp.Tool
-	var commandStart *mcp.Tool
+	var execCommand *mcp.Tool
+	var writeStdin *mcp.Tool
 	var read2 *mcp.Tool
 	for _, tl := range listed.Tools {
 		switch tl.Name {
 		case "status":
 			status = tl
-		case "command_start":
-			commandStart = tl
+		case "exec_command":
+			execCommand = tl
+		case "write_stdin":
+			writeStdin = tl
 		case "read":
 			read2 = tl
 		}
 	}
-	if status == nil || commandStart == nil || read2 == nil {
-		t.Fatal("status/command_start/read tools missing")
+	if status == nil || execCommand == nil || writeStdin == nil || read2 == nil {
+		t.Fatal("status/unified exec/read tools missing")
 	}
-	ui, _ := status.Meta["ui"].(map[string]any)
-	if ui == nil || ui["resourceUri"] != adapter.WidgetURI {
-		t.Errorf("status _meta.ui = %v", status.Meta)
+	for _, legacy := range []string{"command", "command_start", "command_poll", "command_wait", "command_cancel"} {
+		for _, tl := range listed.Tools {
+			if tl.Name == legacy {
+				t.Errorf("legacy command tool %q should not be model-facing", legacy)
+			}
+		}
 	}
-	if status.Meta["openai/outputTemplate"] != adapter.WidgetURI {
-		t.Errorf("ChatGPT alias missing: %v", status.Meta)
+	assertSchemaProperties := func(tl *mcp.Tool, want []string, reject []string) {
+		t.Helper()
+		if tl.OutputSchema == nil {
+			t.Errorf("%s should declare an inferred outputSchema", tl.Name)
+		}
+		schema, ok := tl.InputSchema.(map[string]any)
+		if !ok {
+			t.Errorf("%s inputSchema = %#v", tl.Name, tl.InputSchema)
+			return
+		}
+		props, ok := schema["properties"].(map[string]any)
+		if !ok {
+			t.Errorf("%s properties = %#v", tl.Name, schema["properties"])
+			return
+		}
+		for _, key := range want {
+			if _, ok := props[key]; !ok {
+				t.Errorf("%s schema missing %q: %#v", tl.Name, key, props)
+			}
+		}
+		for _, key := range reject {
+			if _, ok := props[key]; ok {
+				t.Errorf("%s schema should not expose legacy field %q: %#v", tl.Name, key, props)
+			}
+		}
 	}
-	startUI, _ := commandStart.Meta["ui"].(map[string]any)
-	if startUI == nil || startUI["resourceUri"] != adapter.TaskWidgetURI || commandStart.Meta["openai/outputTemplate"] != adapter.TaskWidgetURI {
-		t.Errorf("command_start task UI metadata = %v", commandStart.Meta)
-	}
+	assertSchemaProperties(execCommand, []string{"cmd", "workdir", "tty", "yield_time_ms", "timeout_ms"}, []string{"command", "label", "id"})
+	assertSchemaProperties(writeStdin, []string{"session_id", "chars", "yield_time_ms"}, []string{"id", "command"})
+
 	if status.Annotations == nil || !status.Annotations.ReadOnlyHint {
 		t.Errorf("status annotations = %+v", status.Annotations)
 	}
@@ -816,16 +1244,19 @@ func TestMCPAppsDashboard(t *testing.T) {
 		t.Errorf("read title = %q", read2.Title)
 	}
 
+	if len(listed.Tools) != 10 {
+		t.Fatalf("tools/list count = %d, want 10", len(listed.Tools))
+	}
 	for _, tl := range listed.Tools {
-		_, hasUI := tl.Meta["ui"]
-		_, hasTemplate := tl.Meta["openai/outputTemplate"]
-		wantUI := tl.Name == "status" || tl.Name == "command_start"
-		if hasUI != wantUI || hasTemplate != wantUI {
-			t.Errorf("%s UI metadata present = (%v, %v), want = %v; meta = %v", tl.Name, hasUI, hasTemplate, wantUI, tl.Meta)
+		if _, ok := tl.Meta["ui"]; ok {
+			t.Errorf("%s advertises _meta.ui: %v", tl.Name, tl.Meta)
 		}
-		if tl.Name == "command_start" || tl.Name == "command_poll" || tl.Name == "command_cancel" {
+		if _, ok := tl.Meta["openai/outputTemplate"]; ok {
+			t.Errorf("%s advertises output template: %v", tl.Name, tl.Meta)
+		}
+		if tl.Name == "exec_command" || tl.Name == "write_stdin" || tl.Name == "status" {
 			if tl.Meta["openai/toolInvocation/invoking"] == nil || tl.Meta["openai/toolInvocation/invoked"] == nil {
-				t.Errorf("%s should keep native invocation labels: %v", tl.Name, tl.Meta)
+				t.Errorf("%s lost invocation labels: %v", tl.Name, tl.Meta)
 			}
 		}
 	}

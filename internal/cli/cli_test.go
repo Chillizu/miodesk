@@ -51,6 +51,19 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+func TestHelpDescribesHTTPMCPWithoutWidget(t *testing.T) {
+	code, out, _ := run(t, "help")
+	if code != 0 {
+		t.Fatalf("help exit = %d", code)
+	}
+	if !strings.Contains(out, "serve      run the local HTTP MCP server") {
+		t.Errorf("serve help missing HTTP MCP description:\n%s", out)
+	}
+	if strings.Contains(out, "widget") {
+		t.Errorf("help advertises retired widget:\n%s", out)
+	}
+}
+
 func TestInitThenDoctor(t *testing.T) {
 	isolatedEnv(t)
 	code, out, _ := run(t, "init")
@@ -76,7 +89,7 @@ func TestInitThenDoctor(t *testing.T) {
 		"[OK] config",
 		"[OK] workspace",
 		"[OK] mcp",
-		"11 tools registered",
+		"10 tools registered",
 		"Readiness:",
 		"[OK] local use: ready",
 		"[INFO] OpenAI tunnel: not configured (optional)",
@@ -658,7 +671,7 @@ func TestBinaryServeStdio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
-	if len(listed.Tools) != 11 {
+	if len(listed.Tools) != 10 {
 		t.Errorf("tools = %d, want 10", len(listed.Tools))
 	}
 

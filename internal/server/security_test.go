@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -157,8 +158,8 @@ func TestTokenNeverLeaksInStatus(t *testing.T) {
 	if code, body := get("/api/edits"); code != 200 || strings.Contains(body, "super-secret-token-value") {
 		t.Errorf("api/edits = %d (leak: %v)", code, strings.Contains(body, "super-secret-token-value"))
 	}
-	if code, body := get("/"); code != 200 || strings.Contains(body, "super-secret-token-value") {
-		t.Errorf("widget = %d (leak: %v)", code, strings.Contains(body, "super-secret-token-value"))
+	if code, body := get("/"); code != http.StatusNotFound || strings.Contains(body, "super-secret-token-value") {
+		t.Errorf("root = %d (leak: %v)", code, strings.Contains(body, "super-secret-token-value"))
 	}
 
 	// Unauthenticated /api/status is rejected.
@@ -170,6 +171,64 @@ func TestTokenNeverLeaksInStatus(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 401 {
 		t.Errorf("unauthenticated /api/status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestEditsEndpointFollowsAccessMode(t *testing.T) {
+	tokenServer := newTestServer(t)
+	tokenServer.recordEdits(testEditFilesWithDiff("known edit text"))
+	tokenServer.cfg.Remote.Mode = "token"
+	tokenServer.cfg.Remote.Token = "edits-test-token"
+	tokenServer.auth = NewAuthorizeMust("token", "edits-test-token")
+	tokenHTTP := httptest.NewServer(tokenServer.Handler())
+	defer tokenHTTP.Close()
+
+	request := func(server *httptest.Server, token, origin string) (int, string) {
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/api/edits", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, string(body)
+	}
+
+	if code, _ := request(tokenHTTP, "", ""); code != http.StatusUnauthorized {
+		t.Errorf("token-mode /api/edits without token = %d, want 401", code)
+	}
+	if code, body := request(tokenHTTP, "edits-test-token", ""); code != http.StatusOK || !strings.Contains(body, "known edit text") {
+		t.Errorf("token-mode /api/edits = %d, body contains known text: %v", code, strings.Contains(body, "known edit text"))
+	}
+
+	localServer := newTestServer(t)
+	localServer.recordEdits(testEditFilesWithDiff("local edit"))
+	localServer.auth = NewAuthorizeMust("local", "")
+	localHTTP := httptest.NewServer(localServer.Handler())
+	defer localHTTP.Close()
+	if code, _ := request(localHTTP, "", localHTTP.URL); code != http.StatusOK {
+		t.Errorf("same-origin local-mode /api/edits = %d, want 200", code)
+	}
+
+	unsafeServer := newTestServer(t)
+	unsafeServer.recordEdits(testEditFilesWithDiff("unsafe edit"))
+	unsafeServer.auth = NewAuthorizeMust("unsafe", "")
+	unsafeHTTP := httptest.NewServer(unsafeServer.Handler())
+	defer unsafeHTTP.Close()
+	if code, _ := request(unsafeHTTP, "", ""); code != http.StatusOK {
+		t.Errorf("credential-free unsafe-mode /api/edits = %d, want 200", code)
 	}
 }
 

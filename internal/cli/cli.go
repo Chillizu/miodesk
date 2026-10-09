@@ -21,7 +21,7 @@ Usage:
 Commands:
   setup      configure a new device for local use and OpenAI tunnel access
   init       create the default configuration
-  serve      run the local MCP server (HTTP + widget)
+  serve      run the local HTTP MCP server
   connect    run the server and connect it through the OpenAI tunnel
   tunnel     inspect the default connection (list, doctor)
   status     show whether the local server is running

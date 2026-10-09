@@ -43,6 +43,31 @@ Tunnel 本身就是 OpenAI 连接边界。ChatGPT 的可用入口仍受账号和
 权限控制，具体界面以[官方说明](https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt)
 为准。
 
+## Plugin Creator 包装
+
+`plugins/miodesk/` 使用 Agent Plugins 1.0 根级 `plugin.json`，并在
+`extensions.com.openai` 中映射 `.app.json` 里的已注册 MCP app。`.app.json` 是每位使用者私有的
+MCP app 绑定，不提交到仓库；先复制 `.app.example.json` 为 `.app.json`，再填入当前
+ChatGPT 中实际注册的 app ID，核对无误后才打包安装。`.codex-plugin/plugin.json`
+保留为旧客户端兼容清单；`assets/miodesk-logo.png` 同时用于插件 logo 和 composer 图标。
+技能目录只保留工作区检查、授权修改、命令边界和会话续接等必要约束。该插件继续复用
+Developer Mode 中注册的 MCP app 和 Secure MCP Tunnel，不替代 miodesk server、Tunnel
+或 MCP app 注册。
+
+使用流程：
+
+1. 在 ChatGPT Plugins 中保留已注册的 miodesk MCP app，并在服务 schema 变更后刷新它。
+   将 `plugins/miodesk/.app.example.json` 复制到 `plugins/miodesk/.app.json`，
+   用自己当前注册的 app ID 替换示例值（此文件会被 Git 忽略）。
+2. 在 Plugins Directory 中打开并安装私有 `miodesk` 插件。
+3. 在新对话中启用插件并核对工具列表，再做只读状态调用和代表性文件操作。
+
+截至 2026-09-23，用户已在新对话中手动确认刷新后出现新 schema。ChatGPT 将
+“创建 MCP 应用”入口移到二级菜单这一点本身不能证明该功能即将弃用；当前
+Plugin Creator 文档仍要求先注册 MCP app，再通过 app ID 创建插件包装。
+如果将来要发布到公共 Plugins Directory，需要另行评估公开 HTTPS MCP endpoint；
+OpenAI Secure MCP Tunnel 用于本地开发连接，不满足公共插件提交的 endpoint 要求。
+
 ## 启动方式
 
 前台一条命令会同时启动本地 MCP server 和 tunnel：
@@ -141,8 +166,13 @@ Authorization 或任何 token。没有安装 service 时，前台运行的日志
 curl --fail http://127.0.0.1:8787/healthz
 ```
 
-`Error loading app / Failed to fetch template` 属于 ChatGPT/MCP Apps 获取
-widget resource 失败，不等同于 MCP tool 逻辑失败。常规 read/search/list/
-write/edit/delete/short command 使用 Native-first 返回；只有 status 和长任务
-生命周期结果声明可选 widget。此时先确认 endpoint、Tunnel 选择和
-`miodesk logs`，不要把 widget 错误误判成文件工具不可用。
+如果 ChatGPT 仍显示旧的 `command` / `command_start` / `command_poll` /
+`command_cancel` schema，而本地 `tools/list` 已经显示 `exec_command` /
+`write_stdin`，这是客户端/connector 的 schema 缓存，而不是 server 回退。当前
+server 只 advertise 新工具；一个窄的临时兼容层会接住旧调用，但不会把旧工具
+重新放回 `tools/list`，也不会向旧调用注入新 schema 才有的可选字段。优先重载
+connector/client 来刷新 schema，不要为了迎合缓存再次扩张旧工具面。
+
+`status` 是只读 MCP 工具，返回简洁的文本/结构化诊断；miodesk 不发布
+MCP Apps UI 模板或 widget 资源。若旧会话仍显示模板加载错误，应刷新
+connector/client 的工具 schema，并通过 `status` 和 `miodesk logs` 核查实际服务。

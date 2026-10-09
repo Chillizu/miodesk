@@ -95,8 +95,9 @@ func Run(cfgPath string, cfg *config.Config, cfgErr error) Report {
 	}
 
 	srv := server.New(cfg, ws)
-	names := make([]string, 0, len(srv.Tools()))
-	for _, t := range srv.Tools() {
+	registered := srv.Tools()
+	names := make([]string, 0, len(registered))
+	for _, t := range registered {
 		names = append(names, t.Name)
 	}
 	r.add("mcp", StatusOK, fmt.Sprintf("%d tools registered (%s)", len(names), strings.Join(names, ", ")))

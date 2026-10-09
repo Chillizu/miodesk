@@ -57,7 +57,9 @@ func (t *Tailscale) Start(ctx context.Context, opts Options) (Endpoint, error) {
 	t.port = port
 	t.mu.Unlock()
 
-	deadline := time.After(time.Duration(Timeout(opts.TimeoutSeconds)) * time.Second)
+	timeoutSecs := normalizeTimeout(opts.TimeoutSeconds)
+	deadline := time.NewTimer(time.Duration(timeoutSecs) * time.Second)
+	defer deadline.Stop()
 	tick := time.NewTicker(400 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -65,9 +67,9 @@ func (t *Tailscale) Start(ctx context.Context, opts Options) (Endpoint, error) {
 		case <-ctx.Done():
 			t.Stop()
 			return Endpoint{}, ctx.Err()
-		case <-deadline:
+		case <-deadline.C:
 			t.Stop()
-			return Endpoint{}, fmt.Errorf("tailscale funnel status did not show a URL within %ds", Timeout(opts.TimeoutSeconds))
+			return Endpoint{}, fmt.Errorf("tailscale funnel status did not show a URL within %ds", timeoutSecs)
 		case <-tick.C:
 			out, err := exec.CommandContext(ctx, "tailscale", "funnel", "status").Output()
 			if err != nil {

@@ -3,8 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -12,98 +10,159 @@ import (
 )
 
 const (
-	// maxLongOutput caps captured output for long-running tasks.
+	// maxLongOutput caps captured output for resumable exec sessions.
 	maxLongOutput = 1 << 20
-	// maxRunningProcs prevents a client from exhausting the host by creating
-	// unbounded long-running tasks. Finished tasks are retained separately.
+	// maxRunningProcs prevents a client from exhausting the host with sessions.
 	maxRunningProcs = 32
-	// maxFinishedProcs bounds remembered completed long tasks.
+	// maxFinishedProcs bounds remembered completed sessions.
 	maxFinishedProcs = 50
 	// commandShutdownTimeout prevents a stuck child from blocking server exit.
 	commandShutdownTimeout = 5 * time.Second
 )
 
-// Manager owns long-running tasks for one server process.
+// Manager owns resumable exec sessions for one server process.
 type Manager struct {
 	mu    sync.Mutex
 	next  int
-	procs map[string]*procHandle
-	order []string // creation order, for shutdown and eviction
+	procs map[int]*procHandle
+	order []int // creation order, for shutdown and eviction
 }
 
-// NewManager creates an empty task manager.
+// NewManager creates an empty exec session manager.
 func NewManager() *Manager {
-	return &Manager{procs: map[string]*procHandle{}}
+	return &Manager{procs: map[int]*procHandle{}}
 }
 
-// TaskCommandInput starts a long-running task. Label is a short user-facing
-// summary shown by UI-capable clients; command remains the executable payload.
-type TaskCommandInput struct {
-	Command string `json:"command" jsonschema:"shell command to run, e.g. go test ./..."`
-	CWD     string `json:"cwd,omitempty" jsonschema:"working directory inside the workspace (default: root)"`
-	Timeout int    `json:"timeout,omitempty" jsonschema:"seconds before the command is killed (default 120, max 600)"`
-	Label   string `json:"label,omitempty" jsonschema:"short user-facing task summary, e.g. Run installation tests"`
-}
-
-func (in TaskCommandInput) commandInput() CommandInput {
-	return CommandInput{Command: in.Command, CWD: in.CWD, Timeout: in.Timeout}
-}
-
-// TaskLabel normalizes a user-facing task summary for consistent start/poll output.
-func TaskLabel(label string) string {
-	return normalizeTaskLabel(label)
-}
-
-func normalizeTaskLabel(label string) string {
-	label = strings.Join(strings.Fields(label), " ")
-	if label == "" {
-		return "Run background task"
-	}
-	runes := []rune(label)
-	if len(runes) > 80 {
-		return string(runes[:79]) + "…"
-	}
-	return label
-}
-
-// Start launches a command and returns its task id immediately.
-func (m *Manager) Start(ws *workspace.Workspace, in TaskCommandInput) (string, error) {
-	p, err := newProc(context.Background(), ws, in.commandInput(), maxLongOutput)
+// StartSession launches a resumable model-facing process with writable stdin.
+func (m *Manager) StartSession(ws *workspace.Workspace, in processInput) (int, error) {
+	p, err := newProc(context.Background(), ws, in, maxLongOutput)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 
 	m.mu.Lock()
 	if m.runningCountLocked() >= maxRunningProcs {
 		m.mu.Unlock()
-		p.cancel()
-		return "", fmt.Errorf("command_start: already running %d long commands (cap %d); poll or cancel an existing task first", maxRunningProcs, maxRunningProcs)
+		p.abortBeforeStart()
+		return 0, fmt.Errorf("already running %d exec sessions (cap %d); resume or cancel an existing session first", maxRunningProcs, maxRunningProcs)
 	}
-	if err := p.cmd.Start(); err != nil {
+	if err := p.start(); err != nil {
 		m.mu.Unlock()
-		p.cancel()
-		return "", fmt.Errorf("command_start: %w", err)
+		p.abortBeforeStart()
+		return 0, fmt.Errorf("start exec session: %w", err)
 	}
 	m.next++
-	p.id = "task-" + strconv.Itoa(m.next)
-	p.label = normalizeTaskLabel(in.Label)
-	m.procs[p.id] = p
-	m.order = append(m.order, p.id)
+	id := m.next
+	m.procs[id] = p
+	m.order = append(m.order, id)
 	m.evictLocked()
 	m.mu.Unlock()
 
 	go func() {
-		waitErr := waitWithTimeout(p, DefaultTimeout(in.Timeout))
+		waitWithTimeout(p, normalizeCommandTimeout(in.timeout))
 		p.exitCode.Store(int32(exitCodeOf(p)))
-		p.timedOut.Store(waitErr == errTimedOut)
 		p.elapsedMS.Store(time.Since(p.started).Milliseconds())
 		close(p.doneCh)
 	}()
-	return p.id, nil
+	return id, nil
 }
 
-// runningCountLocked counts tasks whose completion channel is still open.
-// Callers must hold m.mu.
+func (m *Manager) waitFor(ctx context.Context, id int, wait time.Duration) error {
+	p, err := m.lookup(id)
+	if err != nil {
+		return err
+	}
+	if wait < 0 {
+		wait = 0
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-p.doneCh:
+		return nil
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Cancel stops a live session. Cancelling an already-finished session is a no-op.
+func (m *Manager) Cancel(id int) error {
+	p, err := m.lookup(id)
+	if err != nil {
+		return err
+	}
+	select {
+	case <-p.doneCh:
+		return nil
+	default:
+		p.cancel()
+	}
+	timer := time.NewTimer(commandShutdownTimeout)
+	defer timer.Stop()
+	select {
+	case <-p.doneCh:
+	case <-timer.C:
+		// Process group cancellation is best effort; do not hang the caller.
+	}
+	return nil
+}
+
+// Shutdown cancels every live session with one global grace period. The
+// shutdown bound must not grow linearly with the number of active sessions.
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	procs := make([]*procHandle, 0, len(m.order))
+	for _, id := range m.order {
+		if p, ok := m.procs[id]; ok {
+			procs = append(procs, p)
+		}
+	}
+	m.mu.Unlock()
+	shutdownProcesses(procs, commandShutdownTimeout)
+}
+
+func shutdownProcesses(procs []*procHandle, timeout time.Duration) {
+	for _, p := range procs {
+		if p == nil || p.doneCh == nil {
+			continue
+		}
+		select {
+		case <-p.doneCh:
+		default:
+			if p.cancel != nil {
+				p.cancel()
+			}
+		}
+	}
+	if timeout <= 0 {
+		return
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for _, p := range procs {
+		if p == nil || p.doneCh == nil {
+			continue
+		}
+		select {
+		case <-p.doneCh:
+		case <-timer.C:
+			return
+		}
+	}
+}
+
+func (m *Manager) lookup(id int) (*procHandle, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.procs[id]
+	if !ok {
+		return nil, fmt.Errorf("unknown exec session %d", id)
+	}
+	return p, nil
+}
+
 func (m *Manager) runningCountLocked() int {
 	count := 0
 	for _, p := range m.procs {
@@ -116,99 +175,12 @@ func (m *Manager) runningCountLocked() int {
 	return count
 }
 
-// Poll returns the accumulated status and output of one task.
-func (m *Manager) Poll(id string) (*PollOutput, error) {
-	p, err := m.lookup(id)
-	if err != nil {
-		return nil, fmt.Errorf("command_poll: %w", err)
-	}
-	status := "running"
-	elapsedMS := time.Since(p.started).Milliseconds()
-	var exitCode *int
-	select {
-	case <-p.doneCh:
-		status = "done"
-		elapsedMS = p.elapsedMS.Load()
-		code := int(p.exitCode.Load())
-		exitCode = &code
-	default:
-	}
-	return &PollOutput{
-		Kind:            "task",
-		ID:              p.id,
-		Label:           p.label,
-		Status:          status,
-		ExitCode:        exitCode,
-		Stdout:          p.stdout.String(),
-		Stderr:          p.stderr.String(),
-		StdoutTruncated: p.stdout.Truncated(),
-		StderrTruncated: p.stderr.Truncated(),
-		TimedOut:        p.timedOut.Load(),
-		ElapsedMS:       elapsedMS,
-	}, nil
-}
-
-// Cancel kills a running task; cancelling a finished task is a no-op.
-func (m *Manager) Cancel(id string) (*PollOutput, error) {
-	p, err := m.lookup(id)
-	if err != nil {
-		return nil, fmt.Errorf("command_cancel: %w", err)
-	}
-	select {
-	case <-p.doneCh:
-	default:
-		p.cancel()
-		select {
-		case <-p.doneCh:
-		case <-time.After(5 * time.Second):
-			// Process ignored the kill; report state as-is.
-		}
-	}
-	return m.Poll(id)
-}
-
-// Shutdown cancels every task; called on server exit.
-func (m *Manager) Shutdown() {
-	m.mu.Lock()
-	ids := append([]string(nil), m.order...)
-	m.mu.Unlock()
-	for _, id := range ids {
-		m.mu.Lock()
-		p, ok := m.procs[id]
-		m.mu.Unlock()
-		if !ok {
-			continue
-		}
-		select {
-		case <-p.doneCh:
-		default:
-			p.cancel()
-			select {
-			case <-p.doneCh:
-			case <-time.After(commandShutdownTimeout):
-				// The process is expected to be gone after group cancellation;
-				// do not make server shutdown hang forever if the OS refuses it.
-			}
-		}
-	}
-}
-
-func (m *Manager) lookup(id string) (*procHandle, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	p, ok := m.procs[id]
-	if !ok {
-		return nil, fmt.Errorf("unknown task %q", id)
-	}
-	return p, nil
-}
-
-// evictLocked drops the oldest finished tasks beyond the memory cap.
+// evictLocked drops the oldest finished sessions beyond the memory cap.
 // Callers must hold m.mu.
 func (m *Manager) evictLocked() {
 	for {
 		doneCount := 0
-		var oldestDone string
+		oldestDone := 0
 		for _, id := range m.order {
 			p, ok := m.procs[id]
 			if !ok {
@@ -217,7 +189,7 @@ func (m *Manager) evictLocked() {
 			select {
 			case <-p.doneCh:
 				doneCount++
-				if oldestDone == "" {
+				if oldestDone == 0 {
 					oldestDone = id
 				}
 			default:
@@ -234,31 +206,4 @@ func (m *Manager) evictLocked() {
 			}
 		}
 	}
-}
-
-type PollOutput struct {
-	Kind            string `json:"kind"` // "task"
-	ID              string `json:"id"`
-	Label           string `json:"label"`
-	Status          string `json:"status"` // running | done
-	ExitCode        *int   `json:"exit_code"`
-	Stdout          string `json:"stdout"`
-	Stderr          string `json:"stderr"`
-	StdoutTruncated bool   `json:"stdout_truncated"`
-	StderrTruncated bool   `json:"stderr_truncated"`
-	TimedOut        bool   `json:"timed_out"`
-	ElapsedMS       int64  `json:"elapsed_ms"`
-}
-
-// TaskID identifies a long-running task, as returned by command_start.
-type TaskID struct {
-	ID string `json:"id" jsonschema:"task id returned by command_start"`
-}
-
-// TaskStarted is the command_start result.
-type TaskStarted struct {
-	Kind   string `json:"kind"` // "task"
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	Status string `json:"status"` // running
 }

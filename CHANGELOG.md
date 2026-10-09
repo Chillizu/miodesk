@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- Removed the embedded MCP Apps diagnostics widget and its static assets,
+  `ui://` resources and `/widget` / `/preview` HTTP routes. The ten native MCP
+  tools are unchanged; `status` remains a read-only structured result with
+  native invocation labels. `/api/status` and `/api/edits` retain local JSON
+  diagnostics. Historical `[widget]` config is accepted on load but no longer
+  persisted when configuration is saved. Hosts with cached status UI metadata
+  must refresh their MCP tool schema before adopting this build.
+- Added a ChatGPT plugin packaging draft under `plugins/miodesk/`, keeping the
+  account-specific `.app.json` binding local and ignored by Git. Operators
+  create it from `.app.example.json` and validate their app ID before upload.
+- Added persistent cross-session working contexts: one `context` tool can keep a
+  rolling active handoff, freeze immutable checkpoints, resume the latest state,
+  and list available context ids. `working_directory` is a workspace-contained
+  locator only and does not change the configured workspace root.
+- Collapsed the old model-facing command lifecycle into a Codex-shaped
+  `exec_command` + `write_stdin` surface. Quick commands finish inline; longer
+  commands return a numeric `session_id`, and later calls consume only new output,
+  can write stdin, or cancel pipe-backed sessions with Ctrl-C. The existing bounded
+  session manager remains internal, so the safety limits survive without exposing
+  lifecycle bookkeeping. `tty=true` now allocates a real Unix PTY for interactive
+  programs; pipe mode remains the default, and terminal multiplexers such as tmux
+  are deliberately not part of the MCP contract.
+- Added a narrow migration shim for stale clients that still call the formerly
+  advertised `command`, `command_start`, `command_poll`, or `command_cancel`
+  tools. The shim rewrites only fields that existed in the retired schemas,
+  never injects new-only optional arguments, does not re-advertise retired
+  tools, and is intended to be removed after client-side schema caches age out.
+- Kept command execution UI-free. Command sessions use lightweight native
+  invocation feedback and never advertise an output template or create polling cards.
+- Tightened process lifecycle cleanup: failed/pre-cap exec starts close their
+  stdin resources, server shutdown gives all active exec sessions one shared
+  bounded grace period, while process-backed tunnel providers share bounded
+  stop logic and acquisition timers are explicitly stopped on early return.
 - Added a companion `miodesk-tunnel.service` for configured OpenAI Secure MCP
   Tunnel profiles, so Linux service commands supervise the loopback MCP server
   and outbound tunnel together.
@@ -10,7 +43,7 @@
   tunnel service is already running.
 - Included the tunnel companion journal in `miodesk logs`.
 - Hardened persistent OpenAI tunnel reuse against port/profile mismatches and
-  completed tunnel reporting in status JSON recovery and the diagnostics widget.
+  completed tunnel reporting in local status JSON.
 
 ## 0.2.1 — 2026-09-08
 

@@ -130,7 +130,7 @@ services, `miodesk connect` still starts both processes in the foreground.
 | ----------- | ------------------------------------------------------------ |
 | `setup`     | configure a new device, workspace, port, and OpenAI profile |
 | `init`      | create or update the low-level configuration                 |
-| `serve`     | run the local MCP server and widget                          |
+| `serve`     | run the local HTTP MCP server                          |
 | `connect`   | run/reuse the server and connect through the default tunnel  |
 | `tunnel`    | inspect the default connection with `list` or `doctor`      |
 | `status`    | show local server, tunnel provider, and tunnel service state (`--json`) |
@@ -184,18 +184,34 @@ symlink escapes are rejected.
 - **write** — create or overwrite; parent directories only with `create_dirs`
 - **edit** — validated atomic edits with structured diffs
 - **delete** — guarded file, symlink, and recursive-directory deletion
-- **command** — bounded command execution with stdout, stderr, exit code, and elapsed time
-- **command_start / command_poll / command_cancel** — lifecycle for long tasks
+- **exec_command** — run a workspace command; return final output when it exits quickly, otherwise return a numeric `session_id`; `tty=true` opts into a real interactive terminal
+- **write_stdin** — resume a live exec session, poll with empty input, or write stdin; Ctrl-C behaves like terminal input for TTY sessions and cancels pipe sessions
+- **context** — cross-session rolling handoffs with `update`, immutable `checkpoint`, `resume`, and `list`
 
-## ChatGPT UI
+### Cross-session handoff
 
-miodesk is Native-first. Regular file and short-command results remain useful
-in the host's native tool view and do not create an extra widget. Only status
-and long-running command lifecycle results opt into the optional embedded MCP
-Apps widget. The widget is plain embedded HTML/CSS/JavaScript, has no external
-origin, supports light/dark/auto themes, and uses container-aware responsive
-layout for narrow ChatGPT views. Preview it at `/widget` while a local server
-is running.
+`context` keeps a small, persistent working state outside the project tree so a
+new AI session can continue without replaying the old chat. A human-readable
+context id such as `miodesk-maintenance` identifies the line of work. Its
+`working_directory` is only a locator for where that work lives inside the
+configured workspace; it never changes `workspace.root` or the server sandbox.
+
+The active handoff is updated at meaningful state changes (goal, current state,
+reasoning, decisions, blockers, next steps). `checkpoint` freezes the current
+active handoff at an explicit or important milestone, while `resume` always
+returns the newest active state. `list` discovers available context ids when a
+new session does not already know which one to resume. Miodesk retains a small
+internal revision history as a safety net, but normal resume output contains
+only the current handoff and checkpoint count.
+
+## ChatGPT and MCP clients
+
+miodesk exposes ten native MCP tools. File and command tools use the host's
+normal tool view, and `status` returns a compact read-only structured result.
+No MCP Apps UI resource or output template is published. Exec sessions are
+explicit handles threaded through `exec_command` and `write_stdin`; ordinary
+commands use pipes, while `tty=true` allocates a Unix PTY for interactive use.
+Local diagnostics remain available as JSON at `/api/status` and `/api/edits`.
 
 ## Configuration
 
@@ -217,9 +233,6 @@ provider = "openai"
 profile = "miodesk"
 # tunnel_id, runtime_key_file, profile_dir, and client_path are optional
 # until OpenAI Secure MCP Tunnel is configured.
-
-[widget]
-theme = "auto"      # auto | light | dark
 
 [logging]
 level = "info"      # debug | info | warn | error
