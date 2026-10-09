@@ -22,7 +22,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/Chillizu/miodesk/internal/adapter"
 	"github.com/Chillizu/miodesk/internal/config"
 	"github.com/Chillizu/miodesk/internal/logging"
 	"github.com/Chillizu/miodesk/internal/tools"
@@ -48,6 +47,43 @@ func newTestServer(t *testing.T) *Server {
 	cfg.Workspace.Root = root
 	cfg.Server.Port = 0
 	return New(cfg, ws)
+}
+
+func TestHandlerRemovesWidgetRoutesAndKeepsJSONAPIs(t *testing.T) {
+	ts := httptest.NewServer(newTestServer(t).Handler())
+	defer ts.Close()
+	for _, path := range []string{"/", "/widget", "/preview"} {
+		resp, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", path, resp.StatusCode)
+		}
+	}
+	for _, path := range []string{"/healthz", "/api/status", "/api/edits"} {
+		resp, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, resp.StatusCode)
+		}
+		if path == "/api/status" {
+			var got struct {
+				Kind  string `json:"kind"`
+				Theme string `json:"theme"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Kind != "status" || got.Theme != "auto" {
+				t.Errorf("status = %+v, want kind=status theme=auto", got)
+			}
+		}
+		resp.Body.Close()
+	}
 }
 
 func TestToolsReturnsSnapshot(t *testing.T) {
@@ -623,12 +659,11 @@ func TestListenServeShutdown(t *testing.T) {
 
 	resp, err = http.Get(base + "/")
 	if err != nil {
-		t.Fatalf("widget: %v", err)
+		t.Fatalf("root: %v", err)
 	}
-	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(body), "<title>miodesk</title>") {
-		t.Error("widget index not served at /")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("root = %d, want 404", resp.StatusCode)
 	}
 
 	resp, err = http.Get(base + "/api/status")
@@ -1020,7 +1055,7 @@ func TestMCPNewTools(t *testing.T) {
 		t.Errorf("stats = %+v", status.Stats)
 	}
 
-	// /api/edits serves the recorded edit for the diff viewer.
+	// /api/edits serves the recorded edit through the JSON API.
 	resp, err := http.Get(ts.URL + "/api/edits")
 	if err != nil {
 		t.Fatal(err)
@@ -1111,7 +1146,7 @@ func TestContextAcceptsLegacyActiveReasoningInput(t *testing.T) {
 	}
 }
 
-func TestMCPAppsDashboard(t *testing.T) {
+func TestMCPStatusWithoutAppsUI(t *testing.T) {
 	s := newTestServer(t)
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
@@ -1128,64 +1163,14 @@ func TestMCPAppsDashboard(t *testing.T) {
 	}
 	defer sess.Close()
 
-	// The widget resource is readable with the MCP Apps media type, holds
-	// the inlined dashboard, and carries the ui meta.
-	read, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: adapter.WidgetURI})
+	resources, err := sess.ListResources(ctx, &mcp.ListResourcesParams{})
 	if err != nil {
-		t.Fatalf("resources/read: %v", err)
+		t.Fatalf("resources/list: %v", err)
 	}
-	if len(read.Contents) != 1 {
-		t.Fatalf("contents = %d", len(read.Contents))
-	}
-	rc := read.Contents[0]
-	if rc.MIMEType != "text/html;profile=mcp-app" {
-		t.Errorf("mimeType = %q", rc.MIMEType)
-	}
-	if !strings.Contains(rc.Text, "<style>") || !strings.Contains(rc.Text, "renderStatus") {
-		t.Error("resource text should be the assembled diagnostics HTML")
-	}
-	if !strings.Contains(rc.Text, "--color-background-primary") || !strings.Contains(rc.Text, "safeAreaInsets") {
-		t.Error("widget should consume MCP Apps host style variables and safe-area context")
-	}
-	resourceUI, ok := rc.Meta["ui"].(map[string]any)
-	if !ok || resourceUI["prefersBorder"] != true {
-		t.Fatalf("contents _meta.ui = %v", rc.Meta)
-	}
-	resourceCSP, ok := resourceUI["csp"].(map[string]any)
-	if !ok {
-		t.Fatalf("contents _meta.ui.csp = %v", resourceUI)
-	}
-	for _, key := range []string{"connectDomains", "resourceDomains"} {
-		domains, ok := resourceCSP[key].([]any)
-		if !ok || len(domains) != 0 {
-			t.Errorf("contents csp.%s = %#v, want explicit empty allowlist", key, resourceCSP[key])
-		}
-	}
-	if _, ok := resourceCSP["frameDomains"]; ok {
-		t.Errorf("contents csp.frameDomains should be omitted: %v", resourceCSP)
-	}
-	for _, legacyURI := range []string{
-		"ui://miodesk/status.html",
-		"ui://miodesk/status-v2.html",
-		"ui://miodesk/status-v3.html",
-		"ui://miodesk/status-v4.html",
-		"ui://miodesk/status-v5.html",
-		"ui://miodesk/status-v6.html",
-		"ui://miodesk/status-v7.html",
-		"ui://miodesk/status-v8.html",
-		"ui://miodesk/status-v9.html",
-	} {
-		legacyRead, err := sess.ReadResource(ctx, &mcp.ReadResourceParams{URI: legacyURI})
-		if err != nil {
-			t.Fatalf("legacy resources/read %q: %v", legacyURI, err)
-		}
-		if len(legacyRead.Contents) != 1 || legacyRead.Contents[0].URI != legacyURI || legacyRead.Contents[0].Text != rc.Text {
-			t.Errorf("legacy resource %q was not served as the current widget", legacyURI)
-		}
+	if len(resources.Resources) != 0 {
+		t.Fatalf("resources/list = %+v, want empty", resources.Resources)
 	}
 
-	// Only status declares a UI resource. Unified exec tools keep native
-	// invocation labels but never attach an output template.
 	listed, err := sess.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
@@ -1245,21 +1230,6 @@ func TestMCPAppsDashboard(t *testing.T) {
 	assertSchemaProperties(execCommand, []string{"cmd", "workdir", "tty", "yield_time_ms", "timeout_ms"}, []string{"command", "label", "id"})
 	assertSchemaProperties(writeStdin, []string{"session_id", "chars", "yield_time_ms"}, []string{"id", "command"})
 
-	ui, _ := status.Meta["ui"].(map[string]any)
-	if ui == nil || ui["resourceUri"] != adapter.WidgetURI {
-		t.Errorf("status _meta.ui = %v", status.Meta)
-	}
-	if status.Meta["openai/outputTemplate"] != adapter.WidgetURI {
-		t.Errorf("ChatGPT alias missing: %v", status.Meta)
-	}
-	for _, tl := range []*mcp.Tool{execCommand, writeStdin} {
-		if _, ok := tl.Meta["ui"]; ok {
-			t.Errorf("%s should not advertise embedded UI: %v", tl.Name, tl.Meta)
-		}
-		if _, ok := tl.Meta["openai/outputTemplate"]; ok {
-			t.Errorf("%s should not advertise an output template: %v", tl.Name, tl.Meta)
-		}
-	}
 	if status.Annotations == nil || !status.Annotations.ReadOnlyHint {
 		t.Errorf("status annotations = %+v", status.Annotations)
 	}
@@ -1274,17 +1244,19 @@ func TestMCPAppsDashboard(t *testing.T) {
 		t.Errorf("read title = %q", read2.Title)
 	}
 
+	if len(listed.Tools) != 10 {
+		t.Fatalf("tools/list count = %d, want 10", len(listed.Tools))
+	}
 	for _, tl := range listed.Tools {
-		uiMeta, _ := tl.Meta["ui"].(map[string]any)
-		_, hasResource := uiMeta["resourceUri"]
-		_, hasTemplate := tl.Meta["openai/outputTemplate"]
-		wantResource := tl.Name == "status"
-		if hasResource != wantResource || hasTemplate != wantResource {
-			t.Errorf("%s resource metadata present = (%v, %v), want = %v; meta = %v", tl.Name, hasResource, hasTemplate, wantResource, tl.Meta)
+		if _, ok := tl.Meta["ui"]; ok {
+			t.Errorf("%s advertises _meta.ui: %v", tl.Name, tl.Meta)
 		}
-		if tl.Name == "exec_command" || tl.Name == "write_stdin" {
+		if _, ok := tl.Meta["openai/outputTemplate"]; ok {
+			t.Errorf("%s advertises output template: %v", tl.Name, tl.Meta)
+		}
+		if tl.Name == "exec_command" || tl.Name == "write_stdin" || tl.Name == "status" {
 			if tl.Meta["openai/toolInvocation/invoking"] == nil || tl.Meta["openai/toolInvocation/invoked"] == nil {
-				t.Errorf("%s should keep native invocation labels: %v", tl.Name, tl.Meta)
+				t.Errorf("%s lost invocation labels: %v", tl.Name, tl.Meta)
 			}
 		}
 	}

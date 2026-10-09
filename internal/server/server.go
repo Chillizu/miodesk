@@ -1,4 +1,4 @@
-// Package server wires miodesk's MCP server, widget, and status API together
+// Package server wires miodesk's MCP server and status API together
 // and owns their HTTP and stdio lifecycles. MCP protocol handling is the
 // official Go SDK's job; miodesk contributes tools and transport hosting.
 package server
@@ -8,13 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,7 +31,6 @@ import (
 	"github.com/Chillizu/miodesk/internal/tools"
 	"github.com/Chillizu/miodesk/internal/workspace"
 	"github.com/Chillizu/miodesk/internal/xdg"
-	widget "github.com/Chillizu/miodesk/web/widget"
 )
 
 const (
@@ -52,8 +49,6 @@ func newHTTPServer(handler http.Handler, readTimeout time.Duration) *http.Server
 	}
 }
 
-var previewKindPattern = regexp.MustCompile(`^[a-z0-9-]{0,32}$`)
-
 // Server hosts miodesk's MCP tools for HTTP and stdio clients.
 type Server struct {
 	cfg     *config.Config
@@ -67,7 +62,7 @@ type Server struct {
 	statsMu sync.Mutex
 	stats   map[string]int64
 
-	// Recent edit results feed the widget's diff viewer.
+	// Recent edit results feed the JSON edit-history API.
 	editsMu   sync.Mutex
 	edits     []EditRecord
 	editBytes int
@@ -82,13 +77,13 @@ type Server struct {
 	auth *Authorize
 }
 
-// ToolInfo describes one registered tool for the widget and status output.
+// ToolInfo describes one registered tool for local status output.
 type ToolInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
-// EditRecord is one applied edit batch, kept for the widget's diff viewer.
+// EditRecord is one applied edit batch kept for the JSON edit-history API.
 type EditRecord struct {
 	At    time.Time              `json:"at"`
 	Files []tools.EditFileResult `json:"files"`
@@ -140,17 +135,11 @@ func New(cfg *config.Config, ws *workspace.Workspace) *Server {
 		},
 	)
 	registerTools(s)
-	// The ChatGPT / MCP Apps dashboard is host-facing UI metadata; it lives
-	// in the adapter, never in the core tools.
-	if err := adapter.Attach(s.mcp, widget.Static, func(ctx context.Context) (out any, err error) {
+	adapter.RegisterStatus(s.mcp, func(ctx context.Context) (out any, err error) {
 		finish := s.beginTool(ctx, "status")
 		defer func() { finish(err) }()
 		return s.MCPStatus(), nil
-	}); err != nil {
-		// Broken embedded assets are a build error; degrade to text-only
-		// rather than refusing to serve.
-		slog.Warn("dashboard widget unavailable", "err", err)
-	}
+	})
 	return s
 }
 
@@ -219,7 +208,7 @@ func (s *Server) recentEdits() []EditRecord {
 // cloneEditRecords returns an immutable snapshot for JSON/API consumers. The
 // handler must release editsMu before encoding so a slow client cannot block
 // an edit call; copying nested slices also prevents later mutations from
-// changing an already-returned dashboard.
+// changing an already-returned response.
 func cloneEditRecords(src []EditRecord) []EditRecord {
 	if src == nil {
 		return nil
@@ -294,8 +283,8 @@ func editFilesDiffBytes(files []tools.EditFileResult) int {
 	return total
 }
 
-// LocalStatus keeps the standalone diagnostics renderer's kind discriminator
-// while leaving edit history on the dedicated /api/edits endpoint.
+// LocalStatus keeps the JSON diagnostics kind discriminator while leaving edit
+// history on the dedicated /api/edits endpoint.
 type LocalStatus struct {
 	Kind string `json:"kind"`
 	Status
@@ -305,10 +294,9 @@ func (s *Server) LocalStatus() LocalStatus {
 	return LocalStatus{Kind: "status", Status: s.Status()}
 }
 
-// MCPStatus is intentionally smaller than the local Status payload. ChatGPT
-// only needs the fields rendered by the inline status view; detailed tool
-// metadata and edit history already exist elsewhere and should not be repeated
-// into model context.
+// MCPStatus is intentionally smaller than the local Status payload. Clients
+// get a compact structured summary; tool metadata and edit history stay on
+// local JSON endpoints instead of being repeated into model context.
 type MCPStatus struct {
 	Kind          string `json:"kind"`
 	Name          string `json:"name"`
@@ -349,7 +337,7 @@ func registerTools(s *Server) {
 		{Name: "exec_command", Description: "Run a command and return output or a resumable session"},
 		{Name: "write_stdin", Description: "Resume, poll, write to, or cancel an exec session"},
 		{Name: "context", Description: "Maintain cross-session rolling handoffs and checkpoints"},
-		{Name: "status", Description: "Server status dashboard data"},
+		{Name: "status", Description: "Server status data"},
 	}
 
 	// Every annotation is set explicitly: ChatGPT reads these hints to decide
@@ -523,8 +511,7 @@ func (s *Server) Tools() []ToolInfo { return append([]ToolInfo(nil), s.tools...)
 // AccessMode reports the active trust level for CLI/doctor output.
 func (s *Server) AccessMode() AccessMode { return s.auth.Mode() }
 
-// Handler assembles the HTTP surface: MCP at /mcp, widget at /, status at
-// /api/status, recent edits at /api/edits, health at /healthz.
+// Handler serves MCP, health, status JSON, and recent edits JSON.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// The current MCP HTTP protocol (2026-07-28) is sessionless. JSON responses
@@ -545,33 +532,6 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s.LocalStatus())
 	})
-	// /preview is a development view for the diagnostics widget; no MCP involved.
-	mux.HandleFunc("GET /preview", func(w http.ResponseWriter, r *http.Request) {
-		kind := r.URL.Query().Get("kind")
-		if kind == "" {
-			kind = "all"
-		}
-		if !previewKindPattern.MatchString(kind) {
-			http.Error(w, "bad kind", http.StatusBadRequest)
-			return
-		}
-		html, err := adapter.PreviewHTML(widget.Static, kind)
-		if err != nil {
-			http.Error(w, "widget unavailable", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(html))
-	})
-	mux.HandleFunc("GET /widget", func(w http.ResponseWriter, _ *http.Request) {
-		html, err := adapter.WidgetHTML(widget.Static)
-		if err != nil {
-			http.Error(w, "widget unavailable", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(html))
-	})
 	mux.HandleFunc("GET /api/edits", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		edits := s.recentEdits()
@@ -580,9 +540,6 @@ func (s *Server) Handler() http.Handler {
 		}
 		_ = json.NewEncoder(w).Encode(edits)
 	})
-	if static, err := fs.Sub(widget.Static, "static"); err == nil {
-		mux.Handle("/", http.FileServerFS(static))
-	}
 	return s.requestLogger(s.auth.Middleware(mux))
 }
 
@@ -657,7 +614,7 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 	})
 }
 
-// ToolCalls is the real usage data behind the widget's token-stats strip.
+// ToolCalls is the real usage data exposed by status.
 type ToolCalls struct {
 	Calls map[string]int64 `json:"calls"`
 	Total int64            `json:"total"`
@@ -690,10 +647,6 @@ func (s *Server) Status() Status {
 	}
 	s.statsMu.Unlock()
 
-	theme := s.cfg.Widget.Theme
-	if theme == "" {
-		theme = "auto"
-	}
 	remote := string(s.auth.Mode())
 	return Status{
 		Name:          "miodesk",
@@ -702,7 +655,7 @@ func (s *Server) Status() Status {
 		Workspace:     s.ws.Root(),
 		Endpoint:      s.MCPURL(),
 		Port:          int(s.port.Load()),
-		Theme:         theme,
+		Theme:         "auto",
 		Remote:        remote,
 		Tunnel:        s.cfg.Tunnel.Provider,
 		StartedAt:     s.started,
@@ -777,7 +730,7 @@ func (s *Server) RunStdio(ctx context.Context) error {
 	return err
 }
 
-// URL is the widget/status base URL, for display after Listen.
+// URL is the local HTTP base URL, for display after Listen.
 func (s *Server) URL() string    { return s.baseURL("") }
 func (s *Server) MCPURL() string { return s.baseURL("/mcp") }
 

@@ -158,8 +158,8 @@ func TestTokenNeverLeaksInStatus(t *testing.T) {
 	if code, body := get("/api/edits"); code != 200 || strings.Contains(body, "super-secret-token-value") {
 		t.Errorf("api/edits = %d (leak: %v)", code, strings.Contains(body, "super-secret-token-value"))
 	}
-	if code, body := get("/"); code != 200 || strings.Contains(body, "super-secret-token-value") {
-		t.Errorf("widget = %d (leak: %v)", code, strings.Contains(body, "super-secret-token-value"))
+	if code, body := get("/"); code != http.StatusNotFound || strings.Contains(body, "super-secret-token-value") {
+		t.Errorf("root = %d (leak: %v)", code, strings.Contains(body, "super-secret-token-value"))
 	}
 
 	// Unauthenticated /api/status is rejected.

@@ -54,10 +54,6 @@ type OpenAITunnel struct {
 	ClientPath     string `toml:"client_path"`
 }
 
-type Widget struct {
-	Theme string `toml:"theme"` // auto | light | dark
-}
-
 // Logging controls diagnostic records emitted by the server and CLI. The
 // default stderr sink is intentional: the systemd user service collects it in
 // journald, while foreground runs keep the same records visible in a terminal.
@@ -76,7 +72,7 @@ type Remote struct {
 	// `miodesk connect` refuse to open a remote entrance.
 	Mode string `toml:"mode"`
 	// Token is the bearer secret for mode "token". It never appears in
-	// status, doctor, widget, or error output.
+	// status, doctor, or error output.
 	Token string `toml:"token"`
 }
 
@@ -84,7 +80,6 @@ type Config struct {
 	Server    Server    `toml:"server"`
 	Workspace Workspace `toml:"workspace"`
 	Tunnel    Tunnel    `toml:"tunnel"`
-	Widget    Widget    `toml:"widget"`
 	Logging   Logging   `toml:"logging"`
 	Remote    Remote    `toml:"remote"`
 }
@@ -97,7 +92,6 @@ func Default() *Config {
 		Server:    Server{Host: "127.0.0.1", Port: DefaultPort},
 		Workspace: Workspace{Root: home},
 		Tunnel:    Tunnel{Provider: "openai", OpenAI: OpenAITunnel{Profile: DefaultOpenAIProfile}},
-		Widget:    Widget{Theme: "auto"},
 		Logging:   Logging{Level: "info", Format: "text"},
 	}
 }
@@ -204,9 +198,6 @@ func (c *Config) applyDefaults() {
 	if c.Tunnel.OpenAI.Profile == "" {
 		c.Tunnel.OpenAI.Profile = def.Tunnel.OpenAI.Profile
 	}
-	if c.Widget.Theme == "" {
-		c.Widget.Theme = def.Widget.Theme
-	}
 	if c.Logging.Level == "" {
 		c.Logging.Level = def.Logging.Level
 	}
@@ -219,11 +210,6 @@ func (c *Config) applyDefaults() {
 func (c *Config) Validate() error {
 	if c.Server.Port < 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port %d out of range 0-65535", c.Server.Port)
-	}
-	switch c.Widget.Theme {
-	case "auto", "light", "dark":
-	default:
-		return fmt.Errorf("widget.theme %q must be auto, light, or dark", c.Widget.Theme)
 	}
 	switch c.Logging.Level {
 	case "debug", "info", "warn", "error":

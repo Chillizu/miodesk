@@ -51,6 +51,19 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+func TestHelpDescribesHTTPMCPWithoutWidget(t *testing.T) {
+	code, out, _ := run(t, "help")
+	if code != 0 {
+		t.Fatalf("help exit = %d", code)
+	}
+	if !strings.Contains(out, "serve      run the local HTTP MCP server") {
+		t.Errorf("serve help missing HTTP MCP description:\n%s", out)
+	}
+	if strings.Contains(out, "widget") {
+		t.Errorf("help advertises retired widget:\n%s", out)
+	}
+}
+
 func TestInitThenDoctor(t *testing.T) {
 	isolatedEnv(t)
 	code, out, _ := run(t, "init")

@@ -1,143 +1,48 @@
-// Package adapter hosts client-facing UI metadata that must stay out of the
-// core tools: the MCP Apps / ChatGPT widget (its ui:// resource, per-tool
-// _meta.ui declarations, and the ChatGPT compatibility aliases) plus the
-// invocation status labels ChatGPT displays. Core file/command tools know
-// nothing about this package.
+// Package adapter keeps client-facing invocation labels out of the core tools
+// and registers the read-only status tool.
 package adapter
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io/fs"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/Chillizu/miodesk/internal/buildinfo"
 )
 
-// WidgetURI is the shared result widget resource. The URI doubles as the
-// host's cache key: bump the version segment whenever the embedded
-// HTML/CSS/JS change in a user-visible way.
-const WidgetURI = "ui://miodesk/status-v10.html"
-
-// legacyWidgetURIs keeps previously advertised template URIs readable while
-// ChatGPT connector metadata catches up. The current tools always advertise
-// WidgetURI; these aliases only prevent cached clients from getting a 400 when
-// they fetch an older template.
-var legacyWidgetURIs = []string{
-	"ui://miodesk/status.html",
-	"ui://miodesk/status-v2.html",
-	"ui://miodesk/status-v3.html",
-	"ui://miodesk/status-v4.html",
-	"ui://miodesk/status-v5.html",
-	"ui://miodesk/status-v6.html",
-	"ui://miodesk/status-v7.html",
-	"ui://miodesk/status-v8.html",
-	"ui://miodesk/status-v9.html",
-}
-
-// WidgetMIMEType is the MCP Apps UI resource media type.
-const WidgetMIMEType = "text/html;profile=mcp-app"
-
-// Data returns a tool result payload for the widget to render. The shape is
-// the tools' structuredContent (with its "kind" discriminator).
+// Data returns the structured status tool result.
 type Data func(context.Context) (any, error)
 
-// invocationLabels are lightweight ChatGPT status strings. They never imply a
-// widget: exec tools stay in the host's native tool UI, while only the
-// diagnostics status tool opts into the embedded MCP App.
 var invocationLabels = map[string]struct{ invoking, invoked string }{
 	"exec_command": {"Running command…", "Command checked."},
 	"write_stdin":  {"Resuming command…", "Command checked."},
 	"status":       {"Reading miodesk status…", "Status loaded."},
 }
 
-// ToolMeta returns default client-facing metadata for one tool. Status uses
-// labels only here because only Attach knows whether its widget is available.
-func ToolMeta(name string) map[string]any {
-	if name == "status" {
-		return StatusToolMeta(false)
-	}
-	return invocationMeta(name)
-}
-
-// StatusToolMeta returns invocation labels for the status tool and attaches
-// widget metadata only when the matching resource was successfully assembled.
-func StatusToolMeta(widgetAvailable bool) map[string]any {
-	meta := invocationMeta("status")
-	if !widgetAvailable {
-		return meta
-	}
-	meta["ui"] = map[string]any{
-		"resourceUri": WidgetURI,
-		"visibility":  []string{"model", "app"},
-	}
-	// ChatGPT compatibility alias for _meta.ui.resourceUri.
-	meta["openai/outputTemplate"] = WidgetURI
-	return meta
-}
+// ToolMeta returns the lightweight invocation labels for supported tools.
+func ToolMeta(name string) map[string]any { return invocationMeta(name) }
 
 func invocationMeta(name string) map[string]any {
 	labels, ok := invocationLabels[name]
 	if !ok {
 		return nil
 	}
-	meta := map[string]any{
+	return map[string]any{
 		"openai/toolInvocation/invoking": labels.invoking,
 		"openai/toolInvocation/invoked":  labels.invoked,
 	}
-	return meta
 }
 
-// Attach always registers the status tool and registers the widget resources
-// when assembly succeeds. assets must expose the files under web/widget/static.
-func Attach(s *mcp.Server, assets fs.FS, data Data) error {
-	html, err := WidgetHTML(assets)
-	widgetAvailable := err == nil
-	s.AddTool(dashboardTool(widgetAvailable), func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+// RegisterStatus adds the native, read-only structured diagnostics tool.
+func RegisterStatus(s *mcp.Server, data Data) {
+	s.AddTool(statusTool(), func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		out, err := data(ctx)
 		if err != nil {
 			return nil, err
 		}
 		return &mcp.CallToolResult{StructuredContent: out}, nil
 	})
-	if err != nil {
-		return fmt.Errorf("assemble widget: %w", err)
-	}
-
-	registerWidget := func(uri, name, title, description string) {
-		resource := &mcp.Resource{
-			URI:         uri,
-			Name:        name,
-			Title:       title,
-			Description: description,
-			MIMEType:    WidgetMIMEType,
-		}
-		resource.SetMeta(widgetMeta())
-		s.AddResource(resource, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-			return &mcp.ReadResourceResult{
-				Contents: []*mcp.ResourceContents{{
-					URI:      uri,
-					MIMEType: WidgetMIMEType,
-					Text:     html,
-					Meta:     widgetMeta(),
-				}},
-			}, nil
-		})
-	}
-	registerWidget(WidgetURI, "miodesk status view", "miodesk status", "Compact miodesk connection and workspace diagnostics view.")
-	for _, uri := range legacyWidgetURIs {
-		registerWidget(uri, "miodesk status view", "miodesk status", "Compatibility alias for the current miodesk status view.")
-	}
-	return nil
 }
 
-// dashboardTool declares the status render tool with its ChatGPT/MCP Apps
-// metadata and output schema.
-func dashboardTool(widgetAvailable bool) *mcp.Tool {
+func statusTool() *mcp.Tool {
 	tool := &mcp.Tool{
 		Name:        "status",
 		Title:       "miodesk status",
@@ -171,100 +76,14 @@ func dashboardTool(widgetAvailable bool) *mcp.Tool {
 			"additionalProperties": false,
 		},
 	}
-	tool.SetMeta(StatusToolMeta(widgetAvailable))
+	tool.SetMeta(invocationMeta("status"))
 	return tool
 }
 
 func boolPtr(b bool) *bool { return &b }
 
-// widgetMeta is the single policy source for embedded diagnostics UI metadata.
-// The widget is fully self-contained and receives status data from the host, so
-// it intentionally grants no network or external-resource origins. frameDomains
-// is omitted: nested frames stay denied by default.
-func widgetMeta() map[string]any {
-	return map[string]any{
-		"ui": map[string]any{
-			"prefersBorder": true,
-			"csp": map[string]any{
-				"connectDomains":  []string{},
-				"resourceDomains": []string{},
-			},
-		},
-	}
-}
-
 var emptyObjectSchema = map[string]any{
 	"type":                 "object",
 	"properties":           map[string]any{},
 	"additionalProperties": false,
-}
-
-// WidgetHTML assembles the self-contained result widget. It backs the ui://
-// resource and the /widget preview route.
-func WidgetHTML(assets fs.FS) (string, error) { return widgetHTML(assets) }
-
-// widgetHTML inlines the stylesheet, icons, renderers, and bootstrap script
-// into the embed template. The result is self-contained: hosts may sandbox
-// the page with no network access.
-func widgetHTML(assets fs.FS) (string, error) {
-	read := func(name string) (string, error) {
-		b, err := fs.ReadFile(assets, name)
-		if err != nil {
-			return "", err
-		}
-		return string(b), nil
-	}
-	page, err := read("static/embed.html")
-	if err != nil {
-		return "", err
-	}
-	parts := map[string]string{
-		"/*__STYLE__*/":   "static/style.css",
-		"//__ICONS__":     "static/icons.js",
-		"//__RENDERERS__": "static/renderers.js",
-		"//__SCRIPT__":    "static/app-embed.js",
-	}
-	html := page
-	for marker, file := range parts {
-		body, err := read(file)
-		if err != nil {
-			return "", err
-		}
-		html = strings.ReplaceAll(html, marker, body)
-	}
-	const versionMarker = "/*__MIODESK_APP_VERSION__*/"
-	html = strings.ReplaceAll(html, versionMarker, string(mustJSON(buildinfo.Version)))
-	for marker := range parts {
-		if strings.Contains(html, marker) {
-			return "", errors.New("widget template marker was not replaced: " + marker)
-		}
-	}
-	if strings.Contains(html, versionMarker) {
-		return "", errors.New("widget app version marker was not replaced")
-	}
-	return html, nil
-}
-
-// PreviewHTML assembles the widget with the preview bootstrap and mock
-// payloads inlined (used by the /preview development route only).
-func PreviewHTML(assets fs.FS, kind string) (string, error) {
-	html, err := widgetHTML(assets)
-	if err != nil {
-		return "", err
-	}
-	mocks, err := fs.ReadFile(assets, "static/mocks.js")
-	if err != nil {
-		return "", err
-	}
-	inject := "<script>" + string(mocks) + "</script>\n" +
-		"<script>window.__MIODESK_PREVIEW = " + string(mustJSON(kind)) + ";</script>\n"
-	return strings.Replace(html, "</head>", inject+"</head>", 1), nil
-}
-
-func mustJSON(v string) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return []byte(`""`)
-	}
-	return b
 }

@@ -22,7 +22,7 @@ const (
 	// the DNS-rebinding defense the MCP Streamable HTTP spec requires.
 	AccessLocal AccessMode = "local"
 	// AccessToken: every request (except /healthz) must present the bearer
-	// token. Same-origin requests are still allowed (the local widget).
+	// token. Same-origin local requests remain allowed.
 	AccessToken AccessMode = "token"
 	// AccessUnsafe: no checks at all. Only reachable via an explicit opt-in
 	// (`miodesk connect --unsafe-remote` or remote.mode = "unsafe").

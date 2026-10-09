@@ -17,7 +17,9 @@ fi
 
 formatted="$(
   while IFS= read -r -d '' file; do
-    [[ -f "$file" ]] && gofmt -l "$file"
+    if [[ -f "$file" ]]; then
+      gofmt -l "$file"
+    fi
   done < <(git ls-files -co --exclude-standard -z -- '*.go')
 )"
 if [[ -n "$formatted" ]]; then

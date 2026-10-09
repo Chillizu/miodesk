@@ -222,7 +222,6 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	okf(stdout, "MCP server: %s", s.MCPURL())
-	infof(stdout, "widget: %s", s.URL())
 	switch s.AccessMode() {
 	case server.AccessToken:
 		okf(stdout, "access: token authentication")
