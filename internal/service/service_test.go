@@ -36,7 +36,6 @@ func TestTunnelUnitContent(t *testing.T) {
 	content := TunnelUnitContent("/home/me/.local/bin/tunnel-client", "/home/me/.config/tunnel-client", "miodesk")
 	for _, want := range []string{
 		"Description=miodesk OpenAI Secure MCP Tunnel",
-		"Requires=miodesk.service",
 		"After=miodesk.service network-online.target",
 		"ExecStart=/home/me/.local/bin/tunnel-client run --profile-dir /home/me/.config/tunnel-client --profile miodesk",
 		"Restart=always",
@@ -47,6 +46,9 @@ func TestTunnelUnitContent(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Errorf("tunnel unit missing %q:\n%s", want, content)
 		}
+	}
+	if strings.Contains(content, "Requires=miodesk.service") {
+		t.Error("optional tunnel must not require the Core systemd unit")
 	}
 	quoted := TunnelUnitContent("/opt/Tunnel Client/tunnel-client", "/home/me/Config Dir", "mio profile")
 	if !strings.Contains(quoted, `ExecStart="/opt/Tunnel Client/tunnel-client" run --profile-dir "/home/me/Config Dir" --profile "mio profile"`) {

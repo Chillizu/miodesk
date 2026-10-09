@@ -92,7 +92,7 @@ func TestInitThenDoctor(t *testing.T) {
 		"10 tools registered",
 		"Readiness:",
 		"[OK] local use: ready",
-		"[INFO] OpenAI tunnel: not configured (optional)",
+		"[INFO] remote connection: local only",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor output missing %q:\n%s", want, out)
@@ -109,7 +109,7 @@ func TestInitThenDoctor(t *testing.T) {
 	}
 }
 
-func TestSetupDefaultsToCurrentDirectoryAndOpenAI(t *testing.T) {
+func TestSetupDefaultsToCurrentDirectoryAndLocal(t *testing.T) {
 	isolatedEnv(t)
 	ws := t.TempDir()
 	t.Chdir(ws)
@@ -132,11 +132,11 @@ func TestSetupDefaultsToCurrentDirectoryAndOpenAI(t *testing.T) {
 	if cfg.Server.Port != config.DefaultPort {
 		t.Errorf("port = %d, want %d", cfg.Server.Port, config.DefaultPort)
 	}
-	if cfg.Tunnel.Provider != "openai" || cfg.Tunnel.OpenAI.Profile != config.DefaultOpenAIProfile {
-		t.Errorf("OpenAI defaults = %+v", cfg.Tunnel.OpenAI)
+	if cfg.Tunnel.Provider != "local" || cfg.Tunnel.OpenAI.Profile != config.DefaultOpenAIProfile {
+		t.Errorf("local defaults = %+v", cfg.Tunnel)
 	}
-	if !strings.Contains(out, "OpenAI Secure MCP Tunnel is the default") {
-		t.Errorf("setup should explain the default connection:\n%s", out)
+	if !strings.Contains(out, "OpenAI tunnel optional") {
+		t.Errorf("setup should explain optional connection:\n%s", out)
 	}
 }
 
@@ -454,20 +454,20 @@ func TestConnectRejectsRunningPersistentTunnelWithStaleServerPort(t *testing.T) 
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	code, _, errOut = run(t, "connect")
-	if code != 1 || !strings.Contains(errOut, "persistent OpenAI tunnel service is running") || !strings.Contains(errOut, "do not start a second foreground tunnel") {
+	if code != 1 || !strings.Contains(errOut, "persistent OpenAI tunnel is running") || !strings.Contains(errOut, "do not start a second foreground tunnel") {
 		t.Fatalf("stale persistent port: exit=%d stderr=%q", code, errOut)
 	}
 }
 
 func TestConnectRejectsIncompatibleFlags(t *testing.T) {
 	isolatedEnv(t)
-	if code, _, errOut := run(t, "connect", "--url", "https://example.com"); code != 2 || !strings.Contains(errOut, "only valid") {
+	if code, _, errOut := run(t, "connect", "--provider", "openai", "--url", "https://example.com"); code != 2 || !strings.Contains(errOut, "only valid") {
 		t.Errorf("OpenAI --url: exit=%d stderr=%q", code, errOut)
 	}
 	if code, _, errOut := run(t, "connect", "--provider", "custom"); code != 2 || !strings.Contains(errOut, "requires --url") {
 		t.Errorf("custom without --url: exit=%d stderr=%q", code, errOut)
 	}
-	if code, _, errOut := run(t, "connect", "--unsafe-remote"); code != 2 || !strings.Contains(errOut, "not used") {
+	if code, _, errOut := run(t, "connect", "--provider", "openai", "--unsafe-remote"); code != 2 || !strings.Contains(errOut, "not used") {
 		t.Errorf("OpenAI --unsafe-remote: exit=%d stderr=%q", code, errOut)
 	}
 }
@@ -536,7 +536,7 @@ func TestServeOccupiedPort(t *testing.T) {
 func TestStatusWithoutServer(t *testing.T) {
 	isolatedEnv(t)
 	code, out, _ := run(t, "status")
-	if code != 0 || !strings.Contains(out, "no running server found") || !strings.Contains(out, "tunnel: openai (service not-installed)") {
+	if code != 0 || !strings.Contains(out, "no running server found") || !strings.Contains(out, "tunnel: local (service not-installed)") {
 		t.Errorf("status output:\n%s", out)
 	}
 }
@@ -556,7 +556,7 @@ func TestStatusJSONRetainsUnreachableState(t *testing.T) {
 	}
 
 	code, out, _ := run(t, "status", "--json")
-	if code != 0 || !strings.Contains(out, `"running":false`) || !strings.Contains(out, `"tunnel":"openai"`) || !strings.Contains(out, `"tunnel_service":"not-installed"`) {
+	if code != 0 || !strings.Contains(out, `"running":false`) || !strings.Contains(out, `"tunnel":"local"`) || !strings.Contains(out, `"tunnel_service":"not-installed"`) {
 		t.Errorf("stale status: exit=%d output=%q", code, out)
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -579,7 +579,7 @@ func TestStatusJSONRemovesInvalidState(t *testing.T) {
 	}
 
 	code, out, _ := run(t, "status", "--json")
-	if code != 0 || !strings.Contains(out, `"running":false`) || !strings.Contains(out, `"remote":"local"`) || !strings.Contains(out, `"tunnel":"openai"`) || !strings.Contains(out, `"tunnel_service":"not-installed"`) {
+	if code != 0 || !strings.Contains(out, `"running":false`) || !strings.Contains(out, `"remote":"local"`) || !strings.Contains(out, `"tunnel":"local"`) || !strings.Contains(out, `"tunnel_service":"not-installed"`) {
 		t.Errorf("invalid status: exit=%d output=%q", code, out)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {

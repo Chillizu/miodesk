@@ -241,8 +241,8 @@ func TestStatusPayloadHasNoTokenField(t *testing.T) {
 	if strings.Contains(string(data), "token") {
 		t.Errorf("status payload mentions token: %s", data)
 	}
-	if s.Status().Tunnel != "openai" {
-		t.Errorf("status tunnel = %q, want openai", s.Status().Tunnel)
+	if s.Status().Tunnel != "local" {
+		t.Errorf("status tunnel = %q, want local", s.Status().Tunnel)
 	}
 }
 

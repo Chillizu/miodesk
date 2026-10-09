@@ -17,7 +17,7 @@ func TestDefault(t *testing.T) {
 	if cfg.Workspace.Root != "/home/u" {
 		t.Errorf("workspace root = %q, want /home/u", cfg.Workspace.Root)
 	}
-	if cfg.Tunnel.Provider != "openai" {
+	if cfg.Tunnel.Provider != "local" {
 		t.Errorf("tunnel provider = %q", cfg.Tunnel.Provider)
 	}
 	if cfg.Tunnel.OpenAI.Profile != DefaultOpenAIProfile {

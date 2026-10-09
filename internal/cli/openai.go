@@ -431,6 +431,7 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		}
 		cfg.Workspace.Root = workspaceValue
 	}
+	previousPort := cfg.Server.Port
 	if portSet {
 		cfg.Server.Port = portValue
 	}
@@ -470,13 +471,15 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	// surprising on a newly configured device.
 	cfg.Workspace.Root = ws.Root()
 
+	tunnelSetupRequested := *tunnelIDFlag != "" || configureOpenAI || *keyFlag != "" ||
+		*profileFlag != "" || *profileDirFlag != "" || *clientFlag != ""
 	settings, err := openAISettingsFromConfig(cfg, false)
 	if err != nil {
 		errf(stderr, "%v", err)
 		return 1
 	}
 	openaiConfigured := cfg.Tunnel.Provider == "openai" && cfg.Tunnel.OpenAI.TunnelID != ""
-	if openaiConfigured {
+	if openaiConfigured && tunnelSetupRequested {
 		if cfg.Server.Port == 0 {
 			errf(stderr, "OpenAI tunnel setup needs a fixed local port; choose --port 8787 or another unused port")
 			return 1
@@ -504,16 +507,23 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	okf(stdout, "workspace: %s", ws.Root())
 	okf(stdout, "local MCP endpoint: %s", openAILocalMCPURL(cfg.Server.Port))
 	if cfg.Tunnel.Provider == "openai" {
-		if openaiConfigured {
+		if openaiConfigured && tunnelSetupRequested {
 			if _, err := ensureOpenAIProfile(cfg, openAILocalMCPURL(cfg.Server.Port), true); err != nil {
 				errf(stderr, "%v", err)
 				return 1
 			}
 			okf(stdout, "OpenAI tunnel-client profile: %s", openAIProfilePath(settings))
+		} else if openaiConfigured {
+			infof(stdout, "existing OpenAI tunnel profile left untouched")
+			if previousPort != cfg.Server.Port {
+				warnf(stdout, "Core port changed; update the separate tunnel profile using `miodesk tunnel setup` before restarting the tunnel")
+			}
 		} else {
-			infof(stdout, "OpenAI Secure MCP Tunnel is the default, but no tunnel id is configured yet")
+			infof(stdout, "OpenAI Secure MCP Tunnel is optional; no tunnel ID configured")
 			hintf(stdout, "run `miodesk setup --tunnel-id tunnel_… --runtime-key-file %s` after creating the tunnel and key", settings.KeyFile)
 		}
+	} else if cfg.Tunnel.Provider == "local" {
+		infof(stdout, "local MCP only; OpenAI tunnel optional (configure later with --tunnel-id)")
 	} else {
 		infof(stdout, "existing connection mode preserved: %s", cfg.Tunnel.Provider)
 	}
@@ -521,8 +531,8 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, "\nNext:")
 	fmt.Fprintln(stdout, "  miodesk doctor")
 	if cfg.Tunnel.Provider == "openai" && openaiConfigured {
-		fmt.Fprintln(stdout, "  tunnel-client doctor --profile "+cfg.Tunnel.OpenAI.Profile+" --explain")
-		fmt.Fprintln(stdout, "  miodesk connect")
+		fmt.Fprintln(stdout, "  miodesk serve")
+		fmt.Fprintln(stdout, "  miodesk tunnel service install  # optional, Linux systemd")
 	} else {
 		fmt.Fprintln(stdout, "  miodesk serve")
 	}
@@ -532,6 +542,32 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "  miodesk service start")
 		fmt.Fprintln(stdout, "  miodesk service status")
 	}
+	return 0
+}
+
+// runTunnelSetup refreshes the external tunnel-client profile without
+// changing the Core configuration, service lifecycle, or MCP server process.
+func runTunnelSetup(stdout, stderr io.Writer) int {
+	cfg, _, ok := loadConfig(stderr)
+	if !ok {
+		return 1
+	}
+	if cfg.Tunnel.Provider != "openai" || cfg.Tunnel.OpenAI.TunnelID == "" {
+		errf(stderr, "OpenAI tunnel is not configured")
+		hintf(stderr, "use `miodesk setup --tunnel-id tunnel_… --runtime-key-file <file>` once")
+		return 1
+	}
+	if cfg.Server.Port == 0 || !isLoopback(cfg.Server.Host) || (cfg.Remote.Mode != "" && cfg.Remote.Mode != "local") {
+		errf(stderr, "OpenAI tunnel requires a fixed, loopback, locally accessible MCP endpoint")
+		return 1
+	}
+	settings, err := ensureOpenAIProfile(cfg, openAILocalMCPURL(cfg.Server.Port), true)
+	if err != nil {
+		errf(stderr, "OpenAI tunnel profile: %v", err)
+		return 1
+	}
+	okf(stdout, "tunnel-client profile refreshed: %s", openAIProfilePath(settings))
+	infof(stdout, "Core service was not restarted or changed")
 	return 0
 }
 
@@ -558,27 +594,27 @@ func runOpenAIConnect(cfg *config.Config, ws *workspace.Workspace, stdout, stder
 	if service.TunnelInstalled() {
 		if refreshProfile {
 			errf(stderr, "cannot override the OpenAI tunnel port while the persistent tunnel service is installed")
-			hintf(stderr, "use `miodesk setup --port %d`, then `miodesk service restart`; uninstall the service first for a foreground-only override", cfg.Server.Port)
+			hintf(stderr, "use `miodesk setup --port %d`, then restart Core and tunnel separately; uninstall the tunnel service first for a foreground-only override", cfg.Server.Port)
 			return 1
 		}
 		if service.TunnelRunningQuick() {
-			if service.Installed() && service.RunningQuick() && runningServerMatchesPort(cfg.Server.Port) {
-				okf(stdout, "using running miodesk service at %s", openAILocalMCPURL(cfg.Server.Port))
+			if runningServerMatchesPort(cfg.Server.Port) {
+				okf(stdout, "using running miodesk MCP server at %s", openAILocalMCPURL(cfg.Server.Port))
 				okf(stdout, "OpenAI Secure MCP Tunnel service is already running")
-				infof(stdout, "inspect it with: miodesk service status")
+				infof(stdout, "inspect it with: miodesk tunnel service status")
 				return 0
 			}
-			errf(stderr, "persistent OpenAI tunnel service is running, but the local miodesk service does not match configured port %d", cfg.Server.Port)
-			hintf(stderr, "run `miodesk service restart` after changing the configured port; do not start a second foreground tunnel")
+			errf(stderr, "persistent OpenAI tunnel is running, but no healthy miodesk MCP server matches configured port %d", cfg.Server.Port)
+			hintf(stderr, "check Core endpoint/port and restart Core and tunnel separately; do not start a second foreground tunnel")
 			return 1
 		}
 	}
-	if service.Installed() && service.RunningQuick() && runningServerMatchesPort(cfg.Server.Port) {
+	if runningServerMatchesPort(cfg.Server.Port) {
 		if _, err := ensureOpenAIProfile(cfg, openAILocalMCPURL(cfg.Server.Port), refreshProfile); err != nil {
 			errf(stderr, "%v", err)
 			return 1
 		}
-		okf(stdout, "using running miodesk service at %s", openAILocalMCPURL(cfg.Server.Port))
+		okf(stdout, "using running miodesk MCP server at %s", openAILocalMCPURL(cfg.Server.Port))
 		okf(stdout, "starting OpenAI Secure MCP Tunnel for %s", settings.TunnelID)
 		err := waitOpenAITunnel(ctx, settings, stdout, stderr)
 		if err != nil && ctx.Err() == nil {

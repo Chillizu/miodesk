@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	// DefaultPort is intentionally stable: the OpenAI tunnel-client profile
-	// points at the local MCP endpoint and should survive restarts unchanged.
+	// DefaultPort gives local MCP clients and optional tunnel transports one
+	// stable endpoint across restarts.
 	DefaultPort = 8787
 	// DefaultOpenAIProfile is the profile name used by `miodesk setup`.
 	DefaultOpenAIProfile = "miodesk"
@@ -25,8 +25,8 @@ type Server struct {
 	// Host to bind. "127.0.0.1" keeps the MCP server local; use 0.0.0.0 only
 	// when a tunnel or reverse proxy fronts it.
 	Host string `toml:"host"`
-	// Port 0 means "pick a random free port on each start". A fixed default
-	// keeps the OpenAI tunnel-client's local MCP target stable across restarts.
+	// Port 0 means "pick a random free port on each start". The fixed
+	// default is a shared local target for independent MCP clients.
 	Port int `toml:"port"`
 }
 
@@ -36,9 +36,8 @@ type Workspace struct {
 }
 
 type Tunnel struct {
-	// Provider is openai by default. The legacy providers remain accepted for
-	// existing configurations, but are intentionally not part of the primary
-	// onboarding path.
+	// Provider selects only optional, explicitly requested remote transport.
+	// A fresh installation is local; old configured providers are preserved.
 	Provider string       `toml:"provider"`
 	OpenAI   OpenAITunnel `toml:"openai"`
 }
@@ -91,7 +90,7 @@ func Default() *Config {
 	return &Config{
 		Server:    Server{Host: "127.0.0.1", Port: DefaultPort},
 		Workspace: Workspace{Root: home},
-		Tunnel:    Tunnel{Provider: "openai", OpenAI: OpenAITunnel{Profile: DefaultOpenAIProfile}},
+		Tunnel:    Tunnel{Provider: "local", OpenAI: OpenAITunnel{Profile: DefaultOpenAIProfile}},
 		Logging:   Logging{Level: "info", Format: "text"},
 	}
 }
