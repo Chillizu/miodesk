@@ -31,7 +31,7 @@ full agent on this machine.
 
 | mode (`[remote]` in config.toml) | who can reach the tools | when to use |
 | -------------------------------- | ----------------------- | ----------- |
-| `""` / `local` (default)         | local processes only    | stdio clients, local MCP hosts, the local widget |
+| `""` / `local` (default)         | local processes only    | stdio clients and local MCP hosts |
 | `token`                          | anyone presenting the bearer token | custom or legacy public ingress |
 | `unsafe`                         | anyone with the URL     | short-lived debugging, explicitly requested |
 
@@ -79,14 +79,14 @@ send headers. Never combine it with a long-lived tunnel.
 - The token lives in `config.toml` (user-only file under the XDG config
   directory).
 - It is never included in `/api/status`, `miodesk status`, `miodesk doctor`,
-  the widget, error messages, or debug output — enforced by tests.
+  error messages, or debug output — enforced by tests.
 - Requests are compared with a constant-time comparison.
 - `/healthz` is the only unauthenticated endpoint and returns no data.
 
 ## Data surfaces
 
-`/api/status` and `/widget` do not contain bearer tokens or edited file text;
-they expose local diagnostics such as workspace paths and usage counters.
+`/api/status` does not contain bearer tokens or edited file text; it exposes
+local diagnostics such as workspace paths and usage counters.
 `/api/edits` can contain edited workspace text. It is retained in memory only
 (up to 10 records and 2 MiB of diff data) and is controlled by the configured
 access mode: local/origin validation, bearer-token authentication, or the

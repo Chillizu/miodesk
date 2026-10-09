@@ -45,11 +45,33 @@ Format: topic → URL → version → used by → decision → checked.
 - URL: https://developers.openai.com/llms.txt
 - ChatGPT UI: https://developers.openai.com/plugins/build/chatgpt-ui
 - Used by: `internal/adapter`, `internal/cli` deployment guidance
-- Decision: ChatGPT-specific metadata and widget resources stay in the adapter
-  layer; core tools and transports stay host-agnostic. ChatGPT connectors
+- Decision: Invocation labels and structured `status` registration stay in the
+  adapter layer; no MCP Apps UI resources are published. Core tools and
+  transports stay host-agnostic. ChatGPT connectors
   document `noauth` and OAuth 2.1-style flows; a static bearer token is not a
   documented connector authentication choice.
 - Checked: 2026-09-07
+
+## OpenAI Plugin Creator packaging
+
+- URLs:
+  - https://developers.openai.com/plugins/build/plugins
+  - https://developers.openai.com/plugins/concepts/plugins
+  - https://developers.openai.com/plugins/build/chatgpt-ui
+  - https://developers.openai.com/plugins/deploy/connect-chatgpt
+  - https://developers.openai.com/plugins/deploy/submission
+- Used by: `plugins/miodesk`
+- Decision: use the portable Agent Plugins 1.0 root `plugin.json`, with
+  `extensions.com.openai.apps` mapping `.app.json` to the registered Developer
+  Mode MCP app. Keep `.codex-plugin/plugin.json` as a compatibility overlay.
+  Skills and visual assets package the lightweight workflow and identity; they
+  do not replace the Go server, MCP connection, or Secure MCP Tunnel. MCP Apps
+  UI is optional and should be added only for workflows where inline interaction
+  helps; existing Native-first tools remain useful without widgets. Refresh MCP
+  metadata after server schema changes, then test in a new conversation.
+  Public-directory submission is separate and requires a stable public HTTPS
+  endpoint; Secure MCP Tunnel alone does not satisfy it.
+- Checked: 2026-09-23
 
 Public onboarding intentionally exposes OpenAI Secure MCP Tunnel as the
 default connection. The legacy provider implementations listed below remain
@@ -94,14 +116,6 @@ flow.
   `~/.local/share`, `~/.local/state`, `~/.cache` fallbacks; relative
   `$XDG_*` values are rejected. Runtime state (server.json) goes to the state
   dir, never into config.toml.
-- Checked: 2026-09-06
-
-## go:embed
-
-- URL: https://pkg.go.dev/embed
-- Used by: `web/widget`
-- Decision: widget assets (HTML/CSS/JS) are embedded with `//go:embed static`
-  and served via `fs.Sub` + `http.FileServerFS`. No Node/npm build step.
 - Checked: 2026-09-06
 
 ## ripgrep (optional dependency)
@@ -158,55 +172,31 @@ or the primary CLI's connection discovery.
 
 ## ChatGPT Apps (plugins / Apps SDK)
 
-- URLs: https://developers.openai.com/llms.txt → https://developers.openai.com/plugins/llms.txt →
-  https://developers.openai.com/plugins/build/chatgpt-ui.md , plugins/reference.md ,
-  build/app-guidelines.md (all `.md` fetchable)
-- Version: current docs, checked 2026-09-18
-- Used by: `internal/adapter`, `internal/server`
-- Decision:
-  - The diagnostics `status` tool declares the shared MCP Apps field
-    `_meta.ui.resourceUri` (`ui://…`); `openai/outputTemplate` is set as the
-    documented compatibility alias. `openai/toolInvocation/invoking|invoked`
-    labels are ≤64 chars.
-  - Rich UI is limited to diagnostics `status`. `exec_command` and `write_stdin`
-    stay native-first and do not declare `_meta.ui.resourceUri` or output
-    templates. This keeps command sessions invisible at the presentation layer:
-    resuming or polling a session is a data operation with no iframe/card side
-    effect.
-  - The widget resource uses mimeType `text/html;profile=mcp-app` and carries
-    one shared `_meta.ui` policy: `prefersBorder: true` plus explicit
-    deny-by-default CSP allowlists (`connectDomains: []`, `resourceDomains: []`).
-    `frameDomains` and `domain` are omitted because the diagnostics UI embeds no
-    frames and uses no dedicated production origin.
-  - ChatGPT reads `annotations` (readOnlyHint/destructiveHint/openWorldHint —
-    treated as required) and `title`; every miodesk tool sets them explicitly.
-  - The embedded diagnostics widget reads data from `window.openai.toolOutput`
-    (documented alias) or the `ui/notifications/tool-result` postMessage
-    notification. It performs the dependency-free MCP Apps `ui/initialize`
-    handshake and applies host theme-change notifications. The widget contains
-    no task polling/cancellation bridge and no renderers for ordinary tool
-    results; those stay entirely in the host's native UI.
-  - Host-provided MCP Apps style variables (`hostContext.styles.variables`) and
-    safe-area insets are applied when present; local light/dark values remain
-    fallbacks. This keeps the widget visually native without a JS UI runtime.
-  - The model-facing `status` result is intentionally compact. Full local
-    diagnostics and recent edit history stay on `/api/status` and
-    `/api/edits` instead of being repeated into ChatGPT model context.
-  - Structured output tools declare exact `outputSchema` shapes.
-- Checked: 2026-09-18
+- URLs: https://developers.openai.com/llms.txt →
+  https://developers.openai.com/plugins/build/chatgpt-ui.md ,
+  https://developers.openai.com/plugins/concepts/mcp-server.md
+- Version: current docs, checked 2026-09-23
+- Used by: `internal/adapter`, `internal/server`, `plugins/miodesk`
+- Decision: miodesk exposes native tools and a compact structured `status` result,
+  with invocation labels for `status`, `exec_command`, and `write_stdin`. It
+  publishes no MCP Apps UI metadata, templates, or resources. All ten tools
+  declare their annotations and schemas; `/api/status` and `/api/edits` retain
+  richer local JSON diagnostics behind the server's access middleware.
+  ChatGPT can associate optional UI with selected tool invocations, but an
+  iframe is scoped to its rendered instance and is not a turn-level singleton.
+  That protocol observation explains the decision to keep background status
+  lookups in the native tool view without an inline panel.
+- Checked: 2026-09-24
 
-## MCP Apps extension
+## MCP Apps extension (historical protocol guidance)
 
 - URLs: https://modelcontextprotocol.io/extensions/apps/overview.md and /build.md
   (spec: github.com/modelcontextprotocol/ext-apps, spec 2026-01-26)
-- Version: current, checked 2026-09-07
-- Used by: `internal/adapter`
-- Decision: declare UI via tool `_meta.ui.resourceUri` → `ui://` resource;
-  keep the widget sandbox-friendly (no external loads, DOM-API-only
-  rendering). The embedded widget implements the stable 2026-01-26
-  `ui/initialize`/`ui/notifications/initialized` handshake and standard
-  tool-result/host-context notifications without adding a JavaScript runtime.
-- Checked: 2026-09-18
+- Version: checked 2026-09-18
+- Used by: historical design reference only; miodesk currently has no MCP Apps UI
+- Decision: the extension permits optional tool `_meta.ui.resourceUri` pointing
+  to a `ui://` resource, with a sandboxed HTML view and host notifications.
+  miodesk currently does not declare such metadata or register UI resources.
 
 ## Streamable HTTP transport security (MCP 2026-07-28)
 

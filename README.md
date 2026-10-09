@@ -130,7 +130,7 @@ services, `miodesk connect` still starts both processes in the foreground.
 | ----------- | ------------------------------------------------------------ |
 | `setup`     | configure a new device, workspace, port, and OpenAI profile |
 | `init`      | create or update the low-level configuration                 |
-| `serve`     | run the local MCP server and widget                          |
+| `serve`     | run the local HTTP MCP server                          |
 | `connect`   | run/reuse the server and connect through the default tunnel  |
 | `tunnel`    | inspect the default connection with `list` or `doctor`      |
 | `status`    | show local server, tunnel provider, and tunnel service state (`--json`) |
@@ -204,21 +204,14 @@ new session does not already know which one to resume. Miodesk retains a small
 internal revision history as a safety net, but normal resume output contains
 only the current handoff and checkpoint count.
 
-## ChatGPT UI
+## ChatGPT and MCP clients
 
-miodesk is Native-first. File tools plus `exec_command` / `write_stdin` stay in
-the host's native tool view and do not create an extra widget. Exec sessions are
-explicit handles threaded through tool calls, so resuming or polling a command
-has no iframe/card side effect. Ordinary commands use pipes for deterministic
-output; `tty=true` allocates a real Unix PTY for interactive programs while
-keeping tmux outside the protocol. Only the diagnostics `status` tool opts into the
-optional embedded MCP Apps widget. That widget is diagnostics-only: it has no
-Task renderer, polling loop, or ordinary tool-result renderer. Its MCP Apps CSP
-is explicit and deny-by-default (`connectDomains: []`, `resourceDomains: []`,
-no `frameDomains`). It is
-plain embedded HTML/CSS/JavaScript, has no external origin, supports light/dark/
-auto themes, and uses a compact responsive layout for narrow ChatGPT views.
-Preview it at `/widget` while a local server is running.
+miodesk exposes ten native MCP tools. File and command tools use the host's
+normal tool view, and `status` returns a compact read-only structured result.
+No MCP Apps UI resource or output template is published. Exec sessions are
+explicit handles threaded through `exec_command` and `write_stdin`; ordinary
+commands use pipes, while `tty=true` allocates a Unix PTY for interactive use.
+Local diagnostics remain available as JSON at `/api/status` and `/api/edits`.
 
 ## Configuration
 
@@ -240,9 +233,6 @@ provider = "openai"
 profile = "miodesk"
 # tunnel_id, runtime_key_file, profile_dir, and client_path are optional
 # until OpenAI Secure MCP Tunnel is configured.
-
-[widget]
-theme = "auto"      # auto | light | dark
 
 [logging]
 level = "info"      # debug | info | warn | error

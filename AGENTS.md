@@ -1,10 +1,10 @@
 # AGENTS.md — miodesk
 
-Status: milestones 1–3 implemented — sandboxed file tools, compact `exec_command` / `write_stdin` sessions, persistent cross-session `context` handoffs/checkpoints, diff viewer, token stats, systemd service, new-device `setup`, OpenAI Secure MCP Tunnel as the default connection, custom endpoint compatibility, `tunnel list/doctor`, self-update via release manifest (`update --from`), and `scripts/build-release.sh` packaging. ChatGPT/MCP-Apps adaptation is in `internal/adapter`: ordinary file and exec tools stay Native-first, while only diagnostics `status` opts into the embedded widget through `_meta.ui` + ChatGPT aliases. The diagnostics widget is self-contained and deny-by-default; command/session lifecycle never creates an iframe. Remote access has a three-tier trust model (`internal/server/security.go`: local / token / unsafe; OpenAI Tunnel keeps the local server on loopback, while token/unsafe modes remain for custom or legacy public entrances; Origin validation follows the MCP transport spec). Remaining polish: OAuth 2.1 for custom ChatGPT connectors, native Windows ConPTY support, and Windows service/paths. Tunnel-client commands and ChatGPT field names are documented from official sources in docs/REFERENCES.md — re-verify there before changing provider commands or widget meta.
+Status: milestones 1–3 implemented — sandboxed file tools, compact `exec_command` / `write_stdin` sessions, persistent cross-session `context` handoffs/checkpoints, diff viewer, token stats, systemd service, new-device `setup`, OpenAI Secure MCP Tunnel as the default connection, custom endpoint compatibility, `tunnel list/doctor`, self-update via release manifest (`update --from`), and `scripts/build-release.sh` packaging. `internal/adapter` keeps lightweight invocation labels and registers a read-only structured `status` tool; the server publishes no MCP Apps UI resources or templates. Remote access has a three-tier trust model (`internal/server/security.go`: local / token / unsafe; OpenAI Tunnel keeps the local server on loopback, while token/unsafe modes remain for custom or legacy public entrances; Origin validation follows the MCP transport spec). Remaining polish: OAuth 2.1 for custom ChatGPT connectors, native Windows ConPTY support, and Windows service/paths. Tunnel-client commands and ChatGPT field names are documented from official sources in docs/REFERENCES.md — re-verify there before changing provider commands or MCP metadata.
 
 ## What this is
 
-`miodesk` is a **local AI / MCP tool bridge** written in Go: it lets ChatGPT, MCP clients, IDE agents, and coding agents safely access the user's workspace, files, and dev tools. Goals: small · fast · elegant · portable · predictable. Single static binary, widget UI embedded via `go:embed`, zero Node/Python/Rust runtime at release, not bound to any single AI client.
+`miodesk` is a **local AI / MCP tool bridge** written in Go: it lets ChatGPT, MCP clients, IDE agents, and coding agents safely access the user's workspace, files, and dev tools. Goals: small · fast · elegant · portable · predictable. Single static binary, zero Node/Python/Rust runtime at release, not bound to any single AI client.
 
 Design philosophy: prefer "slightly fewer features but clear" over "more features but complex"; prefer simple direct code over clever abstraction (no interfaces/abstractions until there are ≥2 real implementations); if a feature needs lots of host-specific workarounds, redesign it instead of stacking patches.
 
@@ -15,8 +15,6 @@ Always lowercase **`miodesk`** — project name, binary, CLI, config dir, docs. 
 ## Stack rules
 
 - **Go** for everything: CLI, server, MCP, tools, workspace security, config, tunnel orchestration, service mgmt, update.
-- **Widget**: plain HTML + CSS + minimal vanilla JS/TS under `web/widget/`, embedded with `go:embed`. No React/Vue/Next, no npm/pnpm in the release path.
-- Widget runs inside iframes/WebViews/host windows where **viewport width is meaningless** — use CSS **Container Queries**, custom properties, `ResizeObserver`; never `@media(max-width: ...)` as the main responsive mechanism. Design tokens (`--miodesk-bg`, `--miodesk-accent`, `--miodesk-radius`, …) live centrally; no scattered magic numbers. Restrained animation (opacity/transform). Theme: auto/light/dark, respect host/system; don't assume dark.
 - Keep dependencies minimal; prefer stdlib, but don't hand-roll what stdlib already provides. Performance budgets: binary < 20 MB, idle RSS < 30 MB, near-instant startup.
 
 ## Architecture boundaries
@@ -26,7 +24,6 @@ Intended layout (use something simpler if it's genuinely better):
 ```
 cmd/miodesk/
 internal/   xdg, config, workspace, tools, server, doctor, service, cli, buildinfo
-web/widget/
 docs/
 ```
 
@@ -65,7 +62,7 @@ Definition of done: implemented + formatted + tested + **actually executed** —
 
 ## Testing priorities
 
-Security paths must be automated tests, never manual-only: `../../../etc/passwd`, symlink escape, command cwd, unsafe/recursive delete, unexpected absolute paths. Also: config parsing, XDG paths, read/list limits, edit atomicity, server start/stop, occupied port, MCP transport, tunnel detection, custom endpoint, CLI smoke tests, diff parser, widget responsive behavior.
+Security paths must be automated tests, never manual-only: `../../../etc/passwd`, symlink escape, command cwd, unsafe/recursive delete, unexpected absolute paths. Also: config parsing, XDG paths, read/list limits, edit atomicity, server start/stop, occupied port, MCP transport, tunnel detection, custom endpoint, CLI smoke tests, diff parser, structured `status`, empty MCP resource list, JSON endpoint authorization.
 
 ## Docs protocol
 
@@ -81,4 +78,4 @@ Record confirmed findings (topic, official URL, version, relevant module, decisi
 
 ## Working style
 
-High autonomy: inspect → decide → implement → test → verify → continue. Stop only for major architectural ambiguity, irreversible decisions, credentials, or security-sensitive operations. Build in milestones: (1) runnable MVP — config + XDG + `version`/`init`/`doctor`/`serve` + workspace sandbox + MCP server + read/search/list + minimal embedded widget + tests; (2) write/edit/delete/command + long-command lifecycle + diff viewer + token stats + service mgmt; (3) `connect` + tunnel providers + packaging + update + cross-platform polish.
+High autonomy: inspect → decide → implement → test → verify → continue. Stop only for major architectural ambiguity, irreversible decisions, credentials, or security-sensitive operations. Build in milestones: (1) runnable MVP — config + XDG + `version`/`init`/`doctor`/`serve` + workspace sandbox + MCP server + read/search/list + structured status + tests; (2) write/edit/delete/command + long-command lifecycle + diff viewer + token stats + service mgmt; (3) `connect` + tunnel providers + packaging + update + cross-platform polish.

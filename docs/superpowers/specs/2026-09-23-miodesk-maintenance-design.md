@@ -3,12 +3,12 @@
 Date: 2026-09-23
 
 Status: Phase A local implementation, release gate, candidate MCP smoke,
-service deployment, host-side performance checks, and ChatGPT connector
-readback completed on 2026-09-23. Local code and server checks passed; overall
-connector migration acceptance remains incomplete because the host still
-advertises the old command quartet and exposes no stdin-write action. Keep
-MIO-19 open until a workspace owner/admin refreshes and verifies the unified
-`exec_command`/`write_stdin` actions.
+service deployment, and host-side performance checks completed on 2026-09-23.
+The earlier connector readback below is historical: the user later manually
+confirmed that a new schema appeared after refreshing in a new conversation.
+This task has not independently called the refreshed actions, so MIO-19 stays
+open until the exact action inventory and `exec_command` / `write_stdin`
+end-to-end behavior are verified. Do not repeat the refresh step.
 
 ## 1. Intent and success criteria
 
@@ -26,8 +26,8 @@ Success means:
   after silently stopping early.
 - The legacy command shim takes tool identity from the MCP request body,
   handles stale extra fields, and never advertises retired tools.
-- Status remains callable if widget assembly fails, and actual tool counts
-  match `tools/list`.
+- Status remains callable without UI resources or metadata, and actual tool
+  counts match `tools/list`.
 - Model-facing descriptions match the real security boundary. Commands run as
   the current OS user with a workspace-contained working directory; they do
   not run in an OS filesystem sandbox.
@@ -64,14 +64,17 @@ after service restart: it still exposes `miodesk_command`,
 `sleep 2; printf` calls both completed through those legacy actions; the long
 result uses `session_id`, but no stdin-writing action is available. No
 additionalProperties error occurred in this check. The earlier
-`yield-time_ms` validation error is therefore a historical observation and its
-root cause remains unconfirmed. Official ChatGPT guidance confirms that a
-workspace owner/admin can use Workspace settings → Apps → Miodesk → … → Action
-control → Refresh, review the action diff, enable the current unified actions,
-and save. That settings control is not exposed in the connector conversation,
-so no refresh was applied here. Until the host advertises and verifies
-`exec_command`/`write_stdin`, MIO-19 remains open. There are no serial devices
-attached, so board-level testing is not part of this phase.
+`yield-time_ms` validation error is a historical observation and its root cause
+remains unconfirmed. At the time of this recorded readback, official ChatGPT
+guidance showed that a workspace owner/admin could use Workspace settings →
+Apps → Miodesk → … → Action control → Refresh, review the action diff, enable
+the current unified actions, and save; that control was not available from the
+connector conversation. This pre-refresh snapshot is superseded by the user's
+later report that a new schema appeared in a refreshed conversation. Treat
+that report as the current schema-refresh evidence; exact tool names and
+command/session behavior still need an action-level smoke. MIO-19 remains open
+for that validation without repeating the refresh step. There are no serial
+devices attached, so board-level testing is not part of this phase.
 
 ## 2. Chosen approach and decomposition
 
@@ -93,7 +96,8 @@ This document specifies Phase A. The approved program order is:
   implementation/server checks for MIO-19, resource-bound and search issues
   found in the audit, security wording, edit-history handling, file creation
   mode, and context field semantics. The connector migration acceptance for
-  MIO-19 remains open pending host action refresh and verification.
+  MIO-19 remains open pending action-level verification of the user-confirmed
+  refreshed schema; no further host refresh is needed.
 - **Phase B — permissions and update behavior:** MIO-13 permission profiles
   and read-only mode, followed by MIO-14's default official update source.
   Each receives its own design and implementation plan after Phase A.
@@ -170,10 +174,10 @@ directory walk, including when fewer than the match-count limit were found.
 
 ### 3.3 Server status, security, and file behavior
 
-- Register the text status tool independently from assembling widget HTML and
-  resources. Widget failure removes only widget metadata/resources; it does
-  not remove status or make the MCP tool count disagree with the registered
-  server tools.
+- Register `status` as a read-only structured tool without MCP Apps UI
+  metadata or resources. Keep its schema and invocation labels; all ten tools
+  remain in `tools/list`, while `resources/list` is empty. Retain the JSON
+  diagnostics APIs and return `"auto"` in `/api/status.theme` for compatibility.
 - Describe commands as running with the current user's permissions and a
   workspace-contained `cwd`. Keep the stronger canonical-path workspace
   boundary statement for file tools.
@@ -233,7 +237,7 @@ Phase A is complete only when all of these pass:
 4. Builtin search tests prove that reaching the fallback's byte limit or
    hitting a scanner error sets `Truncated=true`, including when the number of
    returned matches is below the match-count limit.
-5. Tests prove status remains callable with missing widget assets, actual
+5. Tests prove status remains callable with no UI resources, actual
    registration count matches `tools/list`, command descriptions avoid the
    sandbox claim, and new/overwritten file permissions follow the contract.
 6. Context tests cover clear and no-change semantics, unknown clear fields,
@@ -263,8 +267,10 @@ publication remains a separate approval gate.
 - MIO-19's earlier claim that the `yield-time_ms` failure is currently
   reproduced is stale: the post-restart short and long calls succeeded through
   the legacy connector surface. The early error remains historical and its
-  cause is unconfirmed. Schema drift itself remains confirmed because the
-  connector still exposes the retired quartet and has no stdin-writing action.
+  cause is unconfirmed. The old-schema observation in this plan is also a
+  pre-refresh snapshot; the user later confirmed that a refreshed schema
+  appeared. Exact action inventory and new-surface command/session behavior
+  remain open for MIO-19.
 - MIO-20's header/body mismatch is included: the parsed body tool name is the
   semantic source of truth.
 - The current GitHub `main` ref was checked read-only on 2026-09-23 and
