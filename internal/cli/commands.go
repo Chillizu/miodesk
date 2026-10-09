@@ -104,7 +104,7 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		updated = true
 	}
 
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ValidateCore(); err != nil {
 		errf(stderr, "%v", err)
 		hintf(stderr, "fix the values in %s", path)
 		return 1
@@ -175,7 +175,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if *wsFlag != "" {
 		cfg.Workspace.Root = *wsFlag
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ValidateCore(); err != nil {
 		errf(stderr, "%v", err)
 		return 1
 	}

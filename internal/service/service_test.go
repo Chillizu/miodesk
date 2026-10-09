@@ -47,8 +47,10 @@ func TestTunnelUnitContent(t *testing.T) {
 			t.Errorf("tunnel unit missing %q:\n%s", want, content)
 		}
 	}
-	if strings.Contains(content, "Requires=miodesk.service") {
-		t.Error("optional tunnel must not require the Core systemd unit")
+	for _, dependency := range []string{"Requires=miodesk.service", "PartOf=miodesk.service", "Wants=miodesk.service"} {
+		if strings.Contains(content, dependency) {
+			t.Errorf("optional tunnel must not be tied to the Core unit by %s", dependency)
+		}
 	}
 	quoted := TunnelUnitContent("/opt/Tunnel Client/tunnel-client", "/home/me/Config Dir", "mio profile")
 	if !strings.Contains(quoted, `ExecStart="/opt/Tunnel Client/tunnel-client" run --profile-dir "/home/me/Config Dir" --profile "mio profile"`) {

@@ -456,8 +456,16 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	if *clientFlag != "" {
 		cfg.Tunnel.OpenAI.ClientPath = *clientFlag
 	}
-	if err := cfg.Validate(); err != nil {
-		errf(stderr, "%v", err)
+	tunnelSetupRequested := *tunnelIDFlag != "" || configureOpenAI || *keyFlag != "" ||
+		*profileFlag != "" || *profileDirFlag != "" || *clientFlag != ""
+	var validationError error
+	if tunnelSetupRequested {
+		validationError = cfg.Validate()
+	} else {
+		validationError = cfg.ValidateCore()
+	}
+	if validationError != nil {
+		errf(stderr, "%v", validationError)
 		return 1
 	}
 	ws, err := workspace.New(cfg.Workspace.Root)
@@ -471,8 +479,6 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	// surprising on a newly configured device.
 	cfg.Workspace.Root = ws.Root()
 
-	tunnelSetupRequested := *tunnelIDFlag != "" || configureOpenAI || *keyFlag != "" ||
-		*profileFlag != "" || *profileDirFlag != "" || *clientFlag != ""
 	settings, err := openAISettingsFromConfig(cfg, false)
 	if err != nil {
 		errf(stderr, "%v", err)

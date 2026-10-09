@@ -205,8 +205,9 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// Validate reports configuration values miodesk cannot act on.
-func (c *Config) Validate() error {
+// ValidateCore checks only parameters needed to serve the local MCP endpoint.
+// An optional tunnel's unsupported provider must never prevent Core startup.
+func (c *Config) ValidateCore() error {
 	if c.Server.Port < 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port %d out of range 0-65535", c.Server.Port)
 	}
@@ -228,10 +229,24 @@ func (c *Config) Validate() error {
 	if c.Remote.Mode == "token" && c.Remote.Token == "" {
 		return fmt.Errorf("remote.mode is %q but remote.token is empty", c.Remote.Mode)
 	}
+	return nil
+}
+
+// ValidateTunnel checks only the optional transport selector.
+func (c *Config) ValidateTunnel() error {
 	switch c.Tunnel.Provider {
 	case "openai", "auto", "local", "cloudflare", "ngrok", "tailscale", "custom":
 	default:
 		return fmt.Errorf("tunnel.provider %q must be openai, auto, local, cloudflare, ngrok, tailscale, or custom", c.Tunnel.Provider)
 	}
 	return nil
+}
+
+// Validate checks both Core and optional tunnel settings for workflows that
+// explicitly configure or start a combined remote connection.
+func (c *Config) Validate() error {
+	if err := c.ValidateCore(); err != nil {
+		return err
+	}
+	return c.ValidateTunnel()
 }
