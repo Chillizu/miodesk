@@ -13,6 +13,9 @@ config.toml
 server.json
 .miodesk-*
 
+# Local ChatGPT app binding (account/workspace-specific, never publish)
+/plugins/miodesk/.app.json
+
 # Editor and OS files
 .DS_Store
 .idea/
