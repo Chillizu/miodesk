@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Decoupled Core and OpenAI Tunnel lifecycles: new configurations are local-only;
+  `miodesk service` operates only on Core, while `miodesk tunnel service`
+  explicitly installs and manages the optional independent tunnel unit. The
+  tunnel unit no longer has a hard systemd dependency on Core. Existing tunnel
+  profiles and `miodesk connect` stay supported; already-installed tunnel units
+  must be explicitly reinstalled to adopt the new dependency policy.
+- One loopback MCP endpoint can now be shared by local clients (including
+  MioWeave/WebMCP) and an independently running OpenAI tunnel. Tool names and
+  schemas remain unchanged; ChatGPT still controls its own action refresh.
+
 - Removed the embedded MCP Apps diagnostics widget and its static assets,
   `ui://` resources and `/widget` / `/preview` HTTP routes. The ten native MCP
   tools are unchanged; `status` remains a read-only structured result with

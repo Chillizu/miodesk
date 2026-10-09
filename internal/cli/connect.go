@@ -23,7 +23,7 @@ import (
 // alternatives — a tunnel is never a hidden requirement.
 func runConnect(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("connect", stderr)
-	providerFlag := fs.String("provider", "", "connection mode: openai (default) or custom endpoint")
+	providerFlag := fs.String("provider", "", "optional connection: openai or custom endpoint (default from config)")
 	urlFlag := fs.String("url", "", "public endpoint URL (required for --provider custom)")
 	portFlag := fs.Int("port", 0, "local listen port (default: from config, 0 = random)")
 	timeoutFlag := fs.Int("timeout", 30, "seconds to wait for the public endpoint")
@@ -48,7 +48,12 @@ func runConnect(args []string, stdout, stderr io.Writer) int {
 		providerName = cfg.Tunnel.Provider
 	}
 	if providerName == "" {
-		providerName = "openai"
+		providerName = "local"
+	}
+	if providerName == "local" {
+		errf(stderr, "no tunnel is configured; use `miodesk serve` for local MCP")
+		hintf(stderr, "configure OpenAI tunnel using `miodesk setup --tunnel-id … --runtime-key-file …` first")
+		return 2
 	}
 	if *urlFlag != "" && providerName != "custom" {
 		errf(stderr, "--url is only valid with --provider custom")
@@ -225,25 +230,33 @@ func runTunnel(args []string, stdout, stderr io.Writer) int {
 	}
 	if fs.NArg() == 0 {
 		errf(stderr, "missing subcommand")
-		hintf(stderr, "use: miodesk tunnel <list|doctor>")
+		hintf(stderr, "use: miodesk tunnel <list|doctor|setup|service>")
 		return 2
 	}
-	if fs.NArg() > 1 {
+	if fs.Arg(0) == "service" {
+		if fs.NArg() != 2 {
+			errf(stderr, "use: miodesk tunnel service <install|start|stop|restart|status|uninstall>")
+			return 2
+		}
+		return runTunnelService(fs.Arg(1), stdout, stderr)
+	}
+	if fs.NArg() != 1 {
 		errf(stderr, "unexpected positional arguments after tunnel subcommand")
-		hintf(stderr, "use: miodesk tunnel <list|doctor>")
 		return 2
 	}
 	switch fs.Arg(0) {
 	case "list":
-		okf(stdout, "default connection: OpenAI Secure MCP Tunnel")
+		okf(stdout, "optional remote connection: OpenAI Secure MCP Tunnel")
 		infof(stdout, "the local MCP server stays on 127.0.0.1; tunnel-client opens outbound HTTPS to OpenAI")
 		infof(stdout, "custom endpoint: use `miodesk connect --provider custom --url https://…`")
 		return 0
 	case "doctor":
 		return tunnelDoctor(stdout, stderr)
+	case "setup":
+		return runTunnelSetup(stdout, stderr)
 	default:
 		errf(stderr, "unknown tunnel subcommand %q", fs.Arg(0))
-		hintf(stderr, "use: miodesk tunnel <list|doctor>")
+		hintf(stderr, "use: miodesk tunnel <list|doctor|setup|service>")
 		return 2
 	}
 }

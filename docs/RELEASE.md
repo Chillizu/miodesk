@@ -80,11 +80,11 @@ a separate test installation. Do not upload the runtime key or a local
 
 The release should communicate these stable user-facing decisions:
 
-- fresh setup defaults to a loopback server and OpenAI Secure MCP Tunnel;
-- `miodesk setup` configures paths and the external tunnel-client profile but
-  does not install software or silently start daemons;
-- local tools remain Native-first in ChatGPT, with optional rich UI only for
-  status and long-running command lifecycle results;
+- fresh setup defaults to a loopback MCP server; OpenAI Tunnel is opt-in;
+- `miodesk setup` configures local paths and only touches the external
+  tunnel-client profile when explicitly asked; `miodesk tunnel setup` refreshes
+  a previously configured profile without restarting Core;
+- local tools remain Native-first in ChatGPT (no MCP Apps widget or template);
 - legacy connection configurations remain readable, while the primary CLI
   does not enumerate alternative tunnel providers; and
 - logs are structured and correlate requests without recording workspace

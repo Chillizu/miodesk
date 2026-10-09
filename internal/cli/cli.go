@@ -19,14 +19,14 @@ Usage:
   miodesk <command> [flags]
 
 Commands:
-  setup      configure a new device for local use and OpenAI tunnel access
+  setup      configure a local MCP server; optionally add OpenAI tunnel access
   init       create the default configuration
   serve      run the local HTTP MCP server
-  connect    run the server and connect it through the OpenAI tunnel
-  tunnel     inspect the default connection (list, doctor)
+  connect    legacy combined foreground server + tunnel (optional)
+  tunnel     manage an optional tunnel (setup, doctor, service)
   status     show whether the local server is running
   doctor     check config, workspace, connection, and ports
-  service    manage the systemd user service             (Linux)
+  service    manage only the local Core systemd service   (Linux)
   config     print the config file path
   workspace  print the configured workspace root
   logs       show server logs (systemd journal)

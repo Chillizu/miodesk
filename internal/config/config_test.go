@@ -17,7 +17,7 @@ func TestDefault(t *testing.T) {
 	if cfg.Workspace.Root != "/home/u" {
 		t.Errorf("workspace root = %q, want /home/u", cfg.Workspace.Root)
 	}
-	if cfg.Tunnel.Provider != "openai" {
+	if cfg.Tunnel.Provider != "local" {
 		t.Errorf("tunnel provider = %q", cfg.Tunnel.Provider)
 	}
 	if cfg.Tunnel.OpenAI.Profile != DefaultOpenAIProfile {
@@ -244,5 +244,20 @@ func TestLoggingValidation(t *testing.T) {
 	cfg.Logging.Format = "yaml"
 	if err := cfg.Validate(); err == nil {
 		t.Error("unknown logging.format should be rejected")
+	}
+}
+
+func TestCoreValidationDoesNotDependOnOptionalTunnelConfig(t *testing.T) {
+	cfg := Default()
+	cfg.Tunnel.Provider = "not-installed-provider"
+	if err := cfg.ValidateCore(); err != nil {
+		t.Fatalf("unrelated invalid tunnel provider must not block local Core: %v", err)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("explicit combined setup must still validate tunnel provider")
+	}
+	cfg.Remote.Mode = "token"
+	if err := cfg.ValidateCore(); err == nil {
+		t.Fatal("Core must still enforce its own authentication settings")
 	}
 }

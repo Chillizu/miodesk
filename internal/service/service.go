@@ -59,12 +59,12 @@ WantedBy=default.target
 
 // TunnelUnitContent renders the companion OpenAI tunnel-client unit. The
 // profile remains owned by tunnel-client; miodesk only supervises the exact
-// documented `run --profile` command and keeps it ordered after the local MCP
-// server. No runtime key material is copied into the unit.
+// and keeps startup ordering when both services are requested together.
+// No runtime key material is copied into the unit. The tunnel never requires
+// the local server unit to stay active: either process can be restarted alone.
 func TunnelUnitContent(clientPath, profileDir, profile string) string {
 	return fmt.Sprintf(`[Unit]
 Description=miodesk OpenAI Secure MCP Tunnel
-Requires=%s.service
 After=%s.service network-online.target
 Wants=network-online.target
 
@@ -79,7 +79,7 @@ PrivateTmp=true
 
 [Install]
 WantedBy=default.target
-`, Name, Name, systemdExecArg(clientPath), systemdExecArg(profileDir), systemdExecArg(profile))
+`, Name, systemdExecArg(clientPath), systemdExecArg(profileDir), systemdExecArg(profile))
 }
 
 // systemdExecArg quotes an argument only when systemd's command-line parser
@@ -134,6 +134,19 @@ func InstallTunnel(clientPath, profileDir, profile string) error {
 	if err != nil {
 		return err
 	}
+	// An existing unit may inject working credentials through EnvironmentFile.
+	// A fresh generated unit omits that directive; replacing it silently can
+	// disconnect a live ChatGPT tunnel (the YAML may reference a different key).
+	// Fail closed and require a deliberate credential-preserving migration.
+	if current, err := os.ReadFile(path); err == nil {
+		for _, line := range strings.Split(string(current), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "EnvironmentFile=") {
+				return fmt.Errorf("existing tunnel unit uses EnvironmentFile; refusing to overwrite credentials: preserve this unit and remove Core lifecycle coupling with a reviewed systemd drop-in, or migrate credentials explicitly")
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect existing tunnel unit: %w", err)
+	}
 	if err := writeUnitContent(TunnelUnitContent(clientPath, profileDir, profile), path, ".miodesk-tunnel.service-*"); err != nil {
 		return err
 	}
@@ -177,23 +190,14 @@ func writeUnitContent(content, path, pattern string) error {
 	return os.Rename(tmpName, path)
 }
 
-// Uninstall stops, disables, and removes every installed miodesk unit.
+// Uninstall removes only the miodesk Core unit, never an independent tunnel.
 func Uninstall() error {
-	serverInstalled := Installed()
-	tunnelInstalled := TunnelInstalled()
-	if !serverInstalled && !tunnelInstalled {
+	if !Installed() {
 		path, _ := UnitPath()
 		return fmt.Errorf("service is not installed (%s)", path)
 	}
-	if tunnelInstalled {
-		if err := removeUnit(TunnelName); err != nil {
-			return err
-		}
-	}
-	if serverInstalled {
-		if err := removeUnit(Name); err != nil {
-			return err
-		}
+	if err := removeUnit(Name); err != nil {
+		return err
 	}
 	return systemctl("daemon-reload")
 }
@@ -223,52 +227,17 @@ func removeUnit(name string) error {
 	return nil
 }
 
-// Start starts the server and, when installed, its tunnel companion.
-func Start() error {
-	if err := systemctl("start", Name); err != nil {
-		return err
-	}
-	if TunnelInstalled() {
-		return systemctl("start", TunnelName)
-	}
-	return nil
-}
+// Core service lifecycle never starts, stops, or changes a tunnel.
+func Start() error            { return systemctl("start", Name) }
+func Stop() error             { return systemctl("stop", Name) }
+func Restart() error          { return systemctl("restart", Name) }
+func Status() (string, error) { return unitStatus(Name) }
 
-// Stop stops the tunnel first so no remote requests arrive while the local
-// server is shutting down.
-func Stop() error {
-	if TunnelInstalled() {
-		quietSystemctl("stop", TunnelName)
-	}
-	return systemctl("stop", Name)
-}
-
-// Restart restarts the local server, then refreshes the tunnel companion.
-func Restart() error {
-	if err := systemctl("restart", Name); err != nil {
-		return err
-	}
-	if TunnelInstalled() {
-		return systemctl("restart", TunnelName)
-	}
-	return nil
-}
-
-// Status summarizes both installed units via systemctl.
-func Status() (string, error) {
-	serverStatus, err := unitStatus(Name)
-	if err != nil {
-		return "", err
-	}
-	if !TunnelInstalled() {
-		return "server " + serverStatus + "; tunnel not-installed", nil
-	}
-	tunnelStatus, err := unitStatus(TunnelName)
-	if err != nil {
-		return "", err
-	}
-	return "server " + serverStatus + "; tunnel " + tunnelStatus, nil
-}
+// Tunnel lifecycle is explicit and independently managed.
+func StartTunnel() error            { return systemctl("start", TunnelName) }
+func StopTunnel() error             { return systemctl("stop", TunnelName) }
+func RestartTunnel() error          { return systemctl("restart", TunnelName) }
+func StatusTunnel() (string, error) { return unitStatus(TunnelName) }
 
 func unitStatus(name string) (string, error) {
 	active, _ := output("is-active", name)

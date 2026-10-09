@@ -62,6 +62,14 @@ Developer Mode 中注册的 MCP app 和 Secure MCP Tunnel，不替代 miodesk se
 2. 在 Plugins Directory 中打开并安装私有 `miodesk` 插件。
 3. 在新对话中启用插件并核对工具列表，再做只读状态调用和代表性文件操作。
 
+**Tool Schema 更新边界：** `miodesk` 的标准 MCP `tools/list` 始终提供当前
+工具定义，OpenAI Tunnel 只转发 MCP 请求，并没有权限替 ChatGPT 修改已注册
+App 的 action 快照。根据 [ChatGPT 官方说明](https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt)，
+MCP server 的动作更新不会自动启用，管理界面的 **Refresh** 用来获取最新
+定义；新动作默认未启用。请保留现有十个工具的稳定名称和 Schema，
+而不是依赖 Tunnel 或插件包在后台强制更新 ChatGPT 的工具权限。
+MioWeave 可独立通过 Bridge 重新调用本地 `tools/list`，无需等待 ChatGPT 缓存刷新。
+
 截至 2026-09-23，用户已在新对话中手动确认刷新后出现新 schema。ChatGPT 将
 “创建 MCP 应用”入口移到二级菜单这一点本身不能证明该功能即将弃用；当前
 Plugin Creator 文档仍要求先注册 MCP app，再通过 app ID 创建插件包装。
@@ -76,23 +84,31 @@ OpenAI Secure MCP Tunnel 用于本地开发连接，不满足公共插件提交�
 miodesk connect
 ```
 
-按 `Ctrl-C` 会停止两者。Linux 上可以把本地 server 和 tunnel-client 都交给
-systemd user service：
+按 `Ctrl-C` 会停止两者。Linux 上建议将本地 Core 与 OpenAI Tunnel **分成两个独立 systemd 服务**：
 
 ```sh
 miodesk service install
 miodesk service start
+miodesk tunnel service install
+miodesk tunnel service start
 ```
 
-OpenAI Tunnel 已配置时，安装会生成 `miodesk.service` 和
-`miodesk-tunnel.service`；后者依赖本地 server，并在 tunnel-client 异常退出时
-自动重启。若两者已经在后台运行，`miodesk connect` 只报告现有连接，不会再
-启动第二个 tunnel-client。
+`miodesk.service` 只运行 MCP Core，`miodesk-tunnel.service` 只运行
+官方 `tunnel-client`。它们共享 `http://127.0.0.1:8787/mcp`，但不互相启停。
+原先的 `miodesk connect` 仍是兼容性的前台双进程快捷命令。
 
-`service install` 不会隐式 enable；确认运行正常后再执行：
+历史安装的 tunnel unit 可能包含 `PartOf=miodesk.service`、`Wants=` 或
+`Requires=miodesk.service`，仍会和 Core 发生连带启停。升级后先检查
+`systemctl --user cat miodesk-tunnel.service`，确认现有 `EnvironmentFile=` 与
+密钥引用的迁移方案，再考虑运行 `miodesk tunnel service install` 重写 unit。
+如果原 Unit 使用 `EnvironmentFile=`，安装器会保护其密钥来源并拒绝覆盖；
+此时可在核对其他依赖后，使用 systemd drop-in 清除 `PartOf=` 与指向 Core 的
+`Wants=`，并重新执行 `daemon-reload`，无需替换凭据。
+不应把 Core 的更新当作重启 Tunnel 的理由。确认运行正常后可分别启用：
 
 ```sh
-systemctl --user enable miodesk miodesk-tunnel
+systemctl --user enable miodesk
+systemctl --user enable miodesk-tunnel
 ```
 
 macOS/Windows 没有内置的 miodesk service 管理器，使用前台命令或操作系统
@@ -101,14 +117,16 @@ macOS/Windows 没有内置的 miodesk service 管理器，使用前台命令或�
 ## 自定义端口
 
 端口是本机 server 与 tunnel-client 之间的目标，不是公网端口。需要换端口
-时使用固定值，并重新运行 setup 让 profile 同步：
+时先修改 Core 的固定端口，再显式同步 Tunnel Profile：
 
 ```sh
 miodesk setup --workspace /absolute/path/to/workspace --port 9900
+miodesk tunnel setup
 ```
 
-若使用 systemd 服务，再运行 `miodesk service restart`；前台模式则重新运行
-`miodesk connect`。`--port 0` 只适用于本地临时测试；OpenAI Tunnel 需要固定端口。
+这两步只更新配置与 Profile，不会自动启动服务。之后在维护窗口分别运行
+`miodesk service restart` 和 `miodesk tunnel service restart`。
+`--port 0` 只适用于本地临时测试；OpenAI Tunnel 需要固定端口。
 
 ## 已有 HTTPS 入口（高级）
 

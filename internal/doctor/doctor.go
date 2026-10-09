@@ -73,7 +73,7 @@ func Run(cfgPath string, cfg *config.Config, cfgErr error) Report {
 		r.add("config", StatusError, "configuration is empty", "run `miodesk init`")
 		return r
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ValidateCore(); err != nil {
 		r.add("config", StatusError, err.Error(), "fix the values in config.toml")
 		return r
 	}
@@ -113,7 +113,11 @@ func Run(cfgPath string, cfg *config.Config, cfgErr error) Report {
 	checkPort(&r, cfg)
 
 	checkRemoteSecurity(&r, cfg)
-	checkTunnel(&r, cfg)
+	if err := cfg.ValidateTunnel(); err != nil {
+		r.add("tunnel", StatusWarn, err.Error(), "fix optional tunnel.provider; local MCP remains usable")
+	} else {
+		checkTunnel(&r, cfg)
+	}
 	checkService(&r)
 
 	r.add("platform", StatusOK, runtime.GOOS+"/"+runtime.GOARCH)

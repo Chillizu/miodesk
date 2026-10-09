@@ -65,8 +65,8 @@ miodesk serve
 
 `setup` is safe to rerun. On a new configuration it records the current
 directory as an absolute workspace root, uses local port `8787`, keeps the
-server on `127.0.0.1`, and selects [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
-as the default remote path. It does not install software, guess credentials,
+server on `127.0.0.1`, and defaults to local-only MCP. [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+is an optional client configured separately. Setup does not install software, guess credentials,
 start a daemon, or print secrets.
 
 In a real terminal, running `miodesk setup` without arguments opens a small
@@ -82,7 +82,8 @@ miodesk setup --workspace /absolute/path/to/workspace --port 9900
 ```
 
 Port `0` is reserved for local ephemeral tests. OpenAI tunnel profiles need a
-fixed local target so the profile continues to point at the same endpoint.
+fixed local target. Changing the Core port does not silently update an existing
+tunnel-client profile: run `miodesk tunnel setup` explicitly afterward.
 
 ## Connect ChatGPT
 
@@ -109,34 +110,53 @@ corresponding Tunnel in Developer Mode/connector settings. See
 [docs/SETUP.md](docs/SETUP.md) and [docs/CHATGPT.md](docs/CHATGPT.md) for the
 credential, workspace association, and troubleshooting details.
 
-On Linux, `miodesk service install` installs the local server unit and, when
-OpenAI Tunnel is configured, a companion `miodesk-tunnel.service` that runs
-`tunnel-client` from the generated profile:
+On Linux, the local MCP service and the optional OpenAI tunnel each have their
+own independently managed systemd user unit. For local-only / MioWeave use:
 
 ```sh
 miodesk service install
 miodesk service start
-systemctl --user enable miodesk miodesk-tunnel  # optional: start at login/boot
+systemctl --user enable miodesk  # optional
 ```
 
-`miodesk service start|stop|restart|status|uninstall` manages the pair
-together. If the persistent tunnel is already running, `miodesk connect`
-reuses it instead of starting a second tunnel client. Without installed
-services, `miodesk connect` still starts both processes in the foreground.
+After configuring the OpenAI profile, install and start the **separate**
+tunnel unit when ChatGPT access is needed:
+
+```sh
+miodesk tunnel service install
+miodesk tunnel service start
+systemctl --user enable miodesk-tunnel  # optional
+```
+
+`miodesk service start|stop|restart|uninstall` operates **only** on Core;
+`miodesk tunnel service <verb>` operates **only** on the tunnel. Neither
+requires or silently restarts the other. The older `miodesk connect` combined
+foreground command remains available for compatibility, but is not needed for
+two independent systemd units. Some older/custom installations have tunnel unit relationships like
+`PartOf=miodesk.service`, `Wants=miodesk.service`, or `Requires=miodesk.service`.
+Inspect the **installed** `miodesk-tunnel.service` before migration. If any of
+these are present, validate your tunnel-client profile and runtime-key reference,
+then explicitly run `miodesk tunnel service install` and schedule a controlled
+tunnel restart to apply the independent unit. Merely upgrading Core does not
+rewrite systemd units; do not replace a working custom unit without first
+checking its `EnvironmentFile=` and credentials setup. The new installer
+refuses to overwrite any pre-existing unit using `EnvironmentFile=`; preserve
+its credential source and use a reviewed systemd drop-in to remove the old
+Core dependency without touching the running tunnel (see `docs/SETUP.md`).
 
 ## Commands
 
 | command     | purpose                                                      |
 | ----------- | ------------------------------------------------------------ |
-| `setup`     | configure a new device, workspace, port, and OpenAI profile |
+| `setup`     | configure local Core; optionally prepare an OpenAI profile |
 | `init`      | create or update the low-level configuration                 |
 | `serve`     | run the local HTTP MCP server                          |
-| `connect`   | run/reuse the server and connect through the default tunnel  |
-| `tunnel`    | inspect the default connection with `list` or `doctor`      |
+| `connect`   | legacy combined foreground server and optional tunnel |
+| `tunnel`    | inspect tunnel or manage its independent service |
 | `status`    | show local server, tunnel provider, and tunnel service state (`--json`) |
 | `doctor`    | check configuration, workspace, connection, and ports       |
 | `logs`      | show collected systemd records or foreground guidance       |
-| `service`   | manage the Linux server + tunnel systemd user services                  |
+| `service`   | manage the Linux Core systemd service only                          |
 | `config`    | print the configuration file path                           |
 | `workspace` | print the configured workspace root                         |
 | `update`    | verify and atomically apply a release manifest              |
@@ -157,7 +177,7 @@ For local MCP hosts, stdio avoids networking entirely:
 
 ## Custom HTTPS endpoint
 
-OpenAI Secure MCP Tunnel is the default and the only connection path shown by
+OpenAI Secure MCP Tunnel is the recommended optional ChatGPT connection path shown by
 the primary onboarding flow. If an operator already owns a reverse proxy or
 another HTTPS ingress, the advanced custom mode is available:
 

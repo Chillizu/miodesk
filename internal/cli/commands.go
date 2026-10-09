@@ -104,7 +104,7 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		updated = true
 	}
 
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ValidateCore(); err != nil {
 		errf(stderr, "%v", err)
 		hintf(stderr, "fix the values in %s", path)
 		return 1
@@ -175,7 +175,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if *wsFlag != "" {
 		cfg.Workspace.Root = *wsFlag
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ValidateCore(); err != nil {
 		errf(stderr, "%v", err)
 		return 1
 	}
@@ -575,45 +575,13 @@ func runService(args []string, stdout, stderr io.Writer) int {
 	verb := fs.Arg(0)
 	switch verb {
 	case "install":
-		cfg, _, ok := loadConfig(stderr)
-		if !ok {
-			return 1
-		}
-		var tunnelSettings *openAISettings
-		if cfg.Tunnel.Provider == "openai" && cfg.Tunnel.OpenAI.TunnelID != "" {
-			settings, err := openAISettingsFromConfig(cfg, true)
-			if err != nil {
-				errf(stderr, "%v", err)
-				hintf(stderr, "run `miodesk setup` to repair the OpenAI tunnel configuration")
-				return 1
-			}
-			if _, err := os.Stat(openAIProfilePath(settings)); err != nil {
-				errf(stderr, "OpenAI tunnel-client profile is missing: %s", openAIProfilePath(settings))
-				hintf(stderr, "run `miodesk setup` to regenerate the tunnel-client profile")
-				return 1
-			}
-			tunnelSettings = &settings
-		}
 		if err := service.Install(); err != nil {
 			errf(stderr, "%v", err)
 			return 1
 		}
-		if tunnelSettings != nil {
-			if err := service.InstallTunnel(tunnelSettings.ClientPath, tunnelSettings.ProfileDir, tunnelSettings.Profile); err != nil {
-				errf(stderr, "%v", err)
-				return 1
-			}
-			okf(stdout, "services installed: %s.service + %s.service", service.Name, service.TunnelName)
-			infof(stdout, "start both now: miodesk service start")
-			infof(stdout, "enable both at login when ready: systemctl --user enable %s %s", service.Name, service.TunnelName)
-		} else {
-			if err := service.RemoveTunnel(); err != nil {
-				warnf(stderr, "remove stale tunnel service: %v", err)
-			}
-			okf(stdout, "service installed: %s.service", service.Name)
-			infof(stdout, "start it now: miodesk service start")
-			infof(stdout, "enable at login when ready: systemctl --user enable %s", service.Name)
-		}
+		okf(stdout, "Core service installed: %s.service", service.Name)
+		infof(stdout, "start: miodesk service start")
+		infof(stdout, "optional OpenAI connection: miodesk tunnel service install")
 		return 0
 	case "uninstall":
 		if err := service.Uninstall(); err != nil {
@@ -649,6 +617,83 @@ func runService(args []string, stdout, stderr io.Writer) int {
 	default:
 		errf(stderr, "unknown service verb %q", verb)
 		hintf(stderr, "use install, start, stop, restart, status, or uninstall")
+		return 2
+	}
+}
+
+// runTunnelService manages the optional OpenAI transport independently of
+// miodesk Core. It does not start, stop, install, or modify miodesk.service.
+func runTunnelService(verb string, stdout, stderr io.Writer) int {
+	if !service.Supported() {
+		errf(stderr, "OpenAI tunnel service management requires Linux systemd")
+		return 1
+	}
+	switch verb {
+	case "install":
+		cfg, _, ok := loadConfig(stderr)
+		if !ok {
+			return 1
+		}
+		if cfg.Tunnel.Provider != "openai" || cfg.Tunnel.OpenAI.TunnelID == "" {
+			errf(stderr, "OpenAI tunnel is not configured")
+			hintf(stderr, "run `miodesk setup --tunnel-id tunnel_… --runtime-key-file <file>`")
+			return 1
+		}
+		if cfg.Server.Port == 0 || !isLoopback(cfg.Server.Host) || (cfg.Remote.Mode != "" && cfg.Remote.Mode != "local") {
+			errf(stderr, "OpenAI tunnel requires a fixed loopback MCP endpoint without bearer/unsafe remote mode")
+			return 1
+		}
+		settings, err := openAISettingsFromConfig(cfg, true)
+		if err != nil {
+			errf(stderr, "%v", err)
+			return 1
+		}
+		if _, err := os.Stat(openAIProfilePath(settings)); err != nil {
+			errf(stderr, "OpenAI tunnel profile is missing: %s", openAIProfilePath(settings))
+			hintf(stderr, "rerun `miodesk setup` to configure the tunnel-client profile")
+			return 1
+		}
+		if err := service.InstallTunnel(settings.ClientPath, settings.ProfileDir, settings.Profile); err != nil {
+			errf(stderr, "%v", err)
+			return 1
+		}
+		okf(stdout, "optional OpenAI tunnel unit installed: %s.service", service.TunnelName)
+		infof(stdout, "start independently: miodesk tunnel service start")
+		return 0
+	case "start", "stop", "restart":
+		var err error
+		switch verb {
+		case "start":
+			err = service.StartTunnel()
+		case "stop":
+			err = service.StopTunnel()
+		case "restart":
+			err = service.RestartTunnel()
+		}
+		if err != nil {
+			errf(stderr, "%v", err)
+			return 1
+		}
+		okf(stdout, "OpenAI tunnel service %s", verb)
+		return 0
+	case "status":
+		st, err := service.StatusTunnel()
+		if err != nil {
+			errf(stderr, "%v", err)
+			return 1
+		}
+		okf(stdout, "OpenAI tunnel service: %s", st)
+		return 0
+	case "uninstall":
+		if err := service.RemoveTunnel(); err != nil {
+			errf(stderr, "%v", err)
+			return 1
+		}
+		okf(stdout, "OpenAI tunnel unit uninstalled (Core untouched)")
+		return 0
+	default:
+		errf(stderr, "unknown tunnel service verb %q", verb)
+		hintf(stderr, "use: miodesk tunnel service <install|start|stop|restart|status|uninstall>")
 		return 2
 	}
 }

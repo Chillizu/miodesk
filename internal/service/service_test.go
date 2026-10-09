@@ -36,7 +36,6 @@ func TestTunnelUnitContent(t *testing.T) {
 	content := TunnelUnitContent("/home/me/.local/bin/tunnel-client", "/home/me/.config/tunnel-client", "miodesk")
 	for _, want := range []string{
 		"Description=miodesk OpenAI Secure MCP Tunnel",
-		"Requires=miodesk.service",
 		"After=miodesk.service network-online.target",
 		"ExecStart=/home/me/.local/bin/tunnel-client run --profile-dir /home/me/.config/tunnel-client --profile miodesk",
 		"Restart=always",
@@ -46,6 +45,11 @@ func TestTunnelUnitContent(t *testing.T) {
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("tunnel unit missing %q:\n%s", want, content)
+		}
+	}
+	for _, dependency := range []string{"Requires=miodesk.service", "PartOf=miodesk.service", "Wants=miodesk.service"} {
+		if strings.Contains(content, dependency) {
+			t.Errorf("optional tunnel must not be tied to the Core unit by %s", dependency)
 		}
 	}
 	quoted := TunnelUnitContent("/opt/Tunnel Client/tunnel-client", "/home/me/Config Dir", "mio profile")
@@ -106,5 +110,33 @@ func TestSupported(t *testing.T) {
 	// platforms the service commands report a clear error instead.
 	if runtime.GOOS == "linux" && !Supported() {
 		t.Error("Supported should be true on linux")
+	}
+}
+
+// Installing an upgraded tunnel unit must not silently drop a custom
+// EnvironmentFile which could provide the actual active control-plane key.
+func TestInstallTunnelRefusesToOverwriteCredentialEnvironment(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	unit, err := TunnelUnitPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(unit), 0700); err != nil {
+		t.Fatal(err)
+	}
+	existing := "[Unit]\nPartOf=miodesk.service\n[Service]\nEnvironmentFile=%h/.config/tunnel-client/miodesk.env\nExecStart=/usr/bin/tunnel-client run --profile miodesk\n"
+	if err := os.WriteFile(unit, []byte(existing), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err = InstallTunnel("/usr/bin/tunnel-client", "/home/example/.config/tunnel-client", "miodesk")
+	if err == nil || !strings.Contains(err.Error(), "EnvironmentFile") {
+		t.Fatalf("expected credential-preserving migration refusal, got: %v", err)
+	}
+	current, err := os.ReadFile(unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != existing {
+		t.Fatal("failed migration attempt modified existing unit")
 	}
 }
