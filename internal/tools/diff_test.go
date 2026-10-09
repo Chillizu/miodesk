@@ -53,6 +53,24 @@ func TestDiffLinesBoundedCapsJSONEscapes(t *testing.T) {
 	}
 }
 
+func TestDiffLinesBoundedCapsInvalidUTF8JSON(t *testing.T) {
+	// The UTF-8 replacement may be encoded differently across Go versions.
+	// Diff budgeting must match encoding/json even on malformed input.
+	text := strings.Repeat(string([]byte{0xff}), 500)
+	const budget = 256
+	groups, truncated := DiffLinesBounded("", text, 20000, budget)
+	if !truncated {
+		t.Fatal("invalid UTF-8 diff should exceed the JSON budget")
+	}
+	encoded, err := json.Marshal(groups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > budget {
+		t.Fatalf("serialized diff exceeded budget: %d > %d", len(encoded), budget)
+	}
+}
+
 func TestDiffJSONSizeMatchesEncodingJSON(t *testing.T) {
 	texts := []string{
 		"plain text",

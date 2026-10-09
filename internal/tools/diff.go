@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -32,6 +33,14 @@ const (
 // back to a single coarse replace group instead of exploding memory. A var
 // only so tests can shrink it.
 var diffMaxCells = 4 << 20
+
+// encoding/json's representation of invalid UTF-8 bytes varies between Go
+// toolchains (literal U+FFFD versus an escaped replacement character). Match
+// the actual runtime encoder instead of undercounting bounded diff results.
+var invalidUTF8JSONSize = func() int {
+	encoded, _ := json.Marshal(string([]byte{0xff})) // String marshaling cannot fail.
+	return len(encoded) - 2                          // Exclude the JSON quotes.
+}()
 
 // DiffLines computes standard bounded change groups between two file
 // contents. Identical inputs yield no groups.
@@ -255,7 +264,7 @@ func jsonStringSize(text string, maxBytes int) (int, bool) {
 		r, runeBytes := utf8.DecodeRuneInString(text[i:])
 		delta := runeBytes
 		if r == utf8.RuneError && runeBytes == 1 {
-			delta = utf8.RuneLen(utf8.RuneError) // encoding/json replaces invalid bytes with U+FFFD.
+			delta = invalidUTF8JSONSize // Match the active encoding/json implementation.
 		} else if r == '\u2028' || r == '\u2029' {
 			delta = 6
 		}
