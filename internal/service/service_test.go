@@ -34,9 +34,12 @@ func TestTunnelUnitPathFollowsXDG(t *testing.T) {
 
 func TestTunnelUnitContent(t *testing.T) {
 	content := TunnelUnitContent("/home/me/.local/bin/tunnel-client", "/home/me/.config/tunnel-client", "miodesk")
+	if strings.Contains(content, "network-online.target") {
+		t.Fatal("user network-online.target is not an effective network-readiness gate")
+	}
 	for _, want := range []string{
 		"Description=miodesk OpenAI Secure MCP Tunnel",
-		"After=miodesk.service network-online.target",
+		"After=miodesk.service",
 		"ExecStart=/home/me/.local/bin/tunnel-client run --profile-dir /home/me/.config/tunnel-client --profile miodesk",
 		"Restart=always",
 		"UMask=0077",
@@ -60,6 +63,9 @@ func TestTunnelUnitContent(t *testing.T) {
 
 func TestUnitContent(t *testing.T) {
 	content := UnitContent("/opt/miodesk")
+	if strings.Contains(content, "After=default.target") {
+		t.Fatalf("local server unit must not be ordered after its own default target: %s", content)
+	}
 	for _, want := range []string{
 		"[Unit]",
 		"Description=miodesk local MCP server",

@@ -44,7 +44,6 @@ func unitPath(name string) (string, error) {
 func UnitContent(binPath string) string {
 	return fmt.Sprintf(`[Unit]
 Description=miodesk local MCP server
-After=default.target
 
 [Service]
 ExecStart=%s serve
@@ -65,8 +64,7 @@ WantedBy=default.target
 func TunnelUnitContent(clientPath, profileDir, profile string) string {
 	return fmt.Sprintf(`[Unit]
 Description=miodesk OpenAI Secure MCP Tunnel
-After=%s.service network-online.target
-Wants=network-online.target
+After=%s.service
 
 [Service]
 ExecStart=%s run --profile-dir %s --profile %s
