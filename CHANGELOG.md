@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added an **unexposed, read-only Code Mode adapter prototype** under
+  `internal/codemode` using a pure-Go JavaScript engine. A single async script
+  can compose `read`, literal `search`, and `list` and return a focused JSON
+  result. The prototype enforces bounded input, tool-call count, response size,
+  and time and tests path escapes, missing side-effect capabilities, and loops.
+  It deliberately does **not** register a public MCP tool or change the Tunnel:
+  in-process JavaScript does not provide an OS memory/security sandbox, so a
+  separately isolated worker remains a prerequisite for safe opt-in exposure.
+
 - Improved model-facing tool descriptions and bundled workspace instructions so
   agents choose `list` for paths, literal `search` for content, focused `read`
   windows for context, guarded `edit` for changes, and `exec_command` with an
