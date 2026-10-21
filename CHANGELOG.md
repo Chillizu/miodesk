@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Improved model-facing tool descriptions and bundled workspace instructions so
+  agents choose `list` for paths, literal `search` for content, focused `read`
+  windows for context, guarded `edit` for changes, and `exec_command` with an
+  explicit workdir for tests. Command sessions remain incremental and bounded.
+- Fixed `read` line offsets beyond the first 512 KiB by streaming to the
+  requested line window while preserving the per-result byte cap.
+- Unified `search` as literal substring matching across built-in and ripgrep
+  engines. Ripgrep now always emits filenames for single-file searches and
+  retains previews of matches on long lines.
+- `list` returns workspace-relative paths even when listing a subdirectory;
+  paths can be passed directly to other file tools.
+- Exec output now reports optional `truncated=true` when its 1 MiB capture cap
+  is hit, so clients can recognize incomplete logs. No tool names or required
+  input fields changed.
+
 - Adaptive maintenance: upgraded the official MCP Go SDK from v1.7.0 to v1.8.0
   for transport hardening without altering the supported MCP protocol revision
   or model-facing tool schemas; CI now cross-compiles every release target

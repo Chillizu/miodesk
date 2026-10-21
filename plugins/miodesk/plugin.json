@@ -21,7 +21,7 @@
           "Execute"
         ],
         "defaultPrompt": [
-          "Use miodesk to inspect or update this workspace."
+          "Use miodesk for this workspace task: locate paths with list, find literal text with search, inspect focused line windows with read, prefer guarded edit for minimal changes, and run bounded verification commands in an explicit workdir. Poll returned exec session IDs and treat truncated results as incomplete."
         ],
         "logo": "./assets/miodesk-logo.png",
         "composerIcon": "./assets/miodesk-logo.png"

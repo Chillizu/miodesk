@@ -29,6 +29,29 @@ Format: topic → URL → version → used by → decision → checked.
   verify with race tests and both isolated and live MCP smoke tests.
 - Checked: 2026-10-21
 
+## Codex unified exec model-facing contract
+
+- URL: https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/handlers/shell_spec.rs
+- Used by: `internal/tools/unified_exec.go`, `internal/server/server.go`,
+  `plugins/miodesk/skills/miodesk-workspace/SKILL.md`
+- Decision: retain compact `exec_command` / `write_stdin` with explicit
+  `workdir`, opt-in TTY, resumable sessions, bounded output and timing.
+  Do not copy Codex-specific sandbox approvals, shell environments, or
+  lifetime assumptions: miodesk runs commands under the local user's OS
+  permissions without an OS filesystem sandbox. An optional `truncated`
+  output field exposes the capture cap; input signatures stay unchanged.
+- Checked: 2026-10-21
+
+## ripgrep single-file output and long-line behavior
+
+- URLs: https://manpages.debian.org/trixie/ripgrep/rg.1.en.html,
+  https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md
+- Used by: `internal/tools/search.go`
+- Decision: `-F` aligns literal searches with miodesk's fallback engine;
+  `-H` forces filename prefixes even for one explicitly selected file;
+  `--max-columns-preview` retains bounded indications of long matching lines.
+- Checked: 2026-10-21
+
 ## GitHub Actions runner compatibility
 
 - URLs: https://github.com/actions/checkout (v5),

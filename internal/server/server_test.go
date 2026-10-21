@@ -1229,6 +1229,19 @@ func TestMCPStatusWithoutAppsUI(t *testing.T) {
 	}
 	assertSchemaProperties(execCommand, []string{"cmd", "workdir", "tty", "yield_time_ms", "timeout_ms"}, []string{"command", "label", "id"})
 	assertSchemaProperties(writeStdin, []string{"session_id", "chars", "yield_time_ms"}, []string{"id", "command"})
+	for _, tool := range []*mcp.Tool{execCommand, writeStdin} {
+		outSchema, ok := tool.OutputSchema.(map[string]any)
+		if !ok {
+			t.Fatalf("%s outputSchema = %#v", tool.Name, tool.OutputSchema)
+		}
+		outProps, ok := outSchema["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s output properties = %#v", tool.Name, outSchema["properties"])
+		}
+		if _, ok := outProps["truncated"]; !ok {
+			t.Errorf("%s must expose optional output truncation marker", tool.Name)
+		}
+	}
 
 	if status.Annotations == nil || !status.Annotations.ReadOnlyHint {
 		t.Errorf("status annotations = %+v", status.Annotations)

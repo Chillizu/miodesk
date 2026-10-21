@@ -131,7 +131,7 @@ func New(cfg *config.Config, ws *workspace.Workspace) *Server {
 			Version:     buildinfo.Version,
 		},
 		&mcp.ServerOptions{
-			Instructions: "miodesk bridges the user's local workspace. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root; paths may be relative to the root. Prefer list before deeper reads, and prefer edit over write for changing existing files — edit batches are atomic. Commands run with the current user's permissions; exec_command.workdir selects a workspace-contained working directory and does not restrict OS filesystem access. exec_command either returns final output or a numeric session_id; keep tty=false for ordinary commands and set tty=true only for genuinely interactive terminal programs. write_stdin resumes that session, polls with empty chars, or writes input; Ctrl-C is terminal input for TTY sessions and cancels pipe sessions. The context tool maintains small cross-session rolling handoffs: update at meaningful changes in goals, decisions, blockers, or next steps; checkpoint at explicit or important milestones; resume in a new session. Use approach_summary for a concise current approach and rationale. For update/checkpoint, clear_fields explicitly clears scalar fields and takes precedence over values supplied in the same request.",
+			Instructions: "miodesk bridges the user's local workspace. Choose the smallest tool: list explores paths (returned entries are workspace-relative); search finds literal text, not regex; read retrieves focused 1-based line windows, even in large files. Every file tool (read, search, list, write, edit, delete) is sandboxed inside the workspace root. Prefer exact/guarded edit over replacing whole files; edit batches are atomic. Commands run with the current user's permissions; exec_command.workdir selects a workspace-contained working directory and does not restrict OS filesystem access. Set workdir explicitly for projects; each command call starts independently using /bin/sh on Unix. exec_command either returns final output or a numeric session_id; use tty=false for ordinary commands, tty=true for interactive terminals. write_stdin resumes a session, polls with empty chars, or writes input; Ctrl-C is terminal input for TTY sessions and cancels pipe sessions. Session output is incremental; truncated=true means captured output is incomplete. If read/search/list is truncated, narrow the window before concluding content is absent. The context tool maintains cross-session handoffs: update for meaningful changes, checkpoint for milestones, resume in a new session. For context update/checkpoint, clear_fields explicitly clears scalar fields and takes precedence over supplied values.",
 		},
 	)
 	registerTools(s)
@@ -354,7 +354,7 @@ func registerTools(s *Server) {
 	mcp.AddTool(s.mcp, declared("read", &mcp.Tool{
 		Name:        "read",
 		Title:       "Read file",
-		Description: "Read a text file inside the workspace. Supports line-based offset/limit windowing; output is capped at 512 KiB per call.",
+		Description: "Read one known text file. Use offset (1-based line) and limit to fetch a focused window, including lines beyond the first 512 KiB; a single response is capped at 512 KiB. truncated=true means more content remains after the window.",
 		Annotations: ann(true, false, false, true),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ReadInput) (result *mcp.CallToolResult, output *tools.ReadOutput, err error) {
 		finish := s.beginTool(ctx, "read")
@@ -368,7 +368,7 @@ func registerTools(s *Server) {
 	mcp.AddTool(s.mcp, declared("search", &mcp.Tool{
 		Name:        "search",
 		Title:       "Search file contents",
-		Description: "Search file contents inside the workspace. Uses ripgrep when available and a built-in engine otherwise.",
+		Description: "Find literal text (NOT a regex) in workspace files. Returns workspace-relative file paths, 1-based line numbers, and bounded snippets; max_results limits matches. Use read for surrounding lines, or exec_command with rg for regex searches. Engine and truncation are reported.",
 		Annotations: ann(true, false, false, true),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.SearchInput) (result *mcp.CallToolResult, output *tools.SearchOutput, err error) {
 		finish := s.beginTool(ctx, "search")
@@ -382,7 +382,7 @@ func registerTools(s *Server) {
 	mcp.AddTool(s.mcp, declared("list", &mcp.Tool{
 		Name:        "list",
 		Title:       "List directory",
-		Description: "List directory entries inside the workspace with bounded depth and count.",
+		Description: "Explore files and directories, not file contents. Entries have workspace-relative paths directly reusable by read/edit; depth and limit bound traversal. truncated=true means entries may be omitted due to limit or unreadable subtrees.",
 		Annotations: ann(true, false, false, true),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ListInput) (result *mcp.CallToolResult, output *tools.ListOutput, err error) {
 		finish := s.beginTool(ctx, "list")
@@ -410,7 +410,7 @@ func registerTools(s *Server) {
 	mcp.AddTool(s.mcp, declared("edit", &mcp.Tool{
 		Name:        "edit",
 		Title:       "Edit file",
-		Description: "Apply exact-replace or guarded range edits to files inside the workspace. Every operation is validated before anything is written, and each file write is atomic (temp + rename).",
+		Description: "Make minimal, verified edits to existing workspace files. Exact old text must occur once unless replace_all=true; range edits require 1-based lines and matching expected content. All operations validate together before atomic file writes; do not guess stale text.",
 		Annotations: ann(false, true, false, true),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.EditInput) (result *mcp.CallToolResult, output *tools.EditOutput, err error) {
 		finish := s.beginTool(ctx, "edit")
@@ -439,7 +439,7 @@ func registerTools(s *Server) {
 	mcp.AddTool(s.mcp, declared("exec_command", &mcp.Tool{
 		Name:        "exec_command",
 		Title:       "Run command",
-		Description: "Run a shell command with the current user's permissions and a workspace-contained working directory. The command is not confined by an OS filesystem sandbox and may access resources permitted to the account. Returns final output when it exits within yield_time_ms; otherwise returns a numeric session_id for write_stdin. Set tty=true only for interactive terminal programs; ordinary commands stay pipe-backed by default.",
+		Description: "Run a shell command with the current user's permissions from a workspace-contained working directory (workdir defaults to workspace root; each call is independent). Uses /bin/sh -c on Unix or cmd /c on Windows; commands are not confined by an OS filesystem sandbox. Finishes inline within yield_time_ms or returns session_id for write_stdin. Set tty=true only for interactive programs. Output is incremental, capped at 1 MiB per session; truncated=true warns of omitted output.",
 		Annotations: ann(false, true, true, false),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.ExecCommandInput) (result *mcp.CallToolResult, output *tools.UnifiedExecOutput, err error) {
 		finish := s.beginTool(ctx, "exec_command")
@@ -454,7 +454,7 @@ func registerTools(s *Server) {
 	mcp.AddTool(s.mcp, declared("write_stdin", &mcp.Tool{
 		Name:        "write_stdin",
 		Title:       "Resume command",
-		Description: "Resume a live exec_command session. Empty chars polls and non-empty chars writes to stdin. Ctrl-C is delivered normally to TTY sessions; for pipe sessions it cancels the process.",
+		Description: "Use only with session_id from exec_command to receive NEW output, poll, or send input. chars omitted or empty polls; nonempty chars writes raw input. A literal Ctrl-C cancels pipe sessions; in a TTY it is terminal input. Exit code means the command finished; truncated=true signals incomplete captured output.",
 		Annotations: ann(false, true, true, false),
 	}), func(ctx context.Context, req *mcp.CallToolRequest, in tools.WriteStdinInput) (result *mcp.CallToolResult, output *tools.UnifiedExecOutput, err error) {
 		finish := s.beginTool(ctx, "write_stdin")
