@@ -1,11 +1,10 @@
 # Release checklist
 
-The latest published release was `v0.2.1` as checked on 2026-10-21; the
-current `main` has newer features and the public install script downloads the
-latest **tagged GitHub Release**, not the tip of `main`. Before announcing
-features added since `v0.2.1`, prepare and publish a new, tested release
-(candidate version `0.2.2`). Creating a tag or public GitHub release remains
-an explicit operator decision. Run from a normal clone of
+The public install script downloads the latest **tagged GitHub Release**,
+not the tip of `main`. Release `v0.2.2` introduces experimental, default-off
+Code Mode and the streamlined local-first onboarding. Each release needs a
+clean, tested Git commit, a reviewed tag, versioned assets and successful
+public download verification. Run from a normal clone of
 `github.com/Chillizu/miodesk`.
 
 ## Before tagging
@@ -90,9 +89,7 @@ The release should communicate these stable user-facing decisions:
   local-only `setup` requires no OpenAI credentials and should work unattended
   when stdin is not a TTY;
 - The README version notice must match the latest published GitHub Release
-  after publishing. Remove or update any main-only feature caveat when the
-  corresponding release assets are actually downloadable;
-
+  after publishing, including the experimental Code Mode disclaimer;
 - fresh setup defaults to a loopback MCP server; OpenAI Tunnel is opt-in;
 - `miodesk setup` configures local paths and only touches the external
   tunnel-client profile when explicitly asked; `miodesk tunnel setup` refreshes

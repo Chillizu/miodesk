@@ -101,6 +101,10 @@ func Run(cfgPath string, cfg *config.Config, cfgErr error) Report {
 		names = append(names, t.Name)
 	}
 	r.add("mcp", StatusOK, fmt.Sprintf("%d tools registered (%s)", len(names), strings.Join(names, ", ")))
+	if cfg.CodeMode.Enabled {
+		r.add("codemode", StatusInfo, "EXPERIMENTAL: read-only JavaScript composition enabled (Linux)",
+			"Code Mode is not a complete OS sandbox; see docs/CODEMODE.md before exposing it to additional clients")
+	}
 
 	switch cfg.Server.Host {
 	case "127.0.0.1", "::1", "localhost":

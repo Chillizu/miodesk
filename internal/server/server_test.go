@@ -132,6 +132,9 @@ func TestCodeModeToolIsCoreOptIn(t *testing.T) {
 	for _, tl := range listed.Tools {
 		if tl.Name == "code" {
 			found = true
+			if !strings.Contains(tl.Title, "Experimental") || !strings.Contains(tl.Description, "EXPERIMENTAL") {
+				t.Errorf("opt-in tool must clearly mark experimental status: title=%q description=%q", tl.Title, tl.Description)
+			}
 			if tl.Annotations == nil || !tl.Annotations.ReadOnlyHint || tl.Annotations.DestructiveHint == nil || *tl.Annotations.DestructiveHint {
 				t.Errorf("code tool annotations: %+v", tl.Annotations)
 			}

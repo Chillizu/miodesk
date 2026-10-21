@@ -39,6 +39,9 @@ func main() {
 	for _, tl := range listed.Tools {
 		if tl.Name == "code" {
 			found = true
+			if !strings.Contains(tl.Title, "Experimental") || !strings.Contains(tl.Description, "EXPERIMENTAL") {
+				panic("experimental status missing from Code Mode tool metadata")
+			}
 		}
 	}
 	if !found {
@@ -84,4 +87,39 @@ func main() {
 		panic("write action was not rejected")
 	}
 	fmt.Println("[OK] writes are unavailable")
+
+	// A script can return any JSON value, not only an object or array. MCP
+	// validates StructuredContent against the explicitly declared schema.
+	for _, tc := range []struct{ source, want string }{
+		{`async () => 42`, `42`},
+		{`async () => false`, `false`},
+		{`async () => null`, `null`},
+		{`async () => ["a", "b"]`, `["a","b"]`},
+	} {
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "code", Arguments: map[string]any{"source": tc.source}})
+		if err != nil || res.IsError {
+			panic(fmt.Sprintf("JSON result %q: %v / %+v", tc.source, err, res))
+		}
+		data, err := json.Marshal(res.StructuredContent)
+		if err != nil {
+			panic(err)
+		}
+		var output struct {
+			Value json.RawMessage `json:"value"`
+		}
+		if err := json.Unmarshal(data, &output); err != nil || string(output.Value) != tc.want {
+			panic(fmt.Sprintf("wrong JSON value for %s: %s", tc.source, data))
+		}
+	}
+	fmt.Println("[OK] primitive and array JSON results")
+
+	// Exceptions might include sensitive strings constructed from file reads.
+	// They must reach the requesting MCP client but never Core's persistent logs.
+	failure, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "code", Arguments: map[string]any{
+		"source": `async () => {throw new Error("MIODESK_PRIVATE_LOG_SENTINEL");}`,
+	}})
+	if err != nil || !failure.IsError {
+		panic(fmt.Sprintf("expected JavaScript exception, got %v / %+v", err, failure))
+	}
+	fmt.Println("[OK] JavaScript exception returned to caller")
 }

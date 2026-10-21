@@ -28,5 +28,10 @@ for i in $(seq 1 80); do
 done
 curl -fsS --max-time 5 "http://127.0.0.1:$port/healthz" > /dev/null
 go run ./scripts/codemode-smoke -endpoint "http://127.0.0.1:$port/mcp"
+if grep -q 'MIODESK_PRIVATE_LOG_SENTINEL' "$scratch/serve.log"; then
+  echo 'JavaScript exception contents leaked to Core logs' >&2
+  exit 1
+fi
+printf '[OK] script exception body absent from Core logs\n'
 test ! -e "$scratch/workspace/project/hacked.txt"
 echo '[OK] Code Mode MCP smoke complete'

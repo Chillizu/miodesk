@@ -27,7 +27,7 @@ Common privilege-escalation commands (`sudo`, `doas`, `su`, `pkexec`,
 guardrail, not an account sandbox — treat every MCP client you connect as a
 full agent on this machine.
 
-## Optional Code Mode (Linux)
+## Experimental Code Mode (Linux)
 
 The `[codemode] enabled = true` setting is an explicit opt-in that adds a
 read-only `code` MCP tool to Core. JavaScript executes in a short-lived Linux

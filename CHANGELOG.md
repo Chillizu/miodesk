@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 — 2026-10-21
+
+- **Experimental Linux Code Mode**: opt-in `[codemode] enabled = true` adds
+  a read-only `code` MCP tool, now visibly labeled Experimental. The worker
+  runs as an independent resource-limited subprocess and can compose only
+  `read`, literal `search`, and `list`; the Tunnel is unchanged. This is not
+  a complete OS sandbox and the experimental API is subject to change.
+- Sanitized Code Mode exception logging: model-facing errors remain useful,
+  but potentially sensitive user-authored JavaScript exception text is not
+  recorded in persistent Core tool logs.
 
 - Public onboarding polish: refreshed README with a local-first quick start,
   separate optional ChatGPT tunnel instructions, explicit release-vs-main

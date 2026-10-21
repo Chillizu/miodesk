@@ -341,7 +341,7 @@ func registerTools(s *Server) {
 		{Name: "status", Description: "Server status data"},
 	}
 	if s.cfg.CodeMode.Enabled {
-		s.tools = append(s.tools, ToolInfo{Name: "code", Description: "Compose read-only tools in a bounded JavaScript worker"})
+		s.tools = append(s.tools, ToolInfo{Name: "code", Description: "EXPERIMENTAL: compose read-only tools in a bounded JavaScript worker"})
 	}
 
 	// Every annotation is set explicitly: ChatGPT reads these hints to decide
@@ -475,8 +475,8 @@ func registerTools(s *Server) {
 	if s.cfg.CodeMode.Enabled {
 		mcp.AddTool(s.mcp, declared("code", &mcp.Tool{
 			Name:        "code",
-			Title:       "Compose read-only workspace tools",
-			Description: "Execute an async JavaScript arrow function in a short-lived, resource-limited worker. Only tools.read({path,offset,limit}), tools.search({query,path,max_results,case_sensitive}) and tools.list({path,depth,limit}) are available. Return a small JSON value, not a transcript. No shell, write, network or Node.js APIs. Up to 16 calls and 2 seconds of script execution. Example: async () => { const x=await tools.search({query:'TODO'}); return x.matches.slice(0,5); }",
+			Title:       "Code Mode (Experimental, read-only)",
+			Description: "EXPERIMENTAL opt-in Linux-only Code Mode for composing read-only MCP tools, NOT Codex's V8 host. Supply source as a JavaScript async arrow function. Available APIs: tools.read({path,offset,limit}), tools.search({query,path,max_results,case_sensitive}) [literal text], tools.list({path,depth,limit}). Return a small JSON value rather than a transcript; the result is {kind:'code',value,calls}. No shell, write, network or Node.js APIs; not a complete OS sandbox. Maximum 16 tool calls, 2 seconds of JS execution. Example: async () => { const x=await tools.search({query:'TODO'}); return x.matches.slice(0,5); }",
 			Annotations: ann(true, false, false, false),
 			// json.RawMessage carries arbitrary script JSON; generated schema
 			// otherwise incorrectly narrows it to arrays/null.
@@ -492,7 +492,16 @@ func registerTools(s *Server) {
 			},
 		}), func(ctx context.Context, req *mcp.CallToolRequest, in codemode.Input) (result *mcp.CallToolResult, output *codemode.Output, err error) {
 			finish := s.beginTool(ctx, "code")
-			defer func() { finish(err) }()
+			// JavaScript exceptions are user-controlled strings and can embed
+			// workspace contents. Return the diagnostic to the caller but never
+			// copy it verbatim into long-lived Core logs.
+			defer func() {
+				if err != nil {
+					finish(errors.New("experimental code request failed"))
+				} else {
+					finish(nil)
+				}
+			}()
 			out, err := codemode.RunIsolated(ctx, s.ws, in.Source)
 			if err != nil {
 				return nil, nil, err

@@ -16,7 +16,7 @@
 - **One binary:** no Node.js, Python, or Rust runtime required for the released executable.
 - **Local by default:** starts on `127.0.0.1`; file tools enforce a configured workspace boundary.
 - **Predictable commands:** bounded output, resumable `exec_command` / `write_stdin`, and guarded file edits.
-- **Optional Code Mode on Linux (currently on `main`):** combine read-only tool calls in a resource-limited JavaScript worker (disabled by default; not yet in the tagged release).
+- **Experimental Code Mode on Linux (opt-in):** combine read-only tool calls in a resource-limited JavaScript worker (disabled by default).
 
 > **Important security distinction:** file tools enforce the workspace boundary, but **shell commands run with your normal OS user permissions** and are not filesystem-sandboxed. Only connect clients you trust. [Security details](docs/SECURITY.md).
 
@@ -112,16 +112,16 @@ Core restarts do **not** require Tunnel restarts, and Tunnel is not needed for l
 
 For regular coding, a natural workflow is **search → read → edit → test**, using `exec_command` with an explicit project working directory. File tool paths are relative to the configured workspace root.
 
-### Optional Code Mode (Linux, current development)
+### Code Mode (Experimental · Linux only)
 
-Code Mode optionally adds an eleventh MCP tool, `code`, which lets an assistant compose `read/search/list` calls inside a bounded JavaScript worker. It is **off by default**, **read-only**, and does not add shell or write permissions. This is process/resource containment, **not** a full OS sandbox.
+Code Mode optionally adds an eleventh MCP tool, `code`, which lets an assistant compose `read/search/list` calls inside a bounded JavaScript worker. It is **off by default**, **read-only**, and does not add shell or write permissions. This is process/resource containment, **not** a full OS sandbox. The experimental API and limits may change in later releases; it does not implement Codex's V8 `exec`/`wait` host.
 
 ```toml
 [codemode]
 enabled = true
 ```
 
-Add that section to your [configuration](#configuration) and restart **Core only**. Details: [Code Mode design and safety](docs/maintenance/2026-10-21-codemode-prototype.md).
+Add that section to your [configuration](#configuration) and restart **Core only**. Details: [Code Mode (Experimental) guide and safety](docs/CODEMODE.md).
 
 ## Configuration
 
@@ -143,7 +143,7 @@ Run `miodesk config` to locate the file, `miodesk workspace` to see the root, or
 
 ## Install from source / development branch
 
-A tagged Release is not necessarily identical to the newest `main` branch. **As of October 21, 2026, the latest tagged release is v0.2.1**; recent Core improvements and the optional Code Mode are in `main` and will require a new tagged release before appearing in the default installer.
+The default installer downloads the latest **published** [GitHub Release](https://github.com/Chillizu/miodesk/releases), not necessarily the newest `main` branch. Experimental Code Mode first ships in **v0.2.2**; check the installed version with `miodesk version` and consult the [changelog](CHANGELOG.md).
 
 To test the **current repository code** instead, install Go **1.26.6 or newer**:
 

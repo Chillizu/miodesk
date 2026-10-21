@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -86,6 +87,29 @@ func TestDoctorUnwritableWorkspaceRootPreservesCoreReadiness(t *testing.T) {
 	}
 	if !foundPermissions || !foundMCP || report.HasErrors() {
 		t.Fatalf("unwritable workspace root must warn without hiding core readiness: %+v", report.Checks)
+	}
+}
+
+func TestExperimentalCodeModeIsVisibleToDoctor(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("experimental Code Mode worker requires Linux")
+	}
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.Workspace.Root = t.TempDir()
+	cfg.Server.Port = 0
+	cfg.CodeMode.Enabled = true
+	report := Run("test-config.toml", cfg, nil)
+	found := false
+	for _, check := range report.Checks {
+		if check.Name == "codemode" && check.Status == StatusInfo && strings.Contains(check.Detail, "EXPERIMENTAL") && strings.Contains(check.Hint, "not a complete OS sandbox") {
+			found = true
+		}
+	}
+	if !found || report.HasErrors() {
+		t.Fatalf("doctor should explain the experimental feature without breaking readiness: %+v", report.Checks)
 	}
 }
 

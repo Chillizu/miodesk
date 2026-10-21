@@ -1,8 +1,12 @@
-# Code Mode in miodesk Core — 2026-10-21
+# Code Mode (Experimental · Linux)
 
-## Status and scope
+Code Mode was introduced in miodesk **v0.2.2** as an experimental feature.
+It is **disabled by default**, its tool API and limits may change, and it is
+not a security boundary for code provided by unrelated untrusted parties.
 
-Code Mode is now an **opt-in feature of miodesk Core**, not a tunnel or
+## Enable and use
+
+Code Mode is an **opt-in feature of miodesk Core**, not a tunnel or
 separate daemon. Existing configurations expose exactly the original ten tools.
 On Linux, an administrator can add the following to `config.toml` and restart
 only the Core service:
@@ -37,6 +41,16 @@ async () => {
 ```
 
 The script is the value of the `source` argument for the `code` tool.
+The MCP result has the structure `{ "kind": "code", "value": ..., "calls": N }`:
+`value` may be any JSON-compatible object, array, string, number, boolean or
+`null`. Scripts should return a **small, filtered result**, not a complete
+file or search transcript. JavaScript exceptions are reported as tool errors;
+their user-supplied text is not copied into the persistent Core logs.
+
+The runtime accepts standard JavaScript async arrow functions with immediate
+native-tool dispatch. It does not supply Node.js APIs, a module loader,
+persistent sessions, the Codex V8 `exec`/`wait` lifecycle or delayed external
+async operations. All state is discarded after each call.
 
 Only `tools.read`, `tools.search`, and `tools.list` are available to scripts.
 Core dispatches each call to the existing validated workspace tools. The
@@ -77,8 +91,10 @@ disabled. This avoids silently advertising unsupported memory protection.
 
 The tests exercise composed tool calls, no write/exec/network Node.js APIs,
 workspace-path escape, memory exhaustion, infinite loops, source/output/call
-limits, cancellation, configuration opt-in, the MCP tool schema and an
-isolated Streamable HTTP client roundtrip. CI includes Go test/race builds
+limits, cancellation, configuration opt-in, the MCP tool schema, numeric /
+boolean / array / null JSON results, and an isolated Streamable HTTP client
+roundtrip. A regression test ensures JavaScript exception strings never enter
+persistent Core tool logs. CI includes Go test/race builds
 and `bash scripts/codemode-smoke/ci.sh`, which starts a disposable enabled
 server and exercises the real MCP `code` tool.
 
