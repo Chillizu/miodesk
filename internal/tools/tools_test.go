@@ -199,6 +199,53 @@ func TestListLimit(t *testing.T) {
 	}
 }
 
+func TestListUnreadableSubdirectory(t *testing.T) {
+	ws, root := newWS(t)
+	writeFile(t, root, "accessible.txt", "ok")
+	writeFile(t, root, "blocked/private.txt", "secret")
+	blocked := filepath.Join(root, "blocked")
+	if err := os.Chmod(blocked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o755) })
+	if _, err := os.ReadDir(blocked); err == nil {
+		t.Skip("filesystem/user does not enforce read permission")
+	} else if !os.IsPermission(err) {
+		t.Fatalf("unexpected ReadDir failure: %v", err)
+	}
+
+	out, err := List(context.Background(), ws, ListInput{Depth: 3})
+	if err != nil {
+		t.Fatalf("list should return accessible entries: %v", err)
+	}
+	if !out.Truncated {
+		t.Fatalf("unreadable subtree must mark the listing partial: %+v", out)
+	}
+	got := map[string]bool{}
+	for _, e := range out.Entries {
+		got[e.Path] = true
+	}
+	if !got["accessible.txt"] || !got["blocked"] || got[filepath.Join("blocked", "private.txt")] {
+		t.Fatalf("unexpected listing of accessible/unreadable paths: %+v", out.Entries)
+	}
+}
+
+func TestListUnreadableRequestedRoot(t *testing.T) {
+	ws, root := newWS(t)
+	if err := os.Chmod(root, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+	if _, err := os.ReadDir(root); err == nil {
+		t.Skip("filesystem/user does not enforce read permission")
+	} else if !os.IsPermission(err) {
+		t.Fatalf("unexpected ReadDir failure: %v", err)
+	}
+	if _, err := List(context.Background(), ws, ListInput{}); !os.IsPermission(err) {
+		t.Fatalf("unreadable requested root should fail, got %v", err)
+	}
+}
+
 func TestListErrors(t *testing.T) {
 	ws, root := newWS(t)
 	writeFile(t, root, "f.txt", "x")

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -76,6 +77,12 @@ func List(ctx context.Context, ws *workspace.Workspace, in ListInput) (*ListOutp
 	// reported but not descended into; targets go through the sandbox again.
 	err = filepath.WalkDir(path, func(p string, d fs.DirEntry, werr error) error {
 		if werr != nil {
+			// Keep accessible entries when an unrelated subtree is unreadable.
+			// Preserve errors at the requested root and for non-permission failures.
+			if p != path && errors.Is(werr, fs.ErrPermission) {
+				out.Truncated = true
+				return nil
+			}
 			return werr
 		}
 		if ctx.Err() != nil {
