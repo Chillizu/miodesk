@@ -60,6 +60,9 @@ MIODESK_RELEASE_BASE="http://127.0.0.1:$port" MIODESK_BIN_DIR="$bin" PATH="$PATH
 
 grep -q "\[OK\] checksum verified" "$TMP/install.out"
 grep -q "\[OK\] installed:" "$TMP/install.out"
+grep -q 'bare '\''miodesk'\'' commands will not work yet' "$TMP/install.out"
+grep -q 'export PATH=' "$TMP/install.out"
+grep -q 'serve  # starts local MCP' "$TMP/install.out"
 test -x "$bin/miodesk"
 test "$("$bin/miodesk" version)" = "miodesk install-test"
 
@@ -70,6 +73,17 @@ if MIODESK_RELEASE_BASE="http://127.0.0.1:$port" MIODESK_BIN_DIR="$bin" PATH="$P
   exit 1
 fi
 grep -q "checksum mismatch" "$TMP/bad.out"
+test "$("$bin/miodesk" version)" = "miodesk install-test"
+
+# Missing assets give a specific release troubleshooting hint rather than only
+# the transport client's 404, and never replace the existing installation.
+rm -f "$release/checksums.txt"
+if MIODESK_RELEASE_BASE="http://127.0.0.1:$port" MIODESK_BIN_DIR="$bin" sh "$ROOT/scripts/install.sh" >"$TMP/missing.out" 2>&1; then
+  echo "installer unexpectedly succeeded with a missing checksum asset" >&2
+  exit 1
+fi
+grep -q 'could not download checksums.txt' "$TMP/missing.out"
+grep -q 'github.com/Chillizu/miodesk/releases' "$TMP/missing.out"
 test "$("$bin/miodesk" version)" = "miodesk install-test"
 
 printf 'install-test: ok\n'

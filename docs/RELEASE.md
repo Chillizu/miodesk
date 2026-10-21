@@ -1,8 +1,12 @@
 # Release checklist
 
-This repository is prepared for a `0.2.1` release, but creating a Git commit,
-tag, or GitHub release remains an operator decision. Run the following from a
-normal clone of `github.com/Chillizu/miodesk`.
+The latest published release was `v0.2.1` as checked on 2026-10-21; the
+current `main` has newer features and the public install script downloads the
+latest **tagged GitHub Release**, not the tip of `main`. Before announcing
+features added since `v0.2.1`, prepare and publish a new, tested release
+(candidate version `0.2.2`). Creating a tag or public GitHub release remains
+an explicit operator decision. Run from a normal clone of
+`github.com/Chillizu/miodesk`.
 
 ## Before tagging
 
@@ -20,6 +24,8 @@ normal clone of `github.com/Chillizu/miodesk`.
 
    ```sh
    scripts/release-check.sh
+   scripts/install-test.sh
+   bash scripts/onboarding-test.sh
    ```
 
 The preflight intentionally fails when tracked build outputs are present. It
@@ -30,7 +36,7 @@ also runs `go vet`, the race-enabled test suite, and a clean binary build.
 From a clean, reviewed tree:
 
 ```sh
-scripts/build-release.sh 0.2.1
+scripts/build-release.sh 0.2.2
 ```
 
 The script creates these five binaries under `dist/`:
@@ -50,7 +56,7 @@ uses the GitHub release URLs for `Chillizu/miodesk`; override the repository
 only when publishing a deliberate fork:
 
 ```sh
-REPOSITORY=owner/repository scripts/build-release.sh 0.2.1
+REPOSITORY=owner/repository scripts/build-release.sh 0.2.2
 ```
 
 Inspect the manifest and checksums before uploading. The update command uses
@@ -58,7 +64,7 @@ the manifest's platform asset and verifies its SHA-256 before replacing the
 current binary atomically:
 
 ```sh
-miodesk update --from https://github.com/Chillizu/miodesk/releases/download/v0.2.1/manifest.json --check
+miodesk update --from https://github.com/Chillizu/miodesk/releases/download/v0.2.2/manifest.json --check
 ```
 
 ## Tag and publish
@@ -66,12 +72,12 @@ miodesk update --from https://github.com/Chillizu/miodesk/releases/download/v0.2
 Only after the review above, the maintainer can create and push the release:
 
 ```sh
-git tag -a v0.2.1 -m "miodesk v0.2.1"
+git tag -a v0.2.2 -m "miodesk v0.2.2"
 git push origin main
-git push origin v0.2.1
+git push origin v0.2.2
 ```
 
-Create a GitHub release for `v0.2.1`, upload every `dist/miodesk-*` file,
+Create a GitHub release for `v0.2.2`, upload every `dist/miodesk-*` file,
 `dist/install.sh`, `dist/checksums.txt`, and `dist/manifest.json`, then run the update check from
 a separate test installation. Do not upload the runtime key or a local
 `tunnel-client` profile.
@@ -79,6 +85,13 @@ a separate test installation. Do not upload the runtime key or a local
 ## Release scope
 
 The release should communicate these stable user-facing decisions:
+
+- New-user shell install + PATH instructions work on supported platforms;
+  local-only `setup` requires no OpenAI credentials and should work unattended
+  when stdin is not a TTY;
+- The README version notice must match the latest published GitHub Release
+  after publishing. Remove or update any main-only feature caveat when the
+  corresponding release assets are actually downloadable;
 
 - fresh setup defaults to a loopback MCP server; OpenAI Tunnel is opt-in;
 - `miodesk setup` configures local paths and only touches the external

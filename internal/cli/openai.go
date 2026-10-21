@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/Chillizu/miodesk/internal/config"
 	"github.com/Chillizu/miodesk/internal/server"
 	"github.com/Chillizu/miodesk/internal/service"
@@ -335,8 +337,10 @@ func promptYesNo(in *bufio.Reader, out io.Writer, label string, defaultValue boo
 }
 
 func stdinIsTerminal() bool {
-	info, err := os.Stdin.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	// /dev/null and NUL are also character devices, but not terminals.
+	// ModeCharDevice alone can unexpectedly turn automated setup into a
+	// prompt-driven flow, even when stdin has already reached EOF.
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 func runSetup(args []string, stdout, stderr io.Writer) int {

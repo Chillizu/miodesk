@@ -109,6 +109,30 @@ func TestInitThenDoctor(t *testing.T) {
 	}
 }
 
+func TestSetupWithNullStdinDoesNotPrompt(t *testing.T) {
+	isolatedEnv(t)
+	workspaceRoot := t.TempDir()
+	bin := buildBinary(t)
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devnull.Close()
+	cmd := exec.Command(bin, "setup")
+	cmd.Dir = workspaceRoot
+	cmd.Stdin = devnull
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("non-interactive setup: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "Workspace root [") || strings.Contains(string(out), "Configure OpenAI Secure MCP Tunnel now [") {
+		t.Fatalf("non-terminal stdin incorrectly started wizard:\n%s", out)
+	}
+	if !strings.Contains(string(out), "configuration ready:") {
+		t.Fatalf("missing setup success:\n%s", out)
+	}
+}
+
 func TestSetupDefaultsToCurrentDirectoryAndLocal(t *testing.T) {
 	isolatedEnv(t)
 	ws := t.TempDir()

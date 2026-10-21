@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Public onboarding polish: refreshed README with a local-first quick start,
+  separate optional ChatGPT tunnel instructions, explicit release-vs-main
+  expectations, and actionable troubleshooting. The installer now prints a
+  copyable PATH fix, includes the foreground serve step, and explains missing
+  GitHub assets; failed downloads still leave the previous installation intact.
+- Fixed noninteractive setup detection: character devices such as `/dev/null`
+  are not necessarily terminals. Use actual TTY detection so scripts and
+  redirected input never unexpectedly enter the wizard.
+- Added a fresh-user smoke from isolated XDG configuration through
+  `setup` / `doctor` / `serve` / real MCP tools, and run it in GitHub CI.
+
 - Added an optional **read-only Code Mode tool** inside miodesk Core on Linux:
   `[codemode] enabled = true` exposes `code` in addition to the usual ten MCP
   tools. JavaScript runs in a short-lived process with a Linux memory limit,

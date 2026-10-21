@@ -105,13 +105,20 @@ download() {
     url="$1"
     out="$2"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --retry 3 --connect-timeout 10 --output "$out" "$url"
+        if curl -fsSL --retry 2 --connect-timeout 10 --max-time 90 --output "$out" "$url"; then
+            return 0
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        wget -q -O "$out" "$url"
+        if wget -q --timeout=30 -O "$out" "$url"; then
+            return 0
+        fi
     else
         echo "Error: curl or wget is required to download miodesk." >&2
         exit 1
     fi
+    echo "Error: could not download ${url##*/}." >&2
+    echo "Hint: check https://github.com/$REPOSITORY/releases for available release assets, or try again when GitHub downloads are reachable." >&2
+    exit 1
 }
 
 sha256() {
@@ -166,8 +173,10 @@ fi
 case ":${PATH:-}:" in
     *":$BIN_DIR:"*) ;;
     *)
-        echo "[WARN] $BIN_DIR is not on PATH"
-        echo "       Add it to your shell profile, then open a new terminal."
+        echo "[WARN] $BIN_DIR is not on PATH; bare 'miodesk' commands will not work yet."
+        echo "       For this terminal (sh/bash/zsh), run:"
+        printf '       export PATH="%s:$PATH"\n' "$BIN_DIR"
+        echo "       To keep it, add the same line to your shell's startup file."
         ;;
 esac
 
@@ -177,6 +186,7 @@ Next:
   cd /path/to/workspace
   $target setup
   $target doctor
+  $target serve  # starts local MCP; Ctrl-C to stop
 
 On Linux, after setup is healthy, persistent services are optional:
   $target service install

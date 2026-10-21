@@ -1,168 +1,61 @@
 <p align="center">
-  <img src="Miodesk-logo.png" width="180" alt="Miodesk logo">
+  <img src="Miodesk-logo.png" width="150" alt="miodesk logo">
 </p>
 
 <h1 align="center">miodesk</h1>
+<p align="center"><strong>Give your AI assistant a small, local workspace bridge.</strong></p>
 
-<p align="center"><strong>A small, fast, portable local AI / MCP tool bridge.</strong></p>
+<p align="center">
+  <a href="https://github.com/Chillizu/miodesk/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Chillizu/miodesk/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: MPL-2.0" src="https://img.shields.io/badge/license-MPL--2.0-blue"></a>
+</p>
 
-miodesk lets ChatGPT, MCP clients, IDE agents, and coding agents work with a
-chosen workspace and its development tools through one static binary. The
-workspace is the security boundary: file tools stay inside it, commands run
-there by default, and the local server binds to loopback unless you explicitly
-choose another access mode.
+**miodesk** is a lightweight MCP server written in Go. It connects AI assistants to the files and developer tools on **your own machine**, with a small, predictable interface. Use it with local MCP clients, coding agents, or ChatGPT through an **optional, separate** OpenAI Secure MCP Tunnel.
 
-## Install
+- **10 focused tools:** read, search, list, write, edit, delete, command execution, interactive session continuation, cross-session handoffs, and status.
+- **One binary:** no Node.js, Python, or Rust runtime required for the released executable.
+- **Local by default:** starts on `127.0.0.1`; file tools enforce a configured workspace boundary.
+- **Predictable commands:** bounded output, resumable `exec_command` / `write_stdin`, and guarded file edits.
+- **Optional Code Mode on Linux (currently on `main`):** combine read-only tool calls in a resource-limited JavaScript worker (disabled by default; not yet in the tagged release).
 
-On Linux and macOS, the recommended installer downloads the matching release
-binary, verifies it against the release SHA-256 checksums, and installs it to
-`~/.local/bin`:
+> **Important security distinction:** file tools enforce the workspace boundary, but **shell commands run with your normal OS user permissions** and are not filesystem-sandboxed. Only connect clients you trust. [Security details](docs/SECURITY.md).
+
+## Quick start · local MCP
+
+**1. Install** (Linux or macOS):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Chillizu/miodesk/main/scripts/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"  # for this terminal, if needed
+miodesk version
 ```
 
-To inspect the installer before running it:
+The installer downloads a platform-specific **GitHub Release**, checks its SHA-256 checksum, and installs it to `~/.local/bin`. It does **not** create services, start processes, modify your project, or configure OpenAI credentials.
+
+Prefer to inspect the script first? [Read install.sh](scripts/install.sh), or download it before running. Windows users can get the `miodesk-windows-amd64.exe` asset from [Releases](https://github.com/Chillizu/miodesk/releases); the shell installer targets Linux/macOS.
+
+**2. Choose a workspace and configure it:**
 
 ```sh
-curl -fsSLo miodesk-install.sh https://raw.githubusercontent.com/Chillizu/miodesk/main/scripts/install.sh
-less miodesk-install.sh
-sh miodesk-install.sh
-```
-
-Useful installer options:
-
-```sh
-sh miodesk-install.sh --version 0.2.1
-sh miodesk-install.sh --bin-dir ~/bin
-```
-
-The installer only places the verified binary on disk. It does not configure a
-workspace, write credentials, install a service, or start a daemon.
-
-Windows users can download `miodesk-windows-amd64.exe` directly from a tagged
-GitHub release. On any supported platform, you can also install from source
-when Go 1.26.6 or newer is available:
-
-```sh
-go install github.com/Chillizu/miodesk/cmd/miodesk@latest
-```
-
-No Node, Python, Rust, package manager, or runtime service is required by the
-released binary. The optional OpenAI connection uses the separately installed
-official `tunnel-client`.
-
-## First run
-
-Run setup from the directory that should be accessible to the agent:
-
-```sh
-cd /absolute/path/to/workspace
-miodesk setup
+mkdir -p "$HOME/miodesk-demo"
+cd "$HOME/miodesk-demo"
+miodesk setup --workspace "$PWD"
 miodesk doctor
+```
+
+Substitute your own project directory when ready. `setup` stores its canonical path as the allowed workspace root and defaults to **local-only** MCP on port `8787`. Nothing connects to ChatGPT automatically. Without flags, `miodesk setup` opens an interactive wizard **only in a real terminal**.
+
+**3. Start Core:**
+
+```sh
 miodesk serve
 ```
 
-`setup` is safe to rerun. On a new configuration it records the current
-directory as an absolute workspace root, uses local port `8787`, keeps the
-server on `127.0.0.1`, and defaults to local-only MCP. [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
-is an optional client configured separately. Setup does not install software, guess credentials,
-start a daemon, or print secrets.
+Core now serves MCP at `http://127.0.0.1:8787/mcp` on your machine. Leave that terminal running; press **Ctrl-C** to stop. Run `miodesk status` from another terminal to inspect the connection.
 
-In a real terminal, running `miodesk setup` without arguments opens a small
-interactive wizard for the workspace, port, and optional OpenAI tunnel values.
-Use `miodesk setup --interactive` to request the wizard explicitly. The
-flag-based form remains available for scripts and CI; non-interactive stdin
-never waits for prompts.
+### Connect a local MCP client
 
-To choose another local port, use a fixed value and rerun setup:
-
-```sh
-miodesk setup --workspace /absolute/path/to/workspace --port 9900
-```
-
-Port `0` is reserved for local ephemeral tests. OpenAI tunnel profiles need a
-fixed local target. Changing the Core port does not silently update an existing
-tunnel-client profile: run `miodesk tunnel setup` explicitly afterward.
-
-## Connect ChatGPT
-
-The recommended remote path is OpenAI Secure MCP Tunnel. The MCP server stays
-private on loopback; the local `tunnel-client` opens an outbound HTTPS
-connection. There is no public URL to copy and no need to expose the local
-port.
-
-After creating a tunnel in OpenAI Platform and obtaining its runtime key file:
-
-```sh
-miodesk setup \
-  --workspace /absolute/path/to/workspace \
-  --tunnel-id tunnel_… \
-  --runtime-key-file /absolute/path/to/openai-runtime-key
-miodesk doctor
-miodesk connect
-```
-
-The setup command asks `tunnel-client` to create or refresh the `miodesk`
-profile. The key is referenced by file and is never copied into
-`config.toml`, the repository, or command output. In ChatGPT, select the
-corresponding Tunnel in Developer Mode/connector settings. See
-[docs/SETUP.md](docs/SETUP.md) and [docs/CHATGPT.md](docs/CHATGPT.md) for the
-credential, workspace association, and troubleshooting details.
-
-On Linux, the local MCP service and the optional OpenAI tunnel each have their
-own independently managed systemd user unit. For local-only / MioWeave use:
-
-```sh
-miodesk service install
-miodesk service start
-systemctl --user enable miodesk  # optional
-```
-
-After configuring the OpenAI profile, install and start the **separate**
-tunnel unit when ChatGPT access is needed:
-
-```sh
-miodesk tunnel service install
-miodesk tunnel service start
-systemctl --user enable miodesk-tunnel  # optional
-```
-
-`miodesk service start|stop|restart|uninstall` operates **only** on Core;
-`miodesk tunnel service <verb>` operates **only** on the tunnel. Neither
-requires or silently restarts the other. The older `miodesk connect` combined
-foreground command remains available for compatibility, but is not needed for
-two independent systemd units. Some older/custom installations have tunnel unit relationships like
-`PartOf=miodesk.service`, `Wants=miodesk.service`, or `Requires=miodesk.service`.
-Inspect the **installed** `miodesk-tunnel.service` before migration. If any of
-these are present, validate your tunnel-client profile and runtime-key reference,
-then explicitly run `miodesk tunnel service install` and schedule a controlled
-tunnel restart to apply the independent unit. Merely upgrading Core does not
-rewrite systemd units; do not replace a working custom unit without first
-checking its `EnvironmentFile=` and credentials setup. The new installer
-refuses to overwrite any pre-existing unit using `EnvironmentFile=`; preserve
-its credential source and use a reviewed systemd drop-in to remove the old
-Core dependency without touching the running tunnel (see `docs/SETUP.md`).
-
-## Commands
-
-| command     | purpose                                                      |
-| ----------- | ------------------------------------------------------------ |
-| `setup`     | configure local Core; optionally prepare an OpenAI profile |
-| `init`      | create or update the low-level configuration                 |
-| `serve`     | run the local HTTP MCP server                          |
-| `connect`   | legacy combined foreground server and optional tunnel |
-| `tunnel`    | inspect tunnel or manage its independent service |
-| `status`    | show local server, tunnel provider, and tunnel service state (`--json`) |
-| `doctor`    | check configuration, workspace, connection, and ports       |
-| `logs`      | show collected systemd records or foreground guidance       |
-| `service`   | manage the Linux Core systemd service only                          |
-| `config`    | print the configuration file path                           |
-| `workspace` | print the configured workspace root                         |
-| `update`    | verify and atomically apply a release manifest              |
-| `version`   | print build information                                     |
-
-For local MCP hosts, stdio avoids networking entirely:
+Many clients can launch miodesk over **stdio**, without running the HTTP service. Point the client's MCP server configuration at the installed binary:
 
 ```json
 {
@@ -175,87 +68,64 @@ For local MCP hosts, stdio avoids networking entirely:
 }
 ```
 
-## Custom HTTPS endpoint
+Replace the binary path with the result of `command -v miodesk`. The client starts and manages this process; you do **not** need a second `miodesk serve` instance for stdio. The client can then invoke the normal file, command and status tools.
 
-OpenAI Secure MCP Tunnel is the recommended optional ChatGPT connection path shown by
-the primary onboarding flow. If an operator already owns a reverse proxy or
-another HTTPS ingress, the advanced custom mode is available:
+## Connect ChatGPT · optional OpenAI Tunnel
+
+ChatGPT cannot reach your computer's `127.0.0.1` address directly. For supported ChatGPT/Platform setups, the official [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) provides an **outbound connection** without exposing a public TCP port.
+
+This is a **separate component** from miodesk Core. It requires an OpenAI Platform tunnel, the official `tunnel-client`, and a runtime key saved to a local, user-readable-only file. Follow [the complete setup guide](docs/SETUP.md) for those prerequisites and ChatGPT configuration.
+
+After obtaining the tunnel ID and key file:
 
 ```sh
-miodesk connect --provider custom --url https://mcp.example.com
+miodesk setup \
+  --tunnel-id tunnel_YOUR_ID \
+  --runtime-key-file /absolute/path/to/runtime-key
+miodesk doctor
+miodesk connect
 ```
 
-This does not create, secure, or verify the public endpoint; it only tells
-miodesk which endpoint the operator has prepared. A public connector must use
-an authentication mode supported by that connector, normally OAuth 2.1 or an
-explicit no-auth test. The static bearer token used by miodesk's legacy remote
-mode is not a documented ChatGPT connector option. Keep the custom endpoint
-behind a properly configured proxy and use `docs/SECURITY.md` as the checklist.
+Stop any existing foreground `miodesk serve` before `miodesk connect`: this compatibility command runs **both Core and Tunnel** until you press Ctrl-C. On Linux, you can instead manage independent persistent services:
 
-## Tools
+```sh
+miodesk service install
+miodesk service start
+miodesk tunnel service install
+miodesk tunnel service start
+```
 
-All file tools are sandboxed inside `workspace.root`. Paths are validated on
-canonical, symlink-resolved locations — `../`, absolute-path escapes, and
-symlink escapes are rejected.
+Core restarts do **not** require Tunnel restarts, and Tunnel is not needed for local clients. Existing custom units may need a [credential-preserving migration](docs/SETUP.md#4-start-the-connection).
 
-- **read** — bounded text reads with `offset`/`limit` (512 KiB cap per call)
-- **search** — text search; ripgrep when installed, built-in engine otherwise
-- **list** — directory entries with bounded depth and count
-- **write** — create or overwrite; parent directories only with `create_dirs`
-- **edit** — validated atomic edits with structured diffs
-- **delete** — guarded file, symlink, and recursive-directory deletion
-- **exec_command** — run a workspace command; return final output when it exits quickly, otherwise return a numeric `session_id`; `tty=true` opts into a real interactive terminal
-- **write_stdin** — resume a live exec session, poll with empty input, or write stdin; Ctrl-C behaves like terminal input for TTY sessions and cancels pipe sessions
-- **context** — cross-session rolling handoffs with `update`, immutable `checkpoint`, `resume`, and `list`
+## What can it do?
 
-### Cross-session handoff
+| Tool | Typical use |
+| --- | --- |
+| `read` | Read focused line ranges from a text file |
+| `search` | Find **literal** text in the workspace; get filenames and line numbers |
+| `list` | Browse files and directories with bounded depth |
+| `write` / `edit` / `delete` | Make scoped, validated filesystem changes |
+| `exec_command` | Run a shell command; get output or a resumable session ID |
+| `write_stdin` | Poll a session, send input, or interrupt it |
+| `context` | Save and resume a small cross-session working handoff |
+| `status` | Check the connection and runtime |
 
-`context` keeps a small, persistent working state outside the project tree so a
-new AI session can continue without replaying the old chat. A human-readable
-context id such as `miodesk-maintenance` identifies the line of work. Its
-`working_directory` is only a locator for where that work lives inside the
-configured workspace; it never changes `workspace.root` or the server sandbox.
+For regular coding, a natural workflow is **search → read → edit → test**, using `exec_command` with an explicit project working directory. File tool paths are relative to the configured workspace root.
 
-The active handoff is updated at meaningful state changes (goal, current state,
-reasoning, decisions, blockers, next steps). `checkpoint` freezes the current
-active handoff at an explicit or important milestone, while `resume` always
-returns the newest active state. `list` discovers available context ids when a
-new session does not already know which one to resume. Miodesk retains a small
-internal revision history as a safety net, but normal resume output contains
-only the current handoff and checkpoint count.
+### Optional Code Mode (Linux, current development)
 
-## Optional Code Mode (Linux)
-
-Core can expose an additional read-only `code` MCP tool on Linux. The feature
-is disabled by default and does not depend on the OpenAI Tunnel. To opt in,
-add this to `~/.config/miodesk/config.toml` and restart Core only:
+Code Mode optionally adds an eleventh MCP tool, `code`, which lets an assistant compose `read/search/list` calls inside a bounded JavaScript worker. It is **off by default**, **read-only**, and does not add shell or write permissions. This is process/resource containment, **not** a full OS sandbox.
 
 ```toml
 [codemode]
 enabled = true
 ```
 
-The script is an async JavaScript arrow function supplied in `source`.
-Only `tools.read`, `tools.search` (literal text), and `tools.list` are exposed
-to JavaScript; the parent Core validates and executes those tool calls.
-Scripts run in a short-lived, memory/timeout-limited child process on Linux.
-This is not a full OS security sandbox, and it should not be used for code
-provided by untrusted third parties. See the
-[Code Mode design and safety notes](docs/maintenance/2026-10-21-codemode-prototype.md).
-
-## ChatGPT and MCP clients
-
-miodesk exposes ten native MCP tools by default (eleven with Code Mode enabled). File and command tools use the host's
-normal tool view, and `status` returns a compact read-only structured result.
-No MCP Apps UI resource or output template is published. Exec sessions are
-explicit handles threaded through `exec_command` and `write_stdin`; ordinary
-commands use pipes, while `tty=true` allocates a Unix PTY for interactive use.
-Local diagnostics remain available as JSON at `/api/status` and `/api/edits`.
+Add that section to your [configuration](#configuration) and restart **Core only**. Details: [Code Mode design and safety](docs/maintenance/2026-10-21-codemode-prototype.md).
 
 ## Configuration
 
-The configuration is stored at `$XDG_CONFIG_HOME/miodesk/config.toml`, falling
-back to `~/.config/miodesk/config.toml`:
+Configuration is stored in `~/.config/miodesk/config.toml` (or `$XDG_CONFIG_HOME/miodesk/config.toml`):
 
 ```toml
 [server]
@@ -263,56 +133,47 @@ host = "127.0.0.1"
 port = 8787
 
 [workspace]
-root = "/absolute/path/to/workspace"
+root = "/absolute/path/to/your/project"
 
 [tunnel]
-provider = "openai"
-
-[tunnel.openai]
-profile = "miodesk"
-# tunnel_id, runtime_key_file, profile_dir, and client_path are optional
-# until OpenAI Secure MCP Tunnel is configured.
-
-[logging]
-level = "info"      # debug | info | warn | error
-format = "text"     # text | json
+provider = "local"  # optional OpenAI tunnel is not configured
 ```
 
-The runtime key is a file reference, not a TOML secret. Keep the key file
-user-readable only (`chmod 600` on Unix). `miodesk doctor` checks the path,
-permissions, client, profile, fixed port, and local server without displaying
-the key.
+Run `miodesk config` to locate the file, `miodesk workspace` to see the root, or `miodesk doctor` to diagnose problems. The [advanced configuration and device guide](docs/SETUP.md) covers custom ports, separate services, credential files, migrations and alternative HTTPS endpoints.
 
-## Logs and diagnostics
+## Install from source / development branch
 
-```sh
-miodesk doctor
-miodesk tunnel doctor
-miodesk logs --follow --json
-```
+A tagged Release is not necessarily identical to the newest `main` branch. **As of October 21, 2026, the latest tagged release is v0.2.1**; recent Core improvements and the optional Code Mode are in `main` and will require a new tagged release before appearing in the default installer.
 
-The server emits request IDs and structured events for HTTP requests,
-authentication denials, MCP tool completion/errors, startup, and shutdown. It
-does not log file contents, command lines, bearer tokens, or Authorization
-headers. On Linux, the user service sends these records to journald.
-
-## Development and release
+To test the **current repository code** instead, install Go **1.26.6 or newer**:
 
 ```sh
-gofmt -w $(git ls-files '*.go')
-go vet -all ./...
-go test -vet=all ./...
-go test -race ./...
+git clone https://github.com/Chillizu/miodesk.git
+cd miodesk
 go build -buildvcs=false -o miodesk ./cmd/miodesk
-scripts/release-check.sh
-scripts/build-release.sh 0.2.1
+./miodesk version
 ```
 
-The release script produces platform binaries, `checksums.txt`, and a
-`manifest.json` consumable by `miodesk update --from <manifest-url>`. The
-release checklist is in [docs/RELEASE.md](docs/RELEASE.md).
+The source build is not the same as a verified, versioned Release asset; review and test it before using it with sensitive workspaces. `go install github.com/Chillizu/miodesk/cmd/miodesk@latest` follows the **latest module version tag**, not necessarily `main`.
 
-See [docs/SECURITY.md](docs/SECURITY.md) for the threat model and
-[docs/REFERENCES.md](docs/REFERENCES.md) for the official protocol and
-platform sources used by the implementation. The repository is licensed
-under [MPL-2.0](LICENSE).
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| `miodesk: command not found` | Add `~/.local/bin` to `PATH`, or use the full path shown by the installer |
+| Port `8787` already in use | Run `miodesk status` before starting a second server; change ports deliberately |
+| Cannot access a file | Check `miodesk workspace` and permissions; file paths must stay inside the root |
+| ChatGPT does not show new tools | Refresh the registered MCP app's tool list; Tunnel does not refresh ChatGPT schemas |
+| Tunnel does not connect | Run `miodesk tunnel doctor` and follow [the setup guide](docs/SETUP.md) |
+| Need logs | Run `miodesk logs --follow` (systemd) or inspect foreground terminal output |
+
+## Development
+
+```sh
+go test -vet=all ./...
+scripts/release-check.sh
+bash scripts/install-test.sh
+bash scripts/onboarding-test.sh
+```
+
+See [Security](docs/SECURITY.md), [setup instructions](docs/SETUP.md), [ChatGPT-specific notes](docs/CHATGPT.md), [release checklist](docs/RELEASE.md), and the [changelog](CHANGELOG.md). Licensed under [MPL-2.0](LICENSE).

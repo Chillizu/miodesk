@@ -55,5 +55,8 @@ jobs:
       - name: Test installer
         run: scripts/install-test.sh
 
+      - name: Test fresh-user onboarding and MCP startup
+        run: bash scripts/onboarding-test.sh
+
       - name: Test optional Code Mode MCP roundtrip
         run: bash scripts/codemode-smoke/ci.sh
