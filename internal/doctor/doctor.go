@@ -88,8 +88,8 @@ func Run(cfgPath string, cfg *config.Config, cfgErr error) Report {
 	r.add("workspace", StatusOK, ws.Root())
 
 	if err := checkWritable(ws.Root()); err != nil {
-		r.add("permissions", StatusWarn, err.Error(),
-			"file tools need write access to the workspace")
+		r.add("permissions", StatusWarn, "workspace root write probe failed: "+err.Error(),
+			"read-only tools may still work; writes in writable subdirectories may succeed; use a writable workspace root for root-level writes")
 	} else {
 		r.add("permissions", StatusOK, "workspace is writable")
 	}

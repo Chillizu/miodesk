@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Chillizu/miodesk/internal/config"
@@ -49,6 +51,41 @@ func TestCheckPortIdentifiesMiodesk(t *testing.T) {
 				t.Fatalf("checkPort() = %+v, want status %s", report.Checks, tt.want)
 			}
 		})
+	}
+}
+
+func TestDoctorUnwritableWorkspaceRootPreservesCoreReadiness(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+	if err := checkWritable(root); err == nil {
+		t.Skip("filesystem/user does not enforce directory write permission")
+	} else if !os.IsPermission(err) {
+		t.Fatalf("unexpected workspace write probe failure: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Server.Port = 0
+	cfg.Tunnel.Provider = "local"
+	report := Run("test-config.toml", cfg, nil)
+	foundPermissions, foundMCP := false, false
+	for _, c := range report.Checks {
+		if c.Name == "permissions" {
+			foundPermissions = true
+			if c.Status != StatusWarn || !strings.Contains(c.Detail, "workspace root write probe failed") ||
+				!strings.Contains(c.Hint, "writable subdirectories") || !strings.Contains(c.Hint, "root-level writes") {
+				t.Errorf("unexpected permissions diagnostic: %+v", c)
+			}
+		}
+		if c.Name == "mcp" && c.Status == StatusOK {
+			foundMCP = true
+		}
+	}
+	if !foundPermissions || !foundMCP || report.HasErrors() {
+		t.Fatalf("unwritable workspace root must warn without hiding core readiness: %+v", report.Checks)
 	}
 }
 

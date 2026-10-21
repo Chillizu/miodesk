@@ -10,19 +10,24 @@ Format: topic → URL → version → used by → decision → checked.
 
 ## MCP Go SDK
 
-- URL: https://github.com/modelcontextprotocol/go-sdk (v1.7.0)
+- URL: https://github.com/modelcontextprotocol/go-sdk (v1.8.0)
+- Release notes: https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0
 - Docs: https://github.com/modelcontextprotocol/go-sdk/blob/main/docs/quick_start.md
 - Used by: `internal/server`
 - Decision: Use the official SDK for the entire MCP protocol stack —
   `mcp.NewServer`, `mcp.AddTool` (typed handlers), `mcp.StdioTransport`,
   `mcp.NewStreamableHTTPHandler`. miodesk must not re-implement JSON-RPC/MCP.
-- Verified API (from module cache source, v1.7.0):
+- Verified API (module code and integration tests, v1.8.0):
   - `mcp.NewServer(&mcp.Implementation{Name, Version}, nil) *Server`
   - `mcp.AddTool(s, &mcp.Tool{Name, Description}, func(ctx, *mcp.CallToolRequest, I) (*mcp.CallToolResult, O, error))`
   - `server.Run(ctx, &mcp.StdioTransport{})` — blocking, stdio transport
   - `mcp.NewStreamableHTTPHandler(func(*http.Request) *Server, *StreamableHTTPOptions)` — http.Handler; session handling per MCP spec
   - Client (tests): `mcp.NewClient`, `client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint, …}, nil)`, `&mcp.CommandTransport{Command: exec.Command(…)}`
-- Checked: 2026-09-07
+- Decision (2026-10-21): v1.8.0 keeps the 2026-07-28 protocol revision
+  while improving transport resource bounds, session cleanup, and teardown
+  reliability. Upgrade without changing the ten model-facing tool schemas;
+  verify with race tests and both isolated and live MCP smoke tests.
+- Checked: 2026-10-21
 
 ## MCP Specification
 
@@ -30,7 +35,7 @@ Format: topic → URL → version → used by → decision → checked.
 - Transports: https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http.md
 - Index: https://modelcontextprotocol.io/llms.txt
 - Used by: `internal/server`, `internal/tools`
-- Decision: SDK v1.7.0 implements the transport/session behavior (including the
+- Decision: SDK v1.8.0 implements the transport/session behavior (including the
   stateless direction, SEP-2567); miodesk does not hand-roll MCP transport
   sessions or SSE. The 2026-07-28 spec uses full JSON Schema 2020-12 for tools
   and recommends explicit application handles when state must survive between

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Adaptive maintenance: upgraded the official MCP Go SDK from v1.7.0 to v1.8.0
+  for transport hardening without altering the supported MCP protocol revision
+  or model-facing tool schemas; CI now cross-compiles every release target.
+- Perfective maintenance: made the workspace-root write warning in `doctor`
+  explain that read-only operations and writes under writable subdirectories
+  may still work. The warning remains visible instead of relaxing permissions.
+- Reliability: `list` preserves accessible entries and returns `truncated=true`
+  when an unrelated child directory is unreadable; an unreadable requested root
+  still fails.
+
 - Decoupled Core and OpenAI Tunnel lifecycles: new configurations are local-only;
   `miodesk service` operates only on Core, while `miodesk tunnel service`
   explicitly installs and manages the optional independent tunnel unit. The
