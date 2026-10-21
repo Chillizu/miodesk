@@ -4,8 +4,10 @@
 package tools
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,7 +26,7 @@ const (
 
 type ReadInput struct {
 	Path   string `json:"path" jsonschema:"file path relative to the workspace root, or absolute inside it"`
-	Offset int    `json:"offset,omitempty" jsonschema:"1-based line number to start from (default 1)"`
+	Offset int    `json:"offset,omitempty" jsonschema:"1-based start line, valid anywhere in file (default 1)"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"maximum number of lines to return (default 2000)"`
 }
 
@@ -63,18 +65,14 @@ func Read(ctx context.Context, ws *workspace.Workspace, in ReadInput) (*ReadOutp
 	}
 	defer f.Close()
 
-	// Read at most MaxReadBytes+1 so the extra byte marks truncation. ReadAll
-	// is used instead of one File.Read call: regular files usually fill a
-	// buffer, but the io contract does not require a single read to do so.
-	data, err := io.ReadAll(io.LimitReader(f, MaxReadBytes+1))
-	if err != nil {
+	// Stream to the requested line window rather than always taking the first
+	// 512 KiB. Skipped lines and long lines never need to fit in memory.
+	r := bufio.NewReader(f)
+	prefix, err := r.Peek(1024)
+	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
-	truncated := len(data) > MaxReadBytes
-	if truncated {
-		data = data[:MaxReadBytes]
-	}
-	if bytes.IndexByte(head(data, 1024), 0) >= 0 {
+	if bytes.IndexByte(prefix, 0) >= 0 {
 		return nil, fmt.Errorf("read: %s looks like a binary file", ws.Rel(path))
 	}
 
@@ -88,27 +86,48 @@ func Read(ctx context.Context, ws *workspace.Workspace, in ReadInput) (*ReadOutp
 	}
 
 	var out strings.Builder
-	lines := 0
-	current := 1
-	for len(data) > 0 && lines < limit {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+	lines, current := 0, 1
+	inLine, truncated := false, false
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		var line string
-		if i := bytes.IndexByte(data, '\n'); i >= 0 {
-			line, data = string(data[:i+1]), data[i+1:]
-		} else {
-			line, data = string(data), nil
+		segment, readErr := r.ReadSlice('\n')
+		if len(segment) == 0 && errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil && !errors.Is(readErr, bufio.ErrBufferFull) && !errors.Is(readErr, io.EOF) {
+			return nil, readErr
 		}
 		if current >= offset {
-			out.WriteString(line)
-			lines++
+			if !inLine {
+				lines++
+				inLine = true
+			}
+			room := MaxReadBytes - out.Len()
+			if len(segment) > room {
+				out.Write(segment[:room])
+				truncated = true
+				break
+			}
+			out.Write(segment)
 		}
-		current++
-	}
-	// Lines beyond the byte window were dropped before the window closed.
-	if truncated || (len(data) > 0 && lines == limit) {
-		truncated = true
+		if readErr == nil || errors.Is(readErr, io.EOF) {
+			if lines >= limit {
+				// A complete final line is not truncated if it reaches EOF.
+				if _, err := r.Peek(1); err == nil {
+					truncated = true
+				} else if !errors.Is(err, io.EOF) {
+					return nil, err
+				}
+				break
+			}
+			current++
+			inLine = false
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+		}
 	}
 
 	return &ReadOutput{
@@ -120,11 +139,4 @@ func Read(ctx context.Context, ws *workspace.Workspace, in ReadInput) (*ReadOutp
 		Truncated: truncated,
 		Content:   out.String(),
 	}, nil
-}
-
-func head(b []byte, n int) []byte {
-	if len(b) > n {
-		return b[:n]
-	}
-	return b
 }

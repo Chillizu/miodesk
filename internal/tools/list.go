@@ -20,7 +20,7 @@ const (
 )
 
 type ListInput struct {
-	Path  string `json:"path,omitempty" jsonschema:"directory to list, relative to the workspace root (default: root)"`
+	Path  string `json:"path,omitempty" jsonschema:"directory to list, relative to workspace root (default: root); returned entry paths are workspace-relative"`
 	Depth int    `json:"depth,omitempty" jsonschema:"recursion depth (default 1, max 8)"`
 	Limit int    `json:"limit,omitempty" jsonschema:"maximum number of entries to return (default 500)"`
 }
@@ -97,7 +97,9 @@ func List(ctx context.Context, ws *workspace.Workspace, in ListInput) (*ListOutp
 				out.Truncated = true
 				return fs.SkipAll
 			}
-			e := Entry{Name: d.Name(), Path: rel, Kind: kindOf(d)}
+			// Paths in all file-tool results are workspace-relative so callers
+			// can pass them directly to read, edit, write, or delete.
+			e := Entry{Name: d.Name(), Path: ws.Rel(p), Kind: kindOf(d)}
 			if e.Kind == "file" {
 				if info, ierr := d.Info(); ierr == nil {
 					e.Size = info.Size()

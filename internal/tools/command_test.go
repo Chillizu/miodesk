@@ -362,6 +362,31 @@ func TestWriteStdinBoundedHonorsRequestCancellation(t *testing.T) {
 	}
 }
 
+func TestUnifiedExecReportsTruncatedOutput(t *testing.T) {
+	ws, root := newWS(t)
+	writeFile(t, root, "large-output.txt", strings.Repeat("z", maxLongOutput+4096))
+	m := NewManager()
+	defer m.Shutdown()
+
+	out, err := ExecCommand(context.Background(), ws, m, ExecCommandInput{
+		Cmd: "cat large-output.txt", YieldTimeMS: 10_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ExitCode == nil || *out.ExitCode != 0 || !out.Truncated || len(out.Output) != maxLongOutput {
+		t.Fatalf("expected explicit truncation at capture cap: exit=%v truncated=%v len=%d", out.ExitCode, out.Truncated, len(out.Output))
+	}
+	// Truncation remains visible to clients even after the initial chunk was consumed.
+	poll, err := WriteStdin(context.Background(), m, WriteStdinInput{SessionID: m.next})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !poll.Truncated || poll.Output != "" {
+		t.Fatalf("truncation was lost after polling: %+v", poll)
+	}
+}
+
 func TestUnifiedExecConsumesOutputIncrementally(t *testing.T) {
 	ws, _ := newWS(t)
 	m := NewManager()

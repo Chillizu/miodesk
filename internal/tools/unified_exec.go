@@ -21,7 +21,7 @@ const (
 // TTY is opt-in so ordinary build/test commands keep deterministic pipe output.
 type ExecCommandInput struct {
 	Cmd         string `json:"cmd" jsonschema:"shell command to run"`
-	Workdir     string `json:"workdir,omitempty" jsonschema:"working directory inside the workspace (default: root)"`
+	Workdir     string `json:"workdir,omitempty" jsonschema:"working directory inside workspace (default: root); does not persist to other calls"`
 	TTY         bool   `json:"tty,omitempty" jsonschema:"allocate an interactive terminal; default false"`
 	YieldTimeMS int    `json:"yield_time_ms,omitempty" jsonschema:"milliseconds to wait before returning a live session (default 10000, max 30000)"`
 	TimeoutMS   int    `json:"timeout_ms,omitempty" jsonschema:"maximum total command runtime in milliseconds (default 120000, max 600000)"`
@@ -44,6 +44,7 @@ type UnifiedExecOutput struct {
 	ExitCode        *int    `json:"exit_code,omitempty"`
 	SessionID       *int    `json:"session_id,omitempty"`
 	Output          string  `json:"output"`
+	Truncated       bool    `json:"truncated,omitempty"` // capture cap reached; output may be incomplete
 }
 
 func ExecCommand(ctx context.Context, ws *workspace.Workspace, manager *Manager, in ExecCommandInput) (*UnifiedExecOutput, error) {
@@ -113,7 +114,7 @@ func (m *Manager) sessionOutput(sessionID int) (*UnifiedExecOutput, error) {
 		return nil, err
 	}
 	elapsedMS := time.Since(p.started).Milliseconds()
-	out := &UnifiedExecOutput{Output: p.consumeOutput()}
+	out := &UnifiedExecOutput{Output: p.consumeOutput(), Truncated: p.output.Truncated()}
 	select {
 	case <-p.doneCh:
 		elapsedMS = p.elapsedMS.Load()

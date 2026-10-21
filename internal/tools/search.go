@@ -35,7 +35,7 @@ const (
 )
 
 type SearchInput struct {
-	Query         string `json:"query" jsonschema:"text to search for"`
+	Query         string `json:"query" jsonschema:"literal text to find (not a regex)"`
 	Path          string `json:"path,omitempty" jsonschema:"directory or file to search within (default: workspace root)"`
 	MaxResults    int    `json:"max_results,omitempty" jsonschema:"maximum number of matches (default 100)"`
 	CaseSensitive bool   `json:"case_sensitive,omitempty" jsonschema:"match case exactly (default false)"`
@@ -103,7 +103,11 @@ func searchRipgrep(ctx context.Context, rg string, ws *workspace.Workspace, path
 	ctx, cancel := context.WithTimeout(ctx, rgTimeout)
 	defer cancel()
 
-	args := []string{"-n", "--no-heading", "--max-columns", fmt.Sprint(matchTextLimit), "--max-count", fmt.Sprint(limit)}
+	// Match literal text just like the built-in fallback. Preview long lines
+	// instead of silently dropping matches outside --max-columns.
+	// -H is required even for a single selected file: the parser expects
+	// file:line:text, while ripgrep normally omits filenames for one file.
+	args := []string{"-F", "-H", "-n", "--no-heading", "--max-columns", fmt.Sprint(matchTextLimit), "--max-columns-preview", "--max-count", fmt.Sprint(limit)}
 	if !in.CaseSensitive {
 		args = append(args, "-i")
 	}

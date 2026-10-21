@@ -85,6 +85,42 @@ func TestReadWindow(t *testing.T) {
 	}
 }
 
+func TestReadWindowAfterLargePrefix(t *testing.T) {
+	ws, root := newWS(t)
+	// The requested lines start after the first 512 KiB of the file.
+	skipped := MaxReadBytes/5 + 100
+	writeFile(t, root, "large-lines.txt", strings.Repeat("skip\n", skipped)+"target\nlast\n")
+
+	out, err := Read(context.Background(), ws, ReadInput{Path: "large-lines.txt", Offset: skipped + 1, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Content != "target\n" || out.Lines != 1 || !out.Truncated {
+		t.Errorf("window after first byte cap = %+v", out)
+	}
+
+	out, err = Read(context.Background(), ws, ReadInput{Path: "large-lines.txt", Offset: skipped + 2, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Content != "last\n" || out.Truncated {
+		t.Errorf("last line after first byte cap = %+v", out)
+	}
+}
+
+func TestReadAfterOversizedLine(t *testing.T) {
+	ws, root := newWS(t)
+	writeFile(t, root, "long-line.txt", strings.Repeat("x", MaxReadBytes+5)+"\nnext\n")
+
+	out, err := Read(context.Background(), ws, ReadInput{Path: "long-line.txt", Offset: 2, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Content != "next\n" || out.Lines != 1 || out.Truncated {
+		t.Errorf("line after oversized line = %+v", out)
+	}
+}
+
 func TestReadByteCap(t *testing.T) {
 	ws, root := newWS(t)
 	big := strings.Repeat("x", MaxReadBytes+4096)
@@ -184,6 +220,33 @@ func TestListDepthTwo(t *testing.T) {
 	if paths[filepath.Join("sub", "deep", "c.txt")] {
 		t.Error("should not descend below depth 2")
 	}
+}
+
+func TestListSubdirectoryPathsAreWorkspaceRelative(t *testing.T) {
+	ws, root := newWS(t)
+	writeFile(t, root, "project/src/main.go", "package main\n")
+
+	out, err := List(context.Background(), ws, ListInput{Path: "project", Depth: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Path != "project" {
+		t.Fatalf("listing path = %q", out.Path)
+	}
+	want := filepath.Join("project", "src", "main.go")
+	for _, e := range out.Entries {
+		if e.Name == "main.go" {
+			if e.Path != want {
+				t.Fatalf("entry path = %q, want workspace-relative %q", e.Path, want)
+			}
+			read, err := Read(context.Background(), ws, ReadInput{Path: e.Path})
+			if err != nil || read.Content != "package main\n" {
+				t.Fatalf("cannot directly read listed entry: %+v, %v", read, err)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing main.go in list: %+v", out.Entries)
 }
 
 func TestListLimit(t *testing.T) {
@@ -359,6 +422,35 @@ func TestSearchBuiltin(t *testing.T) {
 	}
 	if len(out.Matches) != 0 || !out.Truncated {
 		t.Errorf("overlong-line search = %+v, want no matches and truncated=true", out)
+	}
+}
+
+func TestSearchLiteralAcrossEngines(t *testing.T) {
+	ws, root := newWS(t)
+	writeFile(t, root, "literal.txt", "axb\na.b\n"+strings.Repeat("x", 300)+"a.b\n")
+
+	engines := []struct {
+		name    string
+		disable bool
+	}{{name: "builtin", disable: true}}
+	if rgPath() != "" {
+		engines = append(engines, struct {
+			name    string
+			disable bool
+		}{name: "ripgrep", disable: false})
+	}
+	for _, tc := range engines {
+		t.Run(tc.name, func(t *testing.T) {
+			rgDisabledFor = tc.disable
+			defer func() { rgDisabledFor = false }()
+			out, err := Search(context.Background(), ws, SearchInput{Path: "literal.txt", Query: "a.b"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(out.Matches) != 2 || out.Matches[0].Line != 2 || out.Matches[1].Line != 3 {
+				t.Errorf("literal a.b expected only lines 2 and 3, got %+v", out)
+			}
+		})
 	}
 }
 
