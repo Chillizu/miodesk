@@ -160,7 +160,7 @@ MCP server**，连接方式选 Tunnel，检查必要权限和风险确认，
 | `read` / `search` / `list` | 按行读取、文字精确搜索、目录浏览 |
 | `write` / `edit` / `delete` | 限定工作区中的文件修改 |
 | `exec_command` / `write_stdin` | 有界命令执行、长命令轮询、输入／取消 |
-| `context` | 持久化任务交接与跨会话续接 |
+| [`context`](docs/CONTEXT.zh-CN.md) | 持久化任务交接与跨会话续接；查看字段、检查点与恢复机制的完整说明 |
 | `status` | 查看连接状态和简洁诊断 |
 
 ## 连接成功之后再考虑常驻

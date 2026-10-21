@@ -128,7 +128,7 @@ miodesk tunnel service start
 | `write` / `edit` / `delete` | Make scoped, validated filesystem changes |
 | `exec_command` | Run a shell command; get output or a resumable session ID |
 | `write_stdin` | Poll a session, send input, or interrupt it |
-| `context` | Save and resume a small cross-session working handoff |
+| [`context`](docs/CONTEXT.md) | Save and resume a small cross-session working handoff; see the guide for actions, fields, and checkpoints |
 | `status` | Check the connection and runtime |
 
 For regular coding, a natural workflow is **search → read → edit → test**, using `exec_command` with an explicit project working directory. File tool paths are relative to the configured workspace root.
