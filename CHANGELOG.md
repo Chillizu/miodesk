@@ -4,7 +4,8 @@
 
 - Adaptive maintenance: upgraded the official MCP Go SDK from v1.7.0 to v1.8.0
   for transport hardening without altering the supported MCP protocol revision
-  or model-facing tool schemas; CI now cross-compiles every release target.
+  or model-facing tool schemas; CI now cross-compiles every release target
+  and uses Node.js 24-compatible checkout/setup-go actions.
 - Perfective maintenance: made the workspace-root write warning in `doctor`
   explain that read-only operations and writes under writable subdirectories
   may still work. The warning remains visible instead of relaxing permissions.

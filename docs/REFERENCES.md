@@ -29,6 +29,16 @@ Format: topic → URL → version → used by → decision → checked.
   verify with race tests and both isolated and live MCP smoke tests.
 - Checked: 2026-10-21
 
+## GitHub Actions runner compatibility
+
+- URLs: https://github.com/actions/checkout (v5),
+  https://github.com/actions/setup-go (v6)
+- Used by: `.github/workflows/ci.yml`
+- Decision: both action major versions use Node.js 24 and require GitHub
+  Actions runner v2.327.1 or later. GitHub-hosted `ubuntu-latest` meets the
+  runner prerequisite; keep release cross-compilation in the same CI job.
+- Checked: 2026-10-21
+
 ## MCP Specification
 
 - URL: https://modelcontextprotocol.io/specification/2026-07-28/index.md
