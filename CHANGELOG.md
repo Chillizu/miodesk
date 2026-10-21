@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Documentation cleanup: removed completed historical planning/review files
+  (preserved in Git history), consolidated ChatGPT setup guidance, refreshed
+  release maintenance instructions and API references, and added CI checks
+  for local Markdown links. Reused the plugin logo in the README instead of
+  tracking two identical images; aligned draft plugin manifest versions with
+  the published `v0.2.2` Core. No MCP tools, installed services, or Tunnel
+  configuration changed.
+
 ## 0.2.2 — 2026-10-21
 
 - **Experimental Linux Code Mode**: opt-in `[codemode] enabled = true` adds

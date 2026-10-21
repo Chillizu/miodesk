@@ -98,12 +98,9 @@ persistent Core tool logs. CI includes Go test/race builds
 and `bash scripts/codemode-smoke/ci.sh`, which starts a disposable enabled
 server and exercises the real MCP `code` tool.
 
-Local dispatch benchmark of the initial unisolated prototype: a direct
-`list → read` sequence cost 13.5–25.5 microseconds; fresh-JS-VM composition
-cost 74–98 microseconds in two short 100-iteration runs on an Intel Ultra 9
-185H. These are *not* end-to-end or token measurements. The isolated worker
-adds process startup and IPC, so any model-side savings must be validated
-against real client tool-call workflows.
+The isolated worker adds process startup and IPC overhead. No end-to-end
+model-token or latency savings are claimed without an A/B benchmark against
+native MCP calls.
 
 A future version may support more than three tools, but only after explicit
 read/write authorization design. Existing tools should remain independently

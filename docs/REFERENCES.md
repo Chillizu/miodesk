@@ -25,8 +25,9 @@ Format: topic → URL → version → used by → decision → checked.
   - Client (tests): `mcp.NewClient`, `client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint, …}, nil)`, `&mcp.CommandTransport{Command: exec.Command(…)}`
 - Decision (2026-10-21): v1.8.0 keeps the 2026-07-28 protocol revision
   while improving transport resource bounds, session cleanup, and teardown
-  reliability. Upgrade without changing the ten model-facing tool schemas;
-  verify with race tests and both isolated and live MCP smoke tests.
+  reliability. The ten default tools retain their schemas; an additional
+  Experimental Code Mode tool is opt-in on Linux. Verify with race tests and
+  isolated/live MCP smoke tests.
 - Checked: 2026-10-21
 
 ## Code Mode and resource isolation
@@ -176,11 +177,13 @@ flow.
 
 - URL: https://github.com/BurntSushi/ripgrep
 - Used by: `internal/tools` (search)
-- Decision: search uses `rg` when `exec.LookPath` finds it (flags: `-n
-  --no-heading --max-columns --max-count`, `-i` unless case-sensitive; exit 1
-  = no matches), and a built-in walker otherwise. rg is an optimization, never
-  a requirement.
-- Checked: 2026-09-06
+- Decision: search uses literal matching in **both** backends. When available,
+  ripgrep uses `-F` (fixed strings), `-H` (always print filename), `-n`,
+  `--no-heading`, `--max-columns-preview` and bounded match counts; exit 1
+  means no matches. Otherwise a built-in walker handles the same basic query.
+  The two backends can still differ in ignore-file/hidden-file traversal.
+  ripgrep remains optional, not a runtime requirement.
+- Checked: 2026-10-21 (single-file results, literal patterns and long lines tested)
 
 ## systemd user service
 
@@ -238,24 +241,15 @@ or the primary CLI's connection discovery.
 - Used by: `internal/adapter`, `internal/server`, `plugins/miodesk`
 - Decision: miodesk exposes native tools and a compact structured `status` result,
   with invocation labels for `status`, `exec_command`, and `write_stdin`. It
-  publishes no MCP Apps UI metadata, templates, or resources. All ten tools
-  declare their annotations and schemas; `/api/status` and `/api/edits` retain
+  publishes no MCP Apps UI metadata, templates, or resources. The ten default
+  tools declare annotations and schemas (an eleventh read-only tool is opt-in
+  for Experimental Linux Code Mode); `/api/status` and `/api/edits` retain
   richer local JSON diagnostics behind the server's access middleware.
   ChatGPT can associate optional UI with selected tool invocations, but an
   iframe is scoped to its rendered instance and is not a turn-level singleton.
   That protocol observation explains the decision to keep background status
   lookups in the native tool view without an inline panel.
 - Checked: 2026-09-24
-
-## MCP Apps extension (historical protocol guidance)
-
-- URLs: https://modelcontextprotocol.io/extensions/apps/overview.md and /build.md
-  (spec: github.com/modelcontextprotocol/ext-apps, spec 2026-01-26)
-- Version: checked 2026-09-18
-- Used by: historical design reference only; miodesk currently has no MCP Apps UI
-- Decision: the extension permits optional tool `_meta.ui.resourceUri` pointing
-  to a `ui://` resource, with a sandboxed HTML view and host notifications.
-  miodesk currently does not declare such metadata or register UI resources.
 
 ## Streamable HTTP transport security (MCP 2026-07-28)
 
@@ -323,5 +317,3 @@ or the primary CLI's connection discovery.
   records with MCP tool records; payloads, command lines, Authorization values,
   and bearer tokens are excluded or redacted.
 - Checked: 2026-09-07
-
-## Later milestones (not yet consulted — re-verify at implementation time)

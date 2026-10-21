@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Miodesk-logo.png" width="150" alt="miodesk logo">
+  <img src="plugins/miodesk/assets/miodesk-logo.png" width="150" alt="miodesk logo">
 </p>
 
 <h1 align="center">miodesk</h1>

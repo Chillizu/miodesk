@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "miodesk",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Local workspace tools and session handoffs through a connected miodesk MCP server.",
   "author": {
     "name": "miodesk"

@@ -24,6 +24,31 @@ jobs:
         shell: bash
         run: test -z "$(gofmt -l $(git ls-files '*.go'))"
 
+      - name: Validate local documentation links
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          failures = []
+          docs = [Path('README.md'), Path('AGENTS.md'), Path('CHANGELOG.md')]
+          docs += list(Path('docs').rglob('*.md'))
+          docs += list(Path('plugins').rglob('*.md'))
+          for doc in docs:
+              text = doc.read_text(encoding='utf-8')
+              links = re.findall(r'\]\(([^)]+)\)', text)
+              links += re.findall(r'<(?:img|a)\b[^>]*\b(?:src|href)="([^"]+)"', text)
+              for link in links:
+                  if link.startswith(('https://', 'http://', 'mailto:', '#')):
+                      continue
+                  target = link.split('#', 1)[0]
+                  if target and not (doc.parent / target).exists():
+                      failures.append(f'{doc}: {link}')
+          if failures:
+              raise SystemExit('Broken documentation links:\n' + '\n'.join(failures))
+          print(f'[OK] relative links checked in {len(docs)} Markdown files')
+          PY
+
       - name: Vet
         run: go vet -all ./...
 
