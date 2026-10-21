@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/pelletier/go-toml/v2"
 
@@ -75,7 +76,14 @@ type Remote struct {
 	Token string `toml:"token"`
 }
 
+// CodeMode is a Core-only optional JavaScript composition endpoint.
+// It does not configure or depend on the OpenAI Tunnel.
+type CodeMode struct {
+	Enabled bool `toml:"enabled"`
+}
+
 type Config struct {
+	CodeMode  CodeMode  `toml:"codemode"`
 	Server    Server    `toml:"server"`
 	Workspace Workspace `toml:"workspace"`
 	Tunnel    Tunnel    `toml:"tunnel"`
@@ -208,6 +216,9 @@ func (c *Config) applyDefaults() {
 // ValidateCore checks only parameters needed to serve the local MCP endpoint.
 // An optional tunnel's unsupported provider must never prevent Core startup.
 func (c *Config) ValidateCore() error {
+	if c.CodeMode.Enabled && runtime.GOOS != "linux" {
+		return fmt.Errorf("codemode.enabled requires Linux resource-limited worker support (this platform is %s)", runtime.GOOS)
+	}
 	if c.Server.Port < 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port %d out of range 0-65535", c.Server.Port)
 	}

@@ -25,6 +25,7 @@ import (
 
 	"github.com/Chillizu/miodesk/internal/adapter"
 	"github.com/Chillizu/miodesk/internal/buildinfo"
+	"github.com/Chillizu/miodesk/internal/codemode"
 	"github.com/Chillizu/miodesk/internal/config"
 	"github.com/Chillizu/miodesk/internal/contextstore"
 	"github.com/Chillizu/miodesk/internal/logging"
@@ -339,6 +340,9 @@ func registerTools(s *Server) {
 		{Name: "context", Description: "Maintain cross-session rolling handoffs and checkpoints"},
 		{Name: "status", Description: "Server status data"},
 	}
+	if s.cfg.CodeMode.Enabled {
+		s.tools = append(s.tools, ToolInfo{Name: "code", Description: "Compose read-only tools in a bounded JavaScript worker"})
+	}
 
 	// Every annotation is set explicitly: ChatGPT reads these hints to decide
 	// how to frame tool calls.
@@ -466,6 +470,36 @@ func registerTools(s *Server) {
 		}
 		return nil, out, nil
 	})
+	// This is a Core feature, not a Tunnel feature. Disabled installations
+	// keep the original ten-tool surface and do not launch JS workers.
+	if s.cfg.CodeMode.Enabled {
+		mcp.AddTool(s.mcp, declared("code", &mcp.Tool{
+			Name:        "code",
+			Title:       "Compose read-only workspace tools",
+			Description: "Execute an async JavaScript arrow function in a short-lived, resource-limited worker. Only tools.read({path,offset,limit}), tools.search({query,path,max_results,case_sensitive}) and tools.list({path,depth,limit}) are available. Return a small JSON value, not a transcript. No shell, write, network or Node.js APIs. Up to 16 calls and 2 seconds of script execution. Example: async () => { const x=await tools.search({query:'TODO'}); return x.matches.slice(0,5); }",
+			Annotations: ann(true, false, false, false),
+			// json.RawMessage carries arbitrary script JSON; generated schema
+			// otherwise incorrectly narrows it to arrays/null.
+			OutputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"kind":  map[string]any{"type": "string", "const": "code"},
+					"value": map[string]any{},
+					"calls": map[string]any{"type": "integer"},
+				},
+				"required":             []string{"kind", "value", "calls"},
+				"additionalProperties": false,
+			},
+		}), func(ctx context.Context, req *mcp.CallToolRequest, in codemode.Input) (result *mcp.CallToolResult, output *codemode.Output, err error) {
+			finish := s.beginTool(ctx, "code")
+			defer func() { finish(err) }()
+			out, err := codemode.RunIsolated(ctx, s.ws, in.Source)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, out, nil
+		})
+	}
 	contextSchema, err := jsonschema.For[contextstore.Input](nil)
 	if err != nil {
 		panic(fmt.Sprintf("generate context input schema: %v", err))

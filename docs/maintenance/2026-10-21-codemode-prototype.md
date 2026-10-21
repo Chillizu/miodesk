@@ -1,91 +1,95 @@
-# Code Mode prototype — 2026-10-21
+# Code Mode in miodesk Core — 2026-10-21
 
-Status: **research/prototype only; not installed, registered, or enabled**.
+## Status and scope
 
-## Goal and boundaries
+Code Mode is now an **opt-in feature of miodesk Core**, not a tunnel or
+separate daemon. Existing configurations expose exactly the original ten tools.
+On Linux, an administrator can add the following to `config.toml` and restart
+only the Core service:
 
-Create a Codex-inspired JavaScript composition surface **inside the miodesk
-Core repository**, not inside or coupled to OpenAI Secure MCP Tunnel.
-Eventually Core may optionally advertise a `code` MCP tool for clients that
-benefit from reduced round-trips. Default native tools must remain usable.
+```toml
+[codemode]
+enabled = true
+```
 
-Reference design:
-- Codex uses a JS Code Mode execution host with internal tool dispatch and an
-  `exec` / `wait` interface; this prototype is **not** that V8 runtime.
-- Cloudflare describes a single-`code` MCP tool for wrapping a small set of
-  upstream tools. For miodesk's ten-tool catalog, a full discovery/search
-  catalog would add complexity without benefit.
+With this setting, Core advertises an additional **read-only** MCP `code`
+tool. OpenAI Secure MCP Tunnel remains an independent transport process and
+still forwards traffic to the same local MCP server. Enabling or disabling
+Code Mode never changes tunnel profiles, credentials, or service files. A
+ChatGPT connector may require a tool-list refresh after opt-in.
 
-## What works now
+This implementation is inspired by Codex's code-composition interface and
+Cloudflare's Code Mode approach. It is not Codex's V8 host or its `exec` /
+`wait` protocol: we intentionally use a small fresh Goja runtime per call.
 
-`internal/codemode.Run(ctx, workspace, source)` creates a fresh Goja JS
-runtime. The script is an async arrow function such as:
+## Example
 
 ```js
 async () => {
-  const hits = await tools.search({ query: "TODO", path: "project", max_results: 10 });
+  const hits = await tools.search({query: "TODO", path: "project", max_results: 10});
   const details = [];
   for (const hit of hits.matches) {
-    const text = await tools.read({ path: hit.file, offset: hit.line, limit: 1 });
-    details.push({ file: hit.file, line: hit.line, content: text.content });
+    const text = await tools.read({path: hit.file, offset: hit.line, limit: 1});
+    details.push({file: hit.file, line: hit.line, content: text.content.trim()});
   }
   return details;
 }
 ```
 
-The only bound host methods are `tools.read`, `tools.search`, and
-`tools.list`. All call the **same native implementation** and workspace
-resolution as ordinary miodesk tools. There are no Node.js builtins, direct
-network methods, shell methods, write APIs, or credentials exposed to JS.
+The script is the value of the `source` argument for the `code` tool.
 
-Prototype limits: <= 16 KiB source, <= 16 nested calls, <= 512 KiB total
-intermediate serialized output, <= 32 KiB final result, 2 seconds of execution.
-Nested read is further limited to 100 lines and 128 KiB per result;
-search/list are clamped. Tests cover composed operations, literal matching,
-path escapes, absence of write and shell APIs, output caps, call caps,
-and cancellation of an infinite loop.
+Only `tools.read`, `tools.search`, and `tools.list` are available to scripts.
+Core dispatches each call to the existing validated workspace tools. The
+script never sees native Go tool pointers, arbitrary MCP tool names, OS file
+descriptors, the shell, Node.js modules, provider credentials, or network APIs.
 
-## Why the endpoint is *not* exposed yet
+## Execution boundaries (Linux)
 
-Goja is an **in-process language VM**, not a security or memory sandbox.
-A script can create large JavaScript objects before the Go cancellation
-interrupt is processed. There is no reliable per-runtime heap cap.
-A JS bug or memory exhaustion would endanger the Core and disrupt the
-independent OpenAI Tunnel's access to it.
+1. Code execution runs in a **fresh child process of the miodesk executable**,
+   not in the long-running Core process. The child is launched using a hidden
+   internal command, with a cleared environment, neutral working directory and
+   private stdin/stdout pipes.
+2. The child has Linux `RLIMIT_DATA = 128 MiB` and `RLIMIT_CORE = 0` resource
+   limits. A separate Core-side deadline kills the child even if JavaScript
+   cancellation fails. Concurrent Code Mode requests are limited to two workers.
+3. The parent Core alone resolves workspace paths and executes allowlisted
+   read-only operations. JSON line protocol frames are size-limited and must
+   follow the expected ordered request-response sequence.
+4. Script source is limited to 16 KiB; a script may invoke at most 16 tools;
+   intermediate responses total at most 512 KiB, final result at most 32 KiB;
+   JavaScript execution is bounded to 2 seconds and the full child lifetime
+   to 4 seconds. Read/search/list have stricter per-operation caps.
+5. The `code` MCP tool is absent unless explicitly enabled. There is no
+   implicit privilege elevation and no change to the `exec_command` surface.
 
-Consequently **do not** call `mcp.AddTool` on this runtime, and do not enable
-it through `config.toml` yet. The default Core continues to advertise the
-original ten tools.
+**Security boundary:** this is process/resource isolation and an
+API allowlist, **not** a complete container, mount namespace, seccomp, or
+unprivileged-user filesystem sandbox. The worker runs as the same Unix user
+as the Core; a native engine exploit could escape JavaScript's API surface.
+Consequently the feature is opt-in and read-only, not suitable for scripts
+from unrelated untrusted principals without a stronger OS boundary.
 
-## Acceptance criteria for the next step
+On non-Linux platforms, `codemode.enabled = true` is currently rejected by
+Core startup validation; other platform builds still compile with the feature
+disabled. This avoids silently advertising unsupported memory protection.
 
-1. Move JavaScript execution into a subprocess with an OS-enforced memory
-   budget and kill-on-timeout. Keep ambient filesystem/network capabilities
-   unavailable to executed JS. Do not claim that a Goja process by itself is
-   a complete kernel sandbox.
-2. Broker *only* allowlisted native read-only tool calls via bounded IPC;
-   enforce the same workspace path policy and tool-level limits in the
-   privileged Core, rather than trusting the child worker.
-3. Ensure cancellation tears down subprocesses even after a blocked/failed
-   tool call. Enforce request byte limits, intermediate result budgets,
-   concurrency limits and structured error reporting. Run cross-platform tests.
-4. Introduce a Core-level opt-in (`[codemode] enabled = true`) only after the
-   isolation and DoS tests pass. Then add the optional tool to Core
-   `tools/list`; no changes to the Tunnel component, its credentials, or the
-   existing ten tool signatures.
-5. Validate against real MCP clients and benchmark end-to-end latency,
-   intermediate tokens, success rate and failures on the same task suite.
-   Do not claim token/latency savings from the existence of the adapter alone.
+## Verification
 
-## Local overhead baseline
+The tests exercise composed tool calls, no write/exec/network Node.js APIs,
+workspace-path escape, memory exhaustion, infinite loops, source/output/call
+limits, cancellation, configuration opt-in, the MCP tool schema and an
+isolated Streamable HTTP client roundtrip. CI includes Go test/race builds
+and `bash scripts/codemode-smoke/ci.sh`, which starts a disposable enabled
+server and exercises the real MCP `code` tool.
 
-Two 100-iteration runs (Intel Core Ultra 9 185H, 2026-10-21) of the same
-`list → read` composition reported direct-tool local work at 13.5–25.5
-microseconds per operation and the fresh-VM adapter at 74–98 microseconds.
-The additional sub-millisecond orchestration overhead is real; no model or
-network round-trips were included, so these numbers **do not** prove overall
-latency or token savings. The expected benefit requires multi-step MCP tasks
-with intermediate results filtered before reaching the model.
+Local dispatch benchmark of the initial unisolated prototype: a direct
+`list → read` sequence cost 13.5–25.5 microseconds; fresh-JS-VM composition
+cost 74–98 microseconds in two short 100-iteration runs on an Intel Ultra 9
+185H. These are *not* end-to-end or token measurements. The isolated worker
+adds process startup and IPC, so any model-side savings must be validated
+against real client tool-call workflows.
 
-This prototype is a starting implementation, **not** a finished security
-boundary or a faithful replacement for Codex's Code Mode host.
+A future version may support more than three tools, but only after explicit
+read/write authorization design. Existing tools should remain independently
+available; keeping the Code Mode option does not require making every user
+use it.

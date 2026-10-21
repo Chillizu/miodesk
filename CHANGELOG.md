@@ -2,14 +2,14 @@
 
 ## Unreleased
 
-- Added an **unexposed, read-only Code Mode adapter prototype** under
-  `internal/codemode` using a pure-Go JavaScript engine. A single async script
-  can compose `read`, literal `search`, and `list` and return a focused JSON
-  result. The prototype enforces bounded input, tool-call count, response size,
-  and time and tests path escapes, missing side-effect capabilities, and loops.
-  It deliberately does **not** register a public MCP tool or change the Tunnel:
-  in-process JavaScript does not provide an OS memory/security sandbox, so a
-  separately isolated worker remains a prerequisite for safe opt-in exposure.
+- Added an optional **read-only Code Mode tool** inside miodesk Core on Linux:
+  `[codemode] enabled = true` exposes `code` in addition to the usual ten MCP
+  tools. JavaScript runs in a short-lived process with a Linux memory limit,
+  sanitized environment, bounded IPC, deadline, concurrency limit and a
+  Core-side `read` / literal `search` / `list` allowlist. Default remains off;
+  it is not a full OS sandbox. OpenAI Tunnel remains an independent transport.
+  Added native and real-MCP regression/smoke tests for composed calls, rejected
+  writes and escapes, memory exhaustion and run-away loops.
 
 - Improved model-facing tool descriptions and bundled workspace instructions so
   agents choose `list` for paths, literal `search` for content, focused `read`

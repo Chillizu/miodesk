@@ -224,9 +224,28 @@ new session does not already know which one to resume. Miodesk retains a small
 internal revision history as a safety net, but normal resume output contains
 only the current handoff and checkpoint count.
 
+## Optional Code Mode (Linux)
+
+Core can expose an additional read-only `code` MCP tool on Linux. The feature
+is disabled by default and does not depend on the OpenAI Tunnel. To opt in,
+add this to `~/.config/miodesk/config.toml` and restart Core only:
+
+```toml
+[codemode]
+enabled = true
+```
+
+The script is an async JavaScript arrow function supplied in `source`.
+Only `tools.read`, `tools.search` (literal text), and `tools.list` are exposed
+to JavaScript; the parent Core validates and executes those tool calls.
+Scripts run in a short-lived, memory/timeout-limited child process on Linux.
+This is not a full OS security sandbox, and it should not be used for code
+provided by untrusted third parties. See the
+[Code Mode design and safety notes](docs/maintenance/2026-10-21-codemode-prototype.md).
+
 ## ChatGPT and MCP clients
 
-miodesk exposes ten native MCP tools. File and command tools use the host's
+miodesk exposes ten native MCP tools by default (eleven with Code Mode enabled). File and command tools use the host's
 normal tool view, and `status` returns a compact read-only structured result.
 No MCP Apps UI resource or output template is published. Exec sessions are
 explicit handles threaded through `exec_command` and `write_stdin`; ordinary

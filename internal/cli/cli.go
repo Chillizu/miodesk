@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/Chillizu/miodesk/internal/codemode"
 	"github.com/Chillizu/miodesk/internal/config"
 	"github.com/Chillizu/miodesk/internal/logging"
 )
@@ -40,6 +41,14 @@ machine-readable diagnostic records on stderr.
 
 // Run executes one command and returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
+	// Internal worker protocol must never write non-JSON output to stdout.
+	if len(args) == 1 && args[0] == "__codemode_worker" {
+		if err := codemode.ServeWorker(os.Stdin, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	}
 	settings := logging.Settings{Level: "info", Format: "text"}
 	if value := os.Getenv("MIODESK_LOG"); value != "" {
 		settings.Level = value

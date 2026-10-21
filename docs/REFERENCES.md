@@ -29,18 +29,20 @@ Format: topic → URL → version → used by → decision → checked.
   verify with race tests and both isolated and live MCP smoke tests.
 - Checked: 2026-10-21
 
-## Code Mode prototype and sandbox boundary
+## Code Mode and resource isolation
 
 - Codex implementation: https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/code_mode/mod.rs
 - Code Mode host pattern: https://developers.cloudflare.com/agents/model-context-protocol/codemode/
 - Pure Go JS runtime: https://github.com/dop251/goja
-- Used by: `internal/codemode` (prototype only)
-- Decision: Follow the Codex JavaScript composition and host-dispatched tool
-  approach, but do **not** claim to embed Codex's V8 host or its `exec` / `wait`
-  lifecycle. The Goja proof of concept is in-process and has no OS-level memory
-  isolation. Keep it unregistered and read-only; require an OS-isolated worker,
-  bounded IPC and memory limits before a configurable MCP `code` tool can be
-  exposed. Keep Tunnel transport completely independent of code execution.
+- Linux resource limit: https://man7.org/linux/man-pages/man2/getrlimit.2.html
+- Used by: `internal/codemode`, `internal/config`, `internal/server`
+- Decision: Keep the Codex-inspired JavaScript composition layer in Core,
+  not Tunnel. Opt-in Linux `code` uses a short-lived Goja subprocess with
+  `RLIMIT_DATA`, caller deadline, bounded JSON IPC and Core-side read-only tool
+  dispatch. No Node.js/OS APIs are supplied to scripts. This is intentionally
+  NOT the Codex V8 host, nor a complete container/namespace/seccomp sandbox;
+  native JS engine vulnerabilities are outside these API-level guarantees.
+  Unsupported platforms fail closed when the optional mode is enabled.
 - Checked: 2026-10-21
 
 ## Codex unified exec model-facing contract

@@ -100,6 +100,51 @@ func TestToolsReturnsSnapshot(t *testing.T) {
 	}
 }
 
+func TestCodeModeToolIsCoreOptIn(t *testing.T) {
+	cfg := config.Default()
+	cfg.CodeMode.Enabled = true
+	ws, err := workspace.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Workspace.Root = ws.Root()
+	s := New(cfg, ws)
+	if len(s.Tools()) != 11 || s.Tools()[10].Name != "code" {
+		t.Fatalf("enabled Core should expose eleven tools: %+v", s.Tools())
+	}
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	ctx := context.Background()
+	client := mcp.NewClient(&mcp.Implementation{Name: "miodesk-code-mode-test", Version: "test"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp", HTTPClient: ts.Client(), DisableStandaloneSSE: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	listed, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Tools) != 11 {
+		t.Fatalf("tool list len=%d, want 11", len(listed.Tools))
+	}
+	found := false
+	for _, tl := range listed.Tools {
+		if tl.Name == "code" {
+			found = true
+			if tl.Annotations == nil || !tl.Annotations.ReadOnlyHint || tl.Annotations.DestructiveHint == nil || *tl.Annotations.DestructiveHint {
+				t.Errorf("code tool annotations: %+v", tl.Annotations)
+			}
+			if tl.InputSchema == nil || tl.OutputSchema == nil {
+				t.Error("code tool must publish input/output schemas")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("enabled code tool missing from tools/list")
+	}
+}
+
 func TestServerToolListMatchesMetadata(t *testing.T) {
 	s := newTestServer(t)
 	metadata := s.Tools()

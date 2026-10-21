@@ -17,6 +17,9 @@ func TestDefault(t *testing.T) {
 	if cfg.Workspace.Root != "/home/u" {
 		t.Errorf("workspace root = %q, want /home/u", cfg.Workspace.Root)
 	}
+	if cfg.CodeMode.Enabled {
+		t.Error("Code Mode must be off by default")
+	}
 	if cfg.Tunnel.Provider != "local" {
 		t.Errorf("tunnel provider = %q", cfg.Tunnel.Provider)
 	}
@@ -28,6 +31,25 @@ func TestDefault(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config should validate: %v", err)
+	}
+}
+
+func TestCodeModeConfigIsIndependentOfTunnel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg := Default()
+	cfg.CodeMode.Enabled = true
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.CodeMode.Enabled || loaded.Tunnel.Provider != "local" {
+		t.Fatalf("unexpected codemode or tunnel config: %+v", loaded)
+	}
+	if runtime.GOOS == "linux" && loaded.ValidateCore() != nil {
+		t.Fatalf("enabled Code Mode should be supported on Linux: %v", loaded.ValidateCore())
 	}
 }
 

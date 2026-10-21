@@ -54,3 +54,6 @@ jobs:
 
       - name: Test installer
         run: scripts/install-test.sh
+
+      - name: Test optional Code Mode MCP roundtrip
+        run: bash scripts/codemode-smoke/ci.sh

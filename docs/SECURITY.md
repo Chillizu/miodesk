@@ -27,6 +27,25 @@ Common privilege-escalation commands (`sudo`, `doas`, `su`, `pkexec`,
 guardrail, not an account sandbox — treat every MCP client you connect as a
 full agent on this machine.
 
+## Optional Code Mode (Linux)
+
+The `[codemode] enabled = true` setting is an explicit opt-in that adds a
+read-only `code` MCP tool to Core. JavaScript executes in a short-lived Linux
+child process under a 128 MiB data/mmap resource limit; the parent has a
+4-second deadline and accepts at most two workers concurrently. Worker
+stdin/stdout contain size-limited JSON protocol messages, and its environment
+is cleared. **Only** `read`, literal `search`, and `list` can be invoked from
+JavaScript; these are independently revalidated and executed by the trusted
+Core against `workspace.root`.
+
+This is process/resource containment with a strict host-API allowlist, **not
+an OS filesystem/container sandbox**. The child runs as the same Unix user;
+a vulnerability in the native JavaScript engine could escape its intended API
+surface. Therefore the optional tool is disabled by default, cannot execute
+shell or file writes, and should not be exposed to third-party untrusted code
+without additional kernel-level isolation. Code Mode is not tied to the OpenAI
+Tunnel: tunnel/transport controls remain separate from the Core tool policy.
+
 ## Trust levels
 
 | mode (`[remote]` in config.toml) | who can reach the tools | when to use |
