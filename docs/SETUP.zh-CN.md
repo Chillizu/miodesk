@@ -93,12 +93,15 @@ HTTP 服务；详见 [README](../README.zh-CN.md)。
    Tunnels Read + Use，ChatGPT 自定义 MCP 访问权限另行决定。
 2. 从官方来源安装 `tunnel-client`，先检查
    `tunnel-client help quickstart` 的当前参数。
-3. 让用户**仅在本机**创建 runtime API key 文件。不把密钥文本发给
-   ChatGPT、写进命令参数、配置仓库或公共日志。
-   Linux/macOS 需设置 `chmod 600 /absolute/path/to/runtime-key`；
-   Windows 则检查文件实际 ACL 权限。
+3. 首次配置最省事的做法是使用
+   [Agent 指南中的单块交互式凭据命令](AGENT_SETUP.zh-CN.md#3-chatgpt-专属官方-secure-mcp-tunnel)：
+   在**本机终端**询问 Tunnel ID，隐藏输入 runtime key，并自动创建
+   私有文件及调用已有 `miodesk setup`。不需要把密钥文本发给 ChatGPT。
+   Unix 文件权限为 0600；Windows 先限制当前用户 ACL，再写入密钥。
+   原有的 `miodesk setup --interactive` 向导**继续支持**，适合已有
+   私有密钥文件的用户（它询问的是路径，而非密钥正文）。
 
-在已有 Core 配置基础上：
+如果已经创建了密钥文件，可使用下列手动配置方式：
 
 ```sh
 miodesk setup \

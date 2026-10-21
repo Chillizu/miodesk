@@ -25,7 +25,9 @@
 
 In an ordinary ChatGPT chat, paste the following. ChatGPT can **read the public setup guide over the web and walk you through installation**; it cannot operate your local computer until miodesk is actually connected.
 
-> Read **https://raw.githubusercontent.com/Chillizu/miodesk/main/docs/AGENT_SETUP.md** and guide me through installing miodesk and connecting it to my ChatGPT, one verified step at a time. First ask which operating system and CPU architecture I use (provide a safe copyable check if I don't know), then ask whether I want local MCP or ChatGPT via the official Secure MCP Tunnel and which trusted workspace to share. Give me OS-appropriate commands, explain their effects, check my redacted outputs, never request secrets in chat, and do not claim success before an actual miodesk tool call works in ChatGPT. Only **after the connection succeeds**, ask if I want persistent services or optional features. If you cannot access the guide, ask me to paste its contents.
+```text
+Read https://raw.githubusercontent.com/Chillizu/miodesk/main/docs/AGENT_SETUP.md and guide me step by step to install miodesk and use it in ChatGPT. Give me one copyable command block at a time.
+```
 
 **[Agent setup guide](docs/AGENT_SETUP.md) · [中文版引导提示词](README.zh-CN.md#用-chatgpt-一句话引导安装)**
 

@@ -23,7 +23,9 @@ Linux 上另有默认关闭的**实验性 Code Mode**（只读 JavaScript 工具
 还没连接 miodesk，也可以在**普通 ChatGPT 聊天**中直接粘贴这段提示词。
 ChatGPT 阅读公开的 Agent 指南后，引导你在**自己的电脑**上逐步安装：
 
-> 阅读 https://raw.githubusercontent.com/Chillizu/miodesk/main/docs/AGENT_SETUP.zh-CN.md ，请一步一步帮助我安装 miodesk，并最终在当前 ChatGPT 中使用。先问我的操作系统、CPU 架构（如果不知道就给我可复制的只读检测命令），再问我想使用本地 MCP 还是通过官方 OpenAI Secure MCP Tunnel 连接 ChatGPT，以及打算分享哪个可信项目文件夹。根据系统给我能直接复制的安装和检查命令，每一步根据我贴回的**脱敏输出**判断是否成功；不要让我在聊天中提供 API 密钥，不要声称你能直接操作我的电脑。必须等到我在 ChatGPT 中真实调用成功 miodesk 的工具，才算安装完成。**连接成功后**再讨论开机常驻、systemd 和实验性功能。如果打不开文档，告诉我并请我粘贴正文。
+```text
+阅读 https://raw.githubusercontent.com/Chillizu/miodesk/main/docs/AGENT_SETUP.zh-CN.md ，一步步指导我安装 miodesk 并连接到 ChatGPT，每次给我一整块可以复制执行的命令。
+```
 
 [中文 Agent 安装手册](docs/AGENT_SETUP.zh-CN.md) · [English prompt](README.md#one-prompt-setup-with-chatgpt-no-connector-needed-yet)
 

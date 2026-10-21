@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Shortened both README ChatGPT installation prompts into one copyable code
+  block. The bilingual Agent guides now provide a full command block per
+  verified step, including Unix/Windows local interactive Tunnel ID and
+  hidden runtime-key entry; scripts store only private local key files and
+  use the existing `miodesk setup` flags. The original `setup --interactive`
+  wizard remains available and covered by its existing regression tests; no
+  extra key-management CLI was added.
+
 - Added bilingual, **agent-assisted setup**: English and Chinese READMEs,
   step-by-step prompt/runbooks for ordinary ChatGPT web conversations, and
   paired setup, ChatGPT, Code Mode and security guides. Guides separate

@@ -9,9 +9,15 @@ before the assistant has access to the user's computer. The Chinese version is
 ## Instructions for the assistant
 
 You are a **guide, not a connected terminal**. Reading a web page cannot run
-shell commands on the user's computer or configure their ChatGPT account. Give
-small copyable commands and inspect **redacted** output the user pastes. Never
-claim a command ran or ChatGPT is connected until evidence proves it.
+shell commands on the user's computer or configure their ChatGPT account. At
+each checkpoint, give **one complete, OS-specific copyable code block** that
+performs that checkpoint and reports its status; do not scatter a single step
+across many unrelated snippets or make users manually edit configuration
+files. Explain prerequisites in one or two sentences, let the user run the
+block, then inspect **redacted** output before presenting the next. Ask for
+manual web UI actions only when there is no supported CLI (e.g. Platform
+Tunnel creation and ChatGPT app approval). Never claim a command ran or
+ChatGPT is connected until evidence proves it.
 
 **Conversation sequence (one stage at a time):**
 
@@ -182,22 +188,91 @@ private custom MCP plugins.
 2. Install the official OpenAI `tunnel-client` from its current release
    link / Platform UI, not from an unverified mirror. Confirm
    `tunnel-client help quickstart` is available.
-3. Have the user store the runtime key in a **local private file**, never in
-   chat, the shell history, command parameters, screenshots or the repo. On
-   Unix set `chmod 600 /absolute/path/to/runtime-key`; on Windows set suitable
-   per-user ACLs and check the permissions locally.
-4. With the official client available, configure the miodesk profile:
+3. **One copyable terminal block:** ask the user to paste **the block for their OS below** into their own terminal. It interactively asks for the Tunnel ID, accepts the runtime API key **without echo**, writes it to a private local file (Unix mode 0600 / Windows user-only ACL), and invokes existing `miodesk setup` with **only the ID and key-file path**. No key content should enter the chat, command history, or miodesk config.toml. The blocks refuse to replace an existing key file; for key rotation, stop and plan that separately. The Tunnel must already exist and the official tunnel-client must already be installed. The commands do not install services or restart anything.
 
-   ```sh
-   miodesk setup --tunnel-id tunnel_YOUR_ID --runtime-key-file /absolute/path/to/runtime-key
+   **Linux / macOS (one block):**
+
+   ```bash
+   # Paste this whole block into a local Linux/macOS terminal, after installing
+   # the official tunnel-client and creating the Tunnel in OpenAI Platform.
+   bash <<'BASH'
+   set -euo pipefail
+   command -v miodesk >/dev/null || { echo 'Install miodesk first.'; exit 1; }
+   command -v tunnel-client >/dev/null || { echo 'Install the official tunnel-client first.'; exit 1; }
+   key_dir="${XDG_CONFIG_HOME:-$HOME/.config}/miodesk"
+   key_file="$key_dir/openai-runtime-key"
+   umask 077
+   mkdir -p "$key_dir"
+   chmod 700 "$key_dir"
+   if [[ -e "$key_file" || -L "$key_file" ]]; then
+     echo "Key file already exists: $key_file (will not overwrite it)."
+     exit 1
+   fi
+   read -r -p 'Tunnel ID (tunnel_...): ' tunnel_id </dev/tty
+   [[ "$tunnel_id" == tunnel_* ]] || { echo 'Invalid Tunnel ID.'; exit 1; }
+   read -r -s -p 'Runtime API key (hidden): ' runtime_key </dev/tty
+   printf '\n' >/dev/tty
+   [[ -n "$runtime_key" ]] || { echo 'Empty runtime key.'; exit 1; }
+   if ! (set -C; printf '%s' "$runtime_key" > "$key_file"); then
+     unset runtime_key
+     echo 'Could not safely create the key file.'; exit 1
+   fi
+   unset runtime_key
+   chmod 600 "$key_file"
+   miodesk setup --tunnel-id "$tunnel_id" --runtime-key-file "$key_file"
    miodesk doctor
-   tunnel-client doctor --profile miodesk --explain
+   BASH
    ```
 
-   For Windows, use `& $miodesk setup ...` and an existing local key path.
-   miodesk delegates the profile format to the official client. If
-   initialization fails, inspect the **non-secret** error and the current
-   official client's help; don't manually invent profile YAML or log the key.
+   **Windows x64 PowerShell (one block):**
+
+   ```powershell
+   # Paste this entire block into Windows PowerShell on your own computer.
+   & {
+     $ErrorActionPreference = 'Stop'
+     $miodesk = Join-Path $env:LOCALAPPDATA 'Programs\miodesk\miodesk.exe'
+     if (!(Test-Path -LiteralPath $miodesk)) { throw 'Install miodesk first.' }
+     if (!(Get-Command tunnel-client -ErrorAction SilentlyContinue)) { throw 'Install the official tunnel-client first.' }
+     $configBase = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $HOME '.config' }
+     $keyDir = Join-Path $configBase 'miodesk'
+     $keyFile = Join-Path $keyDir 'openai-runtime-key'
+     New-Item -ItemType Directory -Path $keyDir -Force | Out-Null
+     if (Test-Path -LiteralPath $keyFile) { throw "Existing key file: $keyFile (not overwritten)." }
+     $stream = [IO.File]::Open($keyFile, [IO.FileMode]::CreateNew)
+     $stream.Dispose()
+     try {
+       # Lock down the empty file BEFORE any secret bytes are written.
+       $acl = [Security.AccessControl.FileSecurity]::new()
+       $acl.SetAccessRuleProtection($true, $false)
+       $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+       $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+         $sid, [Security.AccessControl.FileSystemRights]::FullControl,
+         [Security.AccessControl.AccessControlType]::Allow)
+       $acl.AddAccessRule($rule)
+       Set-Acl -LiteralPath $keyFile -AclObject $acl -ErrorAction Stop
+       $tunnelId = Read-Host 'Tunnel ID (tunnel_...)'
+       if (!$tunnelId.StartsWith('tunnel_')) { throw 'Invalid Tunnel ID.' }
+       $secure = Read-Host 'Runtime API key (hidden)' -AsSecureString
+       $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+       try {
+         $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+         if ([string]::IsNullOrWhiteSpace($plain)) { throw 'Empty runtime key.' }
+         [IO.File]::WriteAllText($keyFile, $plain, [Text.UTF8Encoding]::new($false))
+       } finally {
+         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+         $plain = $null
+       }
+       & $miodesk setup --tunnel-id $tunnelId --runtime-key-file $keyFile
+       if ($LASTEXITCODE -ne 0) { throw 'miodesk setup failed. See the error above.' }
+       & $miodesk doctor
+     } catch {
+       Remove-Item -LiteralPath $keyFile -Force -ErrorAction SilentlyContinue
+       throw
+     }
+   }
+   ```
+
+4. The private profile is created by **the existing miodesk setup implementation** using the official tunnel-client; there is no separate `tunnel key set` command. Users who prefer an interactive wizard may instead run `miodesk setup --interactive` **after** creating their own private key file: it asks for workspace, port, Tunnel ID and key-file path, and must remain supported. If profile initialization fails, inspect only the **redacted** error and current official client's help; do not manually invent profile YAML or paste the secret into the conversation.
 5. Run `tunnel-client run --profile miodesk` in a **separate** terminal while
    Core is running, or (only if no previous Core instance is running) use
    `miodesk connect` as the combined foreground mode. Confirm tunnel

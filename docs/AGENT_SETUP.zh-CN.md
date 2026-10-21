@@ -7,9 +7,13 @@ English: [AGENT_SETUP.md](AGENT_SETUP.md)。项目：
 ## 给 ChatGPT 的工作规则
 
 你是用户的**远程安装引导员**，不是已经连到用户电脑的终端。网页阅读
-不会自动获得本地文件／命令执行权限。一次只推进一个阶段，
-提供可复制的命令，让用户在本机执行后贴回**已脱敏**的输出。
-只有观察到真实的 MCP 工具响应，才可宣告连接成功。
+不会自动获得本地文件／命令执行权限。**每次只做一个检查点，每个
+检查点提供一整块对应系统、可以复制执行的代码**，由同一块命令完成
+该步的动作和必要检查；不要把单个步骤拆成多个零散命令，也不要让
+用户手动编辑配置文件。简要解释用途，等用户执行并贴回**脱敏结果**后
+再给下一块。仅当确实没有 CLI 能替代时才引导用户手动操作网页 UI
+（例如 Platform 创建 Tunnel、ChatGPT 审批 App）。只有观察到真实
+的 MCP 工具响应，才可宣告连接成功。
 
 请按以下顺序与用户交互：
 
@@ -170,21 +174,91 @@ miodesk status
    另行受工作区与账户控制。
 2. 只从官方 Platform 入口或官方 `openai/tunnel-client` Release
    安装 `tunnel-client`，检查 `tunnel-client help quickstart`。
-3. 用户把 runtime API key **保存在本机私有文件**，绝不发到聊天。
-   Unix 文件用 `chmod 600 /absolute/path/to/runtime-key`；
-   Windows 要检查实际用户 ACL。不要放在仓库、命令参数、
-   截图或公开日志中。
-4. 在已有 miodesk 工作区配置上设置官方 profile：
+3. **一次复制、一处输入：** 让用户在自己的终端粘贴下面**对应系统的整块指令**。命令会在终端询问 Tunnel ID，再**隐藏输入** runtime API key；将密钥保存到本机私有文件（Unix 权限 0600／Windows 当前用户 ACL），最后调用已有 `miodesk setup`，只传 ID 和密钥**文件路径**。不要把密钥正文发到 ChatGPT，也不要写进命令行历史、配置文件或仓库。若密钥文件已经存在，指令会拒绝覆盖；密钥轮换应单独确认。必须事先在 Platform 创建好 Tunnel 并安装官方 `tunnel-client`。这一步不会安装常驻服务或重启任何进程。
 
-   ```sh
-   miodesk setup --tunnel-id tunnel_YOUR_ID --runtime-key-file /absolute/path/to/runtime-key
+   **Linux / macOS（复制整个代码块）：**
+
+   ```bash
+   # Paste this whole block into a local Linux/macOS terminal, after installing
+   # the official tunnel-client and creating the Tunnel in OpenAI Platform.
+   bash <<'BASH'
+   set -euo pipefail
+   command -v miodesk >/dev/null || { echo 'Install miodesk first.'; exit 1; }
+   command -v tunnel-client >/dev/null || { echo 'Install the official tunnel-client first.'; exit 1; }
+   key_dir="${XDG_CONFIG_HOME:-$HOME/.config}/miodesk"
+   key_file="$key_dir/openai-runtime-key"
+   umask 077
+   mkdir -p "$key_dir"
+   chmod 700 "$key_dir"
+   if [[ -e "$key_file" || -L "$key_file" ]]; then
+     echo "Key file already exists: $key_file (will not overwrite it)."
+     exit 1
+   fi
+   read -r -p 'Tunnel ID (tunnel_...): ' tunnel_id </dev/tty
+   [[ "$tunnel_id" == tunnel_* ]] || { echo 'Invalid Tunnel ID.'; exit 1; }
+   read -r -s -p 'Runtime API key (hidden): ' runtime_key </dev/tty
+   printf '\n' >/dev/tty
+   [[ -n "$runtime_key" ]] || { echo 'Empty runtime key.'; exit 1; }
+   if ! (set -C; printf '%s' "$runtime_key" > "$key_file"); then
+     unset runtime_key
+     echo 'Could not safely create the key file.'; exit 1
+   fi
+   unset runtime_key
+   chmod 600 "$key_file"
+   miodesk setup --tunnel-id "$tunnel_id" --runtime-key-file "$key_file"
    miodesk doctor
-   tunnel-client doctor --profile miodesk --explain
+   BASH
    ```
 
-   Windows 使用 `& $miodesk setup ...`，其中密钥位置换成真实
-   本地文件路径。miodesk 把 profile 格式交给官方客户端处理；
-   失败时看脱敏诊断与当前帮助，不手工猜 YAML 格式。
+   **Windows x64 PowerShell（复制整个代码块）：**
+
+   ```powershell
+   # Paste this entire block into Windows PowerShell on your own computer.
+   & {
+     $ErrorActionPreference = 'Stop'
+     $miodesk = Join-Path $env:LOCALAPPDATA 'Programs\miodesk\miodesk.exe'
+     if (!(Test-Path -LiteralPath $miodesk)) { throw 'Install miodesk first.' }
+     if (!(Get-Command tunnel-client -ErrorAction SilentlyContinue)) { throw 'Install the official tunnel-client first.' }
+     $configBase = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $HOME '.config' }
+     $keyDir = Join-Path $configBase 'miodesk'
+     $keyFile = Join-Path $keyDir 'openai-runtime-key'
+     New-Item -ItemType Directory -Path $keyDir -Force | Out-Null
+     if (Test-Path -LiteralPath $keyFile) { throw "Existing key file: $keyFile (not overwritten)." }
+     $stream = [IO.File]::Open($keyFile, [IO.FileMode]::CreateNew)
+     $stream.Dispose()
+     try {
+       # Lock down the empty file BEFORE any secret bytes are written.
+       $acl = [Security.AccessControl.FileSecurity]::new()
+       $acl.SetAccessRuleProtection($true, $false)
+       $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+       $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+         $sid, [Security.AccessControl.FileSystemRights]::FullControl,
+         [Security.AccessControl.AccessControlType]::Allow)
+       $acl.AddAccessRule($rule)
+       Set-Acl -LiteralPath $keyFile -AclObject $acl -ErrorAction Stop
+       $tunnelId = Read-Host 'Tunnel ID (tunnel_...)'
+       if (!$tunnelId.StartsWith('tunnel_')) { throw 'Invalid Tunnel ID.' }
+       $secure = Read-Host 'Runtime API key (hidden)' -AsSecureString
+       $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+       try {
+         $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+         if ([string]::IsNullOrWhiteSpace($plain)) { throw 'Empty runtime key.' }
+         [IO.File]::WriteAllText($keyFile, $plain, [Text.UTF8Encoding]::new($false))
+       } finally {
+         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+         $plain = $null
+       }
+       & $miodesk setup --tunnel-id $tunnelId --runtime-key-file $keyFile
+       if ($LASTEXITCODE -ne 0) { throw 'miodesk setup failed. See the error above.' }
+       & $miodesk doctor
+     } catch {
+       Remove-Item -LiteralPath $keyFile -Force -ErrorAction SilentlyContinue
+       throw
+     }
+   }
+   ```
+
+4. 官方 profile 由**现有的 miodesk setup 实现**调用官方 `tunnel-client` 建立，不需要新增 `tunnel key set` 命令。喜欢传统向导的用户，也可以先自行创建私有密钥文件，再运行 `miodesk setup --interactive`：向导会询问工作区、端口、Tunnel ID 和密钥文件路径，仍是长期支持的安装方式。失败时只查看**脱敏**错误和官方帮助，不手工猜 YAML、不向聊天粘贴密钥。
 5. Core 前台运行时，在另一终端执行
    `tunnel-client run --profile miodesk`，确认它确实 ready 且
    在轮询 OpenAI。没有现存 Core 的情况下，也可以使用兼容性的

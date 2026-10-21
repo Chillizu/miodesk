@@ -82,8 +82,15 @@ existing configuration.
 
 OpenAI Platform provides the tunnel ID and runtime API key. The tunnel must be
 associated with the intended ChatGPT workspace and Platform organization as
-described by OpenAI's guide. Save the runtime key in a user-only file. On Unix
-systems:
+described by OpenAI's guide. For the simplest first-time path, follow the
+[one-block, OS-specific interactive credential setup](AGENT_SETUP.md#chatgpt-only-stage-official-secure-mcp-tunnel): it prompts for Tunnel ID,
+reads the runtime key without echo, saves it locally with private permissions,
+and calls the existing setup command. No credentials need to be pasted into
+ChatGPT. The **original** `miodesk setup --interactive` wizard remains
+supported for users who prefer it (it asks for the key-file **path**, never
+the secret itself).
+
+If you already created a private key file, on Unix systems:
 
 ```sh
 chmod 600 /absolute/path/to/openai-runtime-key
