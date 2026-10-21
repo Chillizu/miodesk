@@ -20,9 +20,16 @@ go build -buildvcs=false -o "$tmp/miodesk" ./cmd/miodesk
 go build -buildvcs=false -o "$tmp/mcp-smoke" ./scripts/mcp-smoke
 export XDG_CONFIG_HOME="$tmp/config" XDG_DATA_HOME="$tmp/data" XDG_STATE_HOME="$tmp/state"
 
-# Redirecting from /dev/null must not trigger the interactive wizard. The
-# workspace root and its configuration are freshly created.
-(cd "$tmp/workspace" && "$tmp/miodesk" setup --workspace "$PWD" </dev/null) >"$tmp/setup.log" 2>&1
+# Preflight is read-only and works before any configuration exists.
+"$tmp/miodesk" preflight --json > "$tmp/preflight.json"
+python3 - "$tmp/preflight.json" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert r['kind']=='preflight' and r['supported_release'] and not r['config_exists']
+print('[OK] read-only preflight before setup')
+PY
+# Explicitly non-interactive setup must not enter the wizard.
+(cd "$tmp/workspace" && "$tmp/miodesk" setup --non-interactive --workspace "$PWD" </dev/null) >"$tmp/setup.log" 2>&1
 grep -q '\[OK\] configuration ready:' "$tmp/setup.log"
 grep -q '\[INFO\] local MCP only' "$tmp/setup.log"
 if grep -Eq 'Workspace root \[|Configure OpenAI Secure MCP Tunnel now \[' "$tmp/setup.log"; then
@@ -30,6 +37,12 @@ if grep -Eq 'Workspace root \[|Configure OpenAI Secure MCP Tunnel now \[' "$tmp/
   exit 1
 fi
 "$tmp/miodesk" doctor >"$tmp/doctor.log"
+"$tmp/miodesk" doctor --json > "$tmp/doctor.json"
+python3 - "$tmp/doctor.json" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert any(c['name']=='mcp' and c['status']=='ok' for c in r['checks'])
+PY
 grep -q '\[OK\] local use: ready' "$tmp/doctor.log"
 test -f "$tmp/config/miodesk/config.toml"
 test ! -e "$tmp/config/tunnel-client"

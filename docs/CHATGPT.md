@@ -1,5 +1,7 @@
 # ChatGPT 连接与插件
 
+**简体中文** · [English](CHATGPT.en.md) · [Agent 引导安装](AGENT_SETUP.zh-CN.md)
+
 miodesk 是独立的本地 MCP Core。它默认监听
 `http://127.0.0.1:8787/mcp`，不要求使用 ChatGPT 或 OpenAI Tunnel。
 

@@ -1,5 +1,7 @@
 # Code Mode (Experimental · Linux)
 
+**English** · [简体中文](CODEMODE.zh-CN.md)
+
 Code Mode was introduced in miodesk **v0.2.2** as an experimental feature.
 It is **disabled by default**, its tool API and limits may change, and it is
 not a security boundary for code provided by unrelated untrusted parties.

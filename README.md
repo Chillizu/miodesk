@@ -4,6 +4,7 @@
 
 <h1 align="center">miodesk</h1>
 <p align="center"><strong>Give your AI assistant a small, local workspace bridge.</strong></p>
+<p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
 
 <p align="center">
   <a href="https://github.com/Chillizu/miodesk/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Chillizu/miodesk/actions/workflows/ci.yml/badge.svg"></a>
@@ -20,6 +21,14 @@
 
 > **Important security distinction:** file tools enforce the workspace boundary, but **shell commands run with your normal OS user permissions** and are not filesystem-sandboxed. Only connect clients you trust. [Security details](docs/SECURITY.md).
 
+## One-prompt setup with ChatGPT (no connector needed yet)
+
+In an ordinary ChatGPT chat, paste the following. ChatGPT can **read the public setup guide over the web and walk you through installation**; it cannot operate your local computer until miodesk is actually connected.
+
+> Read **https://raw.githubusercontent.com/Chillizu/miodesk/main/docs/AGENT_SETUP.md** and guide me through installing miodesk and connecting it to my ChatGPT, one verified step at a time. First ask which operating system and CPU architecture I use (provide a safe copyable check if I don't know), then ask whether I want local MCP or ChatGPT via the official Secure MCP Tunnel and which trusted workspace to share. Give me OS-appropriate commands, explain their effects, check my redacted outputs, never request secrets in chat, and do not claim success before an actual miodesk tool call works in ChatGPT. Only **after the connection succeeds**, ask if I want persistent services or optional features. If you cannot access the guide, ask me to paste its contents.
+
+**[Agent setup guide](docs/AGENT_SETUP.md) · [中文版引导提示词](README.zh-CN.md#用-chatgpt-一句话引导安装)**
+
 ## Quick start · local MCP
 
 **1. Install** (Linux or macOS):
@@ -32,7 +41,17 @@ miodesk version
 
 The installer downloads a platform-specific **GitHub Release**, checks its SHA-256 checksum, and installs it to `~/.local/bin`. It does **not** create services, start processes, modify your project, or configure OpenAI credentials.
 
-Prefer to inspect the script first? [Read install.sh](scripts/install.sh), or download it before running. Windows users can get the `miodesk-windows-amd64.exe` asset from [Releases](https://github.com/Chillizu/miodesk/releases); the shell installer targets Linux/macOS.
+Prefer to inspect the script first? [Read install.sh](scripts/install.sh), or download it before running. Windows x64 users can install from PowerShell with the verified [install.ps1](scripts/install.ps1):
+
+```powershell
+$installer = Join-Path $env:TEMP "miodesk-install.ps1"
+Invoke-WebRequest "https://raw.githubusercontent.com/Chillizu/miodesk/main/scripts/install.ps1" -OutFile $installer
+# Review the downloaded script before running it.
+& $installer
+& "$env:LOCALAPPDATA\\Programs\\miodesk\\miodesk.exe" version
+```
+
+The Windows installer does not modify PATH, policy, startup programs or services. The shell installer targets Linux/macOS; Windows ARM64 has no native published asset.
 
 **2. Choose a workspace and configure it:**
 
@@ -43,7 +62,7 @@ miodesk setup --workspace "$PWD"
 miodesk doctor
 ```
 
-Substitute your own project directory when ready. `setup` stores its canonical path as the allowed workspace root and defaults to **local-only** MCP on port `8787`. Nothing connects to ChatGPT automatically. Without flags, `miodesk setup` opens an interactive wizard **only in a real terminal**.
+Substitute your own project directory when ready. `setup` stores its canonical path as the allowed workspace root and defaults to **local-only** MCP on port `8787`. Nothing connects to ChatGPT automatically. Without flags, `miodesk setup` opens an interactive wizard **only in a real terminal**. Newer development builds also provide `setup --non-interactive --workspace ...` and the read-only `preflight --json` probe; inspect `miodesk help` before using features that have not yet shipped in your installed release.
 
 **3. Start Core:**
 
@@ -95,7 +114,7 @@ miodesk tunnel service install
 miodesk tunnel service start
 ```
 
-Core restarts do **not** require Tunnel restarts, and Tunnel is not needed for local clients. Existing custom units may need a [credential-preserving migration](docs/SETUP.md#4-start-the-connection).
+**For first setup, use foreground Core and Tunnel processes until ChatGPT actually calls `status`.** Permanent systemd services are a separate, optional **post-connection** step; do not install them by default. Core restarts do **not** require Tunnel restarts, and Tunnel is not needed for local clients. Existing custom units may need a [credential-preserving migration](docs/SETUP.md#4-start-the-connection).
 
 ## What can it do?
 
@@ -176,4 +195,4 @@ bash scripts/install-test.sh
 bash scripts/onboarding-test.sh
 ```
 
-See [Security](docs/SECURITY.md), [setup instructions](docs/SETUP.md), [ChatGPT-specific notes](docs/CHATGPT.md), [release checklist](docs/RELEASE.md), and the [changelog](CHANGELOG.md). Licensed under [MPL-2.0](LICENSE).
+See [Agent-guided setup](docs/AGENT_SETUP.md), [Security](docs/SECURITY.md), [device setup](docs/SETUP.md), [ChatGPT-specific notes](docs/CHATGPT.md), [release checklist](docs/RELEASE.md), and the [changelog](CHANGELOG.md). Chinese: [README.zh-CN.md](README.zh-CN.md). Licensed under [MPL-2.0](LICENSE).

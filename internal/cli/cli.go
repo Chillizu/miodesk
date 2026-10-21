@@ -21,6 +21,7 @@ Usage:
 
 Commands:
   setup      configure a local MCP server; optionally add OpenAI tunnel access
+  preflight  inspect OS, architecture and installation prerequisites (read-only)
   init       create the default configuration
   serve      run the local HTTP MCP server
   connect    legacy combined foreground server + tunnel (optional)
@@ -70,6 +71,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runVersion(args[1:], stdout, stderr)
 	case "setup":
 		return runSetup(args[1:], stdout, stderr)
+	case "preflight":
+		return runPreflight(args[1:], stdout, stderr)
 	case "init":
 		return runInit(args[1:], stdout, stderr)
 	case "serve":

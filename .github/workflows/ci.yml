@@ -31,7 +31,7 @@ jobs:
           from pathlib import Path
           import re
           failures = []
-          docs = [Path('README.md'), Path('AGENTS.md'), Path('CHANGELOG.md')]
+          docs = [Path('README.md'), Path('README.zh-CN.md'), Path('AGENTS.md'), Path('CHANGELOG.md')]
           docs += list(Path('docs').rglob('*.md'))
           docs += list(Path('plugins').rglob('*.md'))
           for doc in docs:
@@ -85,3 +85,21 @@ jobs:
 
       - name: Test optional Code Mode MCP roundtrip
         run: bash scripts/codemode-smoke/ci.sh
+
+  windows-onboarding:
+    runs-on: windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Python for a local release fixture
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Test Windows installer and agent setup
+        shell: pwsh
+        run: ./scripts/install-windows-test.ps1

@@ -1,5 +1,7 @@
 # Security Model
 
+**English** · [简体中文](SECURITY.zh-CN.md)
+
 This document describes miodesk's real, implemented security boundaries.
 For implementation references, see `docs/REFERENCES.md`.
 

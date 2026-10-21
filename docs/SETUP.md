@@ -1,13 +1,19 @@
 # Device setup
 
+**English** · [简体中文](SETUP.zh-CN.md) · [Guided setup for AI assistants](AGENT_SETUP.md)
+
 This is the path for a new device. It keeps the local server private and
 makes the OpenAI connection explicit, so a copied repository does not need
 machine-specific paths or hidden background processes.
 
 ## 1. Install miodesk
 
-Use a tagged release binary when possible. Put it somewhere on `PATH` and
-verify it:
+Use a tagged release binary when possible. Linux/macOS users can run the
+[checksum-verifying shell installer](../scripts/install.sh), and Windows x64
+users the [PowerShell installer](../scripts/install.ps1) after reviewing its
+source. The Windows installer doesn't change PATH or provision services;
+use the full binary path it prints. Check the [release assets](https://github.com/Chillizu/miodesk/releases) for platform coverage.
+Put the binary somewhere on `PATH` (or use the full path) and verify it:
 
 ```sh
 miodesk version
@@ -35,6 +41,10 @@ miodesk doctor
 
 The first setup records the current directory as a canonical absolute
 workspace root, uses `127.0.0.1:8787`, and defaults to **local-only MCP**.
+For guided setup, prefer `miodesk setup --workspace /absolute/known/project`
+rather than guessing from the current directory. New development versions
+also implement `setup --non-interactive --workspace ...` and read-only
+`preflight --json`; **v0.2.2 does not**, so check help before using these.
 OpenAI Secure MCP Tunnel is an optional additional client. Setup creates
 only miodesk configuration by default: no package installs, workspace edits,
 services, or network listeners.
@@ -128,8 +138,11 @@ Press `Ctrl-C` to stop both processes. The local endpoint is normally
 `http://127.0.0.1:8787/mcp`; OpenAI receives the connection through the
 outbound tunnel, not through a public listener on that port.
 
-On Linux, install and start Core **independently**, allowing multiple local
-clients to share its MCP endpoint:
+**First verify the foreground connection and a real ChatGPT `status` tool
+call before offering persistent services.** The following is an optional
+post-connection step requiring the user's decision. On Linux, install and
+start Core **independently**, allowing multiple local clients to share its
+MCP endpoint:
 
 ```sh
 miodesk service install

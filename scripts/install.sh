@@ -180,15 +180,21 @@ case ":${PATH:-}:" in
         ;;
 esac
 
+echo
+printf '%s\n' 'Next (the workspace directory must already exist):'
+if "$target" help 2>/dev/null | grep -q '^  preflight '; then
+    echo "  $target preflight --json  # safe system check"
+fi
 cat <<EOF
-
-Next:
-  cd /path/to/workspace
-  $target setup
-  $target doctor
+  $target setup --workspace /absolute/path/to/trusted/project
+  $target doctor --json
   $target serve  # starts local MCP; Ctrl-C to stop
 
-On Linux, after setup is healthy, persistent services are optional:
-  $target service install
-  $target service start
+For ChatGPT, connect the official Tunnel only AFTER Core works:
+  https://github.com/$REPOSITORY/blob/main/docs/AGENT_SETUP.md
 EOF
+if [ "$os" = linux ]; then
+    printf '\n%s\n' 'After ChatGPT connects, persistent systemd services are optional:'
+    echo "  $target service install"
+    echo "  $target service start"
+fi

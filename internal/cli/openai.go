@@ -354,6 +354,7 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	clientFlag := fs.String("tunnel-client", "", "path or command name for tunnel-client")
 	force := fs.Bool("force", false, "allow changing an existing workspace root")
 	interactiveFlag := fs.Bool("interactive", false, "prompt for setup values")
+	nonInteractiveFlag := fs.Bool("non-interactive", false, "never prompt; require --workspace on first configuration (for scripts/AI guidance)")
 	if help, err := parseFlags(fs, args); help {
 		return 0
 	} else if err != nil {
@@ -363,11 +364,15 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	if !requireNoPositional(fs, stderr) {
 		return 2
 	}
+	if *interactiveFlag && *nonInteractiveFlag {
+		errf(stderr, "--interactive and --non-interactive cannot be combined")
+		return 2
+	}
 	if *interactiveFlag && len(args) != 1 {
 		errf(stderr, "--interactive cannot be combined with other setup arguments")
 		return 2
 	}
-	interactive := *interactiveFlag || (len(args) == 0 && stdinIsTerminal())
+	interactive := *interactiveFlag || (!*nonInteractiveFlag && len(args) == 0 && stdinIsTerminal())
 	if interactive && !stdinIsTerminal() {
 		errf(stderr, "interactive setup requires a terminal")
 		hintf(stderr, "use explicit flags for scripts, or run `miodesk setup` in a terminal")
@@ -391,6 +396,11 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		errf(stderr, "%v", err)
 		hintf(stderr, "fix %s, or delete it and run `miodesk setup`", path)
 		return 1
+	}
+	if *nonInteractiveFlag && !existed && *workspaceFlag == "" {
+		errf(stderr, "--non-interactive requires --workspace on first setup to avoid using an unintended directory")
+		hintf(stderr, "pass --workspace with a trusted existing absolute directory")
+		return 2
 	}
 	if interactive {
 		initialWorkspace := cfg.Workspace.Root

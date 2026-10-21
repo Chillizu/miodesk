@@ -1,6 +1,11 @@
 # AGENTS.md — miodesk
 
-Status: v0.2.2 released. The Core exposes ten stable native tools, with an optional **Experimental** Linux-only, read-only Code Mode tool. File operations validate workspace boundaries; shell commands still run with the current user's OS permissions. The OpenAI Secure MCP Tunnel is a separately managed optional client, not part of the execution engine. `internal/adapter` registers native status and invocation labels without MCP Apps UI resources. The three access modes are local / token / unsafe; only local is the default. See `README.md` for onboarding, `docs/SECURITY.md` for trust boundaries, and `docs/REFERENCES.md` for documented external API decisions.
+Status: v0.2.2 released. The Core exposes ten stable native tools, with an optional **Experimental** Linux-only, read-only Code Mode tool. File operations validate workspace boundaries; shell commands still run with the current user's OS permissions. The OpenAI Secure MCP Tunnel is a separately managed optional client, not part of the execution engine. `internal/adapter` registers native status and invocation labels without MCP Apps UI resources. The three access modes are local / token / unsafe; only local is the default. See `README.md` / `README.zh-CN.md` for onboarding; `docs/AGENT_SETUP.md` /
+`docs/AGENT_SETUP.zh-CN.md` for a **plain web-reading ChatGPT's** guided
+first-run flow before it can call local tools; `docs/SECURITY.md` for trust
+boundaries; `docs/REFERENCES.md` for external API decisions. Never imply a
+web-only chat can run local commands or that local Core health means ChatGPT
+has a live MCP connection.
 
 ## What this is
 

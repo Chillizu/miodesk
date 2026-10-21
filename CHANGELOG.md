@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Added bilingual, **agent-assisted setup**: English and Chinese READMEs,
+  step-by-step prompt/runbooks for ordinary ChatGPT web conversations, and
+  paired setup, ChatGPT, Code Mode and security guides. Guides separate
+  pre-connection human-led installation from post-connection actions; only a
+  verified ChatGPT-side MCP tool call completes remote onboarding.
+- Added a read-only cross-platform `miodesk preflight --json` probe and an
+  explicit `setup --non-interactive` flag (first run requires a trusted
+  `--workspace`). The default ten native MCP tools remain unchanged.
+- Added a SHA-256-verifying Windows x64 PowerShell installer with no implicit
+  PATH, policy, service or registry edits, and Windows CI for installation,
+  CLI diagnostics and checksum failure rollback. Unix installer output now
+  links to the agent setup path and offers persistence only after connection.
+  These additions are on `main` until the next tagged release; v0.2.2 users
+  can still follow the documented stable `setup --workspace` flow.
+
 - Increased the Experimental Linux Code Mode worker's RLIMIT_DATA from
   128 MiB to 256 MiB to allow for allocator/runtime differences on CI runners
   while retaining a finite per-process budget; made MCP smoke errors show
