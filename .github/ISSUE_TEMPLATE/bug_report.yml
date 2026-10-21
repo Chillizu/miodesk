@@ -1,0 +1,73 @@
+name: "Bug report / 问题反馈"
+description: "Report an installation, connection, or runtime issue / 安装或运行故障"
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you! / 感谢反馈！
+        **Do not paste secrets, tunnel runtime keys, full config files, or unredacted logs.**
+        **不要粘贴密钥、完整配置文件、未脱敏的日志或私人路径。**
+        For a possible security vulnerability, use [private vulnerability reporting](https://github.com/Chillizu/miodesk/security/advisories/new), **not** a public issue.
+        安全漏洞请通过私密渠道报告。
+  - type: dropdown
+    id: stage
+    attributes:
+      label: "Where did it fail? / 哪一步失败？"
+      options:
+        - "Installation / 安装下载"
+        - "Initial setup or doctor / 首次配置"
+        - "Local Core / 本地 MCP"
+        - "OpenAI Tunnel / Tunnel"
+        - "ChatGPT app connection / ChatGPT 连接"
+        - "Experimental Code Mode / 实验性 Code Mode"
+        - "Upgrade or service / 更新或常驻"
+        - "Other / 其他"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: "Operating system and architecture / 系统和架构"
+      placeholder: "e.g. Windows 11 x64 / Ubuntu 24.04 arm64"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: "miodesk version / 版本"
+      description: "Use `miodesk version` (or the executable's full path)."
+      placeholder: "0.2.3 (commit …)"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected vs actual / 预期与实际"
+      placeholder: "What did you expect? What happened instead? / 预期行为与实际结果"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Minimal reproduction / 最小复现步骤"
+      description: "Include only the relevant commands, with paths, IDs and tokens replaced by placeholders. / 请脱敏"
+      placeholder: "1. …\n2. …"
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: "Optional redacted diagnostics / 可选脱敏诊断"
+      description: "Consider `miodesk doctor --json` and `miodesk preflight --json` on supported versions. Inspect and redact before posting. **Never** upload complete logs, tokens, IDs, home paths, or private files."
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: "Privacy check / 隐私检查"
+      options:
+        - label: "I checked that my report contains no secrets or personal workspace data. / 已核查不含密钥和私有数据"
+          required: true

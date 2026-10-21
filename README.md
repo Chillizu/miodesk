@@ -29,7 +29,7 @@ In an ordinary ChatGPT chat, paste the following. ChatGPT can **read the public 
 Read https://raw.githubusercontent.com/Chillizu/miodesk/main/docs/AGENT_SETUP.md and guide me step by step to install miodesk and use it in ChatGPT. Give me one copyable command block at a time.
 ```
 
-**[Agent setup guide](docs/AGENT_SETUP.md) · [中文版引导提示词](README.zh-CN.md#用-chatgpt-一句话引导安装)**
+**[Agent setup guide](docs/AGENT_SETUP.md) · [Feedback](docs/FEEDBACK.md) · [中文版引导提示词](README.zh-CN.md#用-chatgpt-一句话引导安装)**
 
 ## Quick start · local MCP
 
@@ -64,7 +64,7 @@ miodesk setup --workspace "$PWD"
 miodesk doctor
 ```
 
-Substitute your own project directory when ready. `setup` stores its canonical path as the allowed workspace root and defaults to **local-only** MCP on port `8787`. Nothing connects to ChatGPT automatically. Without flags, `miodesk setup` opens an interactive wizard **only in a real terminal**. Newer development builds also provide `setup --non-interactive --workspace ...` and the read-only `preflight --json` probe; inspect `miodesk help` before using features that have not yet shipped in your installed release.
+Substitute your own project directory when ready. `setup` stores its canonical path as the allowed workspace root and defaults to **local-only** MCP on port `8787`. Nothing connects to ChatGPT automatically. Without flags, `miodesk setup` opens an interactive wizard **only in a real terminal**. Since **v0.2.3**, `setup --non-interactive --workspace ...` explicitly disables prompts and `preflight --json` provides read-only system checks. Earlier versions still support `setup --workspace ...`.
 
 **3. Start Core:**
 
@@ -187,6 +187,10 @@ The source build is not the same as a verified, versioned Release asset; review 
 | ChatGPT does not show new tools | Refresh the registered MCP app's tool list; Tunnel does not refresh ChatGPT schemas |
 | Tunnel does not connect | Run `miodesk tunnel doctor` and follow [the setup guide](docs/SETUP.md) |
 | Need logs | Run `miodesk logs --follow` (systemd) or inspect foreground terminal output |
+
+## Feedback & bug reports
+
+Found a setup blocker or connection problem? **[Report a bug](https://github.com/Chillizu/miodesk/issues/new?template=bug_report.yml)** or **[suggest an improvement](https://github.com/Chillizu/miodesk/issues/new?template=feature_request.yml)**. Include your platform, version and the first failed step, but **redact secrets, Tunnel IDs, paths and private logs**. For vulnerabilities use [private security reporting](https://github.com/Chillizu/miodesk/security/advisories/new). [Feedback guide / 中文反馈指引](docs/FEEDBACK.md).
 
 ## Development
 

@@ -1,0 +1,36 @@
+name: "Feature request / 功能建议"
+description: "Suggest a simpler workflow or a new capability / 使用体验与功能建议"
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: "What problem are you trying to solve? / 希望解决什么问题？"
+      description: "Describe the situation rather than an implementation. / 先说实际使用场景"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "Suggestion / 建议"
+      description: "Include what the user experience should look like. / 期望怎样操作会更顺畅"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Area / 范围"
+      options:
+        - "Installation / 安装"
+        - "ChatGPT and Tunnel / 连接"
+        - "MCP tools / 工具"
+        - "Documentation / 文档"
+        - "Experimental Code Mode / 实验功能"
+        - "Other / 其他"
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include credentials or private config data. / 不要上传密钥或私有配置。

@@ -26,8 +26,8 @@ English: [SECURITY.md](SECURITY.md)。
 默认关闭。它在单独的、资源受限的 Goja JavaScript Worker 中组合
 `read/search/list`，由 Core 校验每个工具请求，不暴露写入和 Shell API。
 
-`v0.2.2` 的 Worker Linux `RLIMIT_DATA` 上限为 **128 MiB**；
-较新的 `main` 为 **256 MiB**。每次最多执行 2 秒 JS，整体
+`v0.2.3` 起 Worker Linux `RLIMIT_DATA` 上限为 **256 MiB**；
+旧版 v0.2.2 为 **128 MiB**。每次最多执行 2 秒 JS，整体
 请求限时 4 秒，最多两个并发 Worker，并有源码、消息、结果大小限制。
 
 **这不是完整的 OS 文件系统或容器沙箱。** 子进程仍以和 Core
@@ -75,8 +75,7 @@ ChatGPT 自定义 MCP 的文档化认证方式可能与该模式不同，
 
 ## 事件报告
 
-如认为 miodesk 存在安全问题，先通过 GitHub Issue
-说明可复现条件，并尽量避免在问题确认前公开可直接利用的敏感细节。
+发现安全漏洞时请使用 [GitHub 私密漏洞报告](https://github.com/Chillizu/miodesk/security/advisories/new)，**不要公开漏洞利用细节、密钥或敏感日志**。一般使用问题可提交[普通 Bug 反馈](https://github.com/Chillizu/miodesk/issues/new?template=bug_report.yml)。
 
 更多：[安装引导](AGENT_SETUP.zh-CN.md)、
 [Core/Tunnel 设备配置](SETUP.zh-CN.md)、[英文安全原文](SECURITY.md)。

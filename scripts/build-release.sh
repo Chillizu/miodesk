@@ -5,7 +5,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-VERSION="${1:-0.2.2-dev}"
+VERSION="${1:-0.2.3-dev}"
 VERSION="${VERSION#v}"
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
   echo "error: version must look like 1.2.3 or 1.2.3-rc1" >&2
@@ -20,7 +20,7 @@ REPOSITORY="${REPOSITORY:-Chillizu/miodesk}"
 mkdir -p dist
 # Only remove artifacts owned by this script. Other files in dist/ are left
 # alone so a local checkout can keep unrelated build outputs there.
-find dist -maxdepth 1 -type f \( -name 'miodesk-*' -o -name 'install.sh' -o -name 'checksums.txt' -o -name 'manifest.json' \) -delete
+find dist -maxdepth 1 -type f \( -name 'miodesk-*' -o -name 'install.sh' -o -name 'install.ps1' -o -name 'checksums.txt' -o -name 'manifest.json' \) -delete
 
 platforms=(linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64)
 for platform in "${platforms[@]}"; do
@@ -35,8 +35,9 @@ for platform in "${platforms[@]}"; do
 done
 
 cp scripts/install.sh dist/install.sh
+cp scripts/install.ps1 dist/install.ps1
 chmod +x dist/install.sh
-(cd dist && sha256sum miodesk-* install.sh > checksums.txt)
+(cd dist && sha256sum miodesk-* install.sh install.ps1 > checksums.txt)
 
 manifest="dist/manifest.json"
 {

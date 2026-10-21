@@ -1,6 +1,6 @@
 {
   "name": "miodesk",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Local workspace tools and session handoffs through a connected miodesk MCP server.",
   "author": {
     "name": "miodesk"

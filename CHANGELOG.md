@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.2.3 — 2026-10-21
+
+- **Feedback improvements:** bilingual GitHub Issue forms for bugs and UX ideas,
+  stage-specific fields, a short redacted-diagnostic guide, and a clear private
+  security-reporting route; no telemetry, automatic uploads, or new runtime
+  permissions were added.
+- **Release usability:** include the SHA-256-verified Windows PowerShell
+  installer as a tagged asset alongside the Linux/macOS script and five binaries.
+
 - Shortened both README ChatGPT installation prompts into one copyable code
   block. The bilingual Agent guides now provide a full command block per
   verified step, including Unix/Windows local interactive Tunnel ID and
@@ -22,8 +31,8 @@
   PATH, policy, service or registry edits, and Windows CI for installation,
   CLI diagnostics and checksum failure rollback. Unix installer output now
   links to the agent setup path and offers persistence only after connection.
-  These additions are on `main` until the next tagged release; v0.2.2 users
-  can still follow the documented stable `setup --workspace` flow.
+  These additions ship in v0.2.3; v0.2.2 users can still follow the
+  documented stable `setup --workspace` flow.
 
 - Increased the Experimental Linux Code Mode worker's RLIMIT_DATA from
   128 MiB to 256 MiB to allow for allocator/runtime differences on CI runners

@@ -27,7 +27,7 @@ ChatGPT 阅读公开的 Agent 指南后，引导你在**自己的电脑**上逐�
 阅读 https://raw.githubusercontent.com/Chillizu/miodesk/main/docs/AGENT_SETUP.zh-CN.md ，一步步指导我安装 miodesk 并连接到 ChatGPT，每次给我一整块可以复制执行的命令。
 ```
 
-[中文 Agent 安装手册](docs/AGENT_SETUP.zh-CN.md) · [English prompt](README.md#one-prompt-setup-with-chatgpt-no-connector-needed-yet)
+[中文 Agent 安装手册](docs/AGENT_SETUP.zh-CN.md) · [遇到问题？](docs/FEEDBACK.md) · [English prompt](README.md#one-prompt-setup-with-chatgpt-no-connector-needed-yet)
 
 **安装的三个检查点：** Core 本地可用 → 官方 Tunnel 连接成功 →
 **ChatGPT 中实际调用 miodesk 工具成功**。前两个检查点不能代替第三个。
@@ -91,11 +91,9 @@ New-Item -ItemType Directory -Force -Path $workspace | Out-Null
 如果不带参数且有真实终端，`miodesk setup` 可进入交互向导。
 **Agent 应优先传入明确的工作区目录**，不要默认开放整个主目录。
 
-新版开发分支还提供只读 `miodesk preflight --json` 和显式
-`miodesk setup --non-interactive --workspace ...`；
-这些不一定已经存在于你下载的发行版里，**先用 `miodesk help`
-和 `miodesk setup -h` 检查**。v0.2.2 的
-`setup --workspace` 已足以避免弹出向导。
+从 **v0.2.3** 起提供只读 `miodesk preflight --json` 和
+`miodesk setup --non-interactive --workspace ...`；旧版的
+`setup --workspace` 也能避免弹出向导。
 
 ### 3. 启动并检查
 
@@ -217,6 +215,10 @@ go test -vet=all ./...
 scripts/release-check.sh
 bash scripts/onboarding-test.sh
 ```
+
+## 反馈与问题报告
+
+安装卡住或连接失败？可直接[提交 Bug 反馈](https://github.com/Chillizu/miodesk/issues/new?template=bug_report.yml)或[提出体验建议](https://github.com/Chillizu/miodesk/issues/new?template=feature_request.yml)。说明系统、版本和出错阶段即可，**不要发布密钥、Tunnel ID、私人路径或原始日志**。安全漏洞请走[私密报告渠道](https://github.com/Chillizu/miodesk/security/advisories/new)。更多见[中英双语反馈指南](docs/FEEDBACK.md)。
 
 [CHANGELOG](CHANGELOG.md) · [安全模型](docs/SECURITY.zh-CN.md) ·
 [发行说明](https://github.com/Chillizu/miodesk/releases) ·

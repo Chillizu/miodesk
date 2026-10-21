@@ -32,7 +32,7 @@ if ([string]::IsNullOrWhiteSpace($BinDir)) {
 if ($Version -ne 'latest') {
   $Version = $Version.TrimStart('v')
   if ($Version -notmatch '^\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$') {
-    throw "Invalid version. Example: 0.2.2"
+    throw "Invalid version. Example: 0.2.3"
   }
 }
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {

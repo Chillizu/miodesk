@@ -32,11 +32,10 @@ English: [AGENT_SETUP.md](AGENT_SETUP.md)。项目：
    校验。提供对应系统的复制命令，说明下载执行前应查看安装脚本；
    然后索取 `miodesk version` 输出确认。
 5. 配置本地工作区，再运行 `miodesk doctor --json`。
-   在 v0.2.2 中稳定支持的无交互方式是
-   `miodesk setup --workspace <绝对路径>`；
-   较新构建另有 `--non-interactive`，以及只读
-   `miodesk preflight --json`。**先查 `miodesk setup -h` 和
-   `miodesk help`，有才使用，不能要求旧版执行不存在的命令。**
+   稳定支持的无交互配置方式是
+   `miodesk setup --workspace <绝对路径>`。从 **v0.2.3** 起还支持
+   `--non-interactive` 和只读的 `miodesk preflight --json`。
+   对旧版不要要求不存在的命令。
 6. **先用前台方式启动** `miodesk serve`，在第二个终端运行
    `miodesk status`，检查本地 `/healthz`。不要在同一端口启动两个 Core，
    也不要此时安装常驻 systemd／计划任务。
@@ -84,7 +83,7 @@ uname -s
 uname -m
 ```
 
-v0.2.2 正式二进制支持：Linux x64/arm64、macOS x64/arm64、Windows
+v0.2.3 正式二进制支持：Linux x64/arm64、macOS x64/arm64、Windows
 **x64**。Windows ARM64 尚无官方原生包，不应擅自保证 x64 模拟可用。
 其他平台请先检查 [Releases](https://github.com/Chillizu/miodesk/releases)。
 
@@ -143,7 +142,7 @@ $miodesk = "$env:LOCALAPPDATA\Programs\miodesk\miodesk.exe"
 `--non-interactive`。如果支持，可改用
 `miodesk setup --non-interactive --workspace ...`；未支持时，
 已有的 `--workspace` 参数本来就不会启动向导。
-较新的构建还支持 `miodesk preflight --json`，用于输出
+**v0.2.3** 起支持 `miodesk preflight --json`，用于只读查询
 系统架构、发行包、配置状态和 Tunnel 客户端是否安装；
 **v0.2.2 不支持此命令**，勿对旧版盲目执行。
 
@@ -305,7 +304,10 @@ miodesk 并未内置对应的后台服务安装功能。
 官方 `tunnel-client` 缺失、密钥文件权限错误、
 本地 8787 端口被占用、Tunnel 无法连出或 ChatGPT 工具调用失败，
 请清楚报告**卡在哪个检查点、实际非敏感错误和下一条安全建议**。
-不得无依据地宣称安装完成。
+不得无依据地宣称安装完成。如仍不能解决，协助用户整理**脱敏**的
+[Bug 反馈](https://github.com/Chillizu/miodesk/issues/new?template=bug_report.yml)，
+可参考[反馈指引](FEEDBACK.md)；只有用户自己决定是否公开提交。
+涉及漏洞时使用[私密安全报告](https://github.com/Chillizu/miodesk/security/advisories/new)，绝不公开利用细节。
 
 相关资料：[英文原版](AGENT_SETUP.md)、
 [完整部署](SETUP.zh-CN.md)、[ChatGPT 指南](CHATGPT.md)、

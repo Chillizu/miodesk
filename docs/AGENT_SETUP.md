@@ -41,11 +41,11 @@ ChatGPT is connected until evidence proves it.
    confirm before running downloaded code, and request `miodesk version`
    (or its full Windows path). Never ask them to paste API keys.
 5. **Configure the local workspace without interactive prompts**, then run
-   `miodesk doctor --json`. From `v0.2.2`, the stable syntax is
-   `miodesk setup --workspace <absolute-existing-directory>`. Newer builds
-   may also support `--non-interactive`; check `miodesk setup -h` before using
-   it. If available, run `miodesk preflight --json` for a secret-free local
-   environment report. Do not use either new flag on a release that lacks it.
+   `miodesk doctor --json`. The stable command is
+   `miodesk setup --workspace <absolute-existing-directory>`. From
+   **v0.2.3**, `--non-interactive` explicitly forbids prompts and
+   `miodesk preflight --json` gives a read-only platform report. On older
+   releases, continue using `setup --workspace` and skip preflight.
 6. **Start and verify local Core** with `miodesk serve` in a dedicated
    terminal, not a background service yet; confirm `/healthz` returns OK
    and/or `miodesk status` reports healthy from another terminal. Don't start
@@ -101,7 +101,7 @@ uname -s
 uname -m
 ```
 
-Official `v0.2.2` assets: Linux x64 / arm64, macOS x64 / arm64,
+Official `v0.2.3` assets: Linux x64 / arm64, macOS x64 / arm64,
 Windows **x64**. Windows ARM64 has no native official artifact; do not
 silently assume that Windows x64 emulation is supported. Unsupported systems
 should stop and review the [release assets](https://github.com/Chillizu/miodesk/releases).
@@ -155,9 +155,9 @@ $miodesk = "$env:LOCALAPPDATA\Programs\miodesk\miodesk.exe"
 & $miodesk serve
 ```
 
-The extra `--non-interactive` switch and `preflight --json` are available on
-newer development builds; **not all published versions have them**. Always
-check `setup -h` and `help` when guiding users of an older Release.
+The extra `--non-interactive` switch and `preflight --json` are published
+in **v0.2.3**. For users on v0.2.2 or earlier, keep using `setup --workspace`
+and skip preflight; check `miodesk version` first.
 On first setup, the workspace folder must already exist; pick a fixed
 loopback port (default 8787), rather than `--port 0` for Tunnel.
 
@@ -326,7 +326,8 @@ explicit side-effect approvals.
   inaccessible key file; unavailable outbound network; local port conflict;
   or failed remote MCP call.
 - Explain **which checkpoint failed**, show the minimal non-secret diagnostic
-  needed, and give one next safe action. Don't falsely report success.
+  needed, and give one next safe action. Don't falsely report success. If
+  blocked, offer to draft a **redacted** [bug report](https://github.com/Chillizu/miodesk/issues/new?template=bug_report.yml) using the [feedback guide](FEEDBACK.md); only the user decides to publish. Route suspected vulnerabilities to [private security reporting](https://github.com/Chillizu/miodesk/security/advisories/new), never public Issues.
 
 The official [README](../README.md), [local device setup](SETUP.md),
 [ChatGPT connection guide](CHATGPT.md), and [security model](SECURITY.md)

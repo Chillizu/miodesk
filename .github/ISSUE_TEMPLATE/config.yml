@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "Getting started / 安装指南"
+    url: "https://github.com/Chillizu/miodesk/blob/main/docs/AGENT_SETUP.md"
+    about: "Step-by-step ChatGPT-assisted setup / 用 ChatGPT 辅助安装"
+  - name: "Private security report / 私密安全报告"
+    url: "https://github.com/Chillizu/miodesk/security/advisories/new"
+    about: "Report vulnerabilities privately; do not disclose exploitable details in a public issue / 请勿公开敏感漏洞"

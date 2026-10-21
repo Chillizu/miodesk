@@ -133,5 +133,4 @@ defensively before displaying journal output.
 
 ## Reporting
 
-If you believe you found a security issue in miodesk, please open an issue
-with reproduction steps and keep exploit details minimal until acknowledged.
+For a possible security vulnerability, use [GitHub private vulnerability reporting](https://github.com/Chillizu/miodesk/security/advisories/new) rather than a public Issue. Do not post exploits, keys or sensitive reproduction details publicly. Regular bugs use the [bug report form](https://github.com/Chillizu/miodesk/issues/new?template=bug_report.yml).

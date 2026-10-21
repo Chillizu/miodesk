@@ -42,9 +42,9 @@ miodesk doctor
 The first setup records the current directory as a canonical absolute
 workspace root, uses `127.0.0.1:8787`, and defaults to **local-only MCP**.
 For guided setup, prefer `miodesk setup --workspace /absolute/known/project`
-rather than guessing from the current directory. New development versions
-also implement `setup --non-interactive --workspace ...` and read-only
-`preflight --json`; **v0.2.2 does not**, so check help before using these.
+rather than guessing from the current directory. Since **v0.2.3** you can
+also use `setup --non-interactive --workspace ...` and read-only
+`preflight --json`. On v0.2.2, use `setup --workspace`.
 OpenAI Secure MCP Tunnel is an optional additional client. Setup creates
 only miodesk configuration by default: no package installs, workspace edits,
 services, or network listeners.

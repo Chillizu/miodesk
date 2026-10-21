@@ -32,9 +32,8 @@ miodesk version
 miodesk help
 ```
 
-在较新的开发版本中，`miodesk preflight --json` 是无需工作区配置的只读
-平台探测；**v0.2.2 尚未提供这个命令**。请先用 `miodesk help`
-判断是否支持。
+从 **v0.2.3** 起，`miodesk preflight --json` 是无需工作区配置的
+只读平台探测。**v0.2.2 尚未提供**；可用 `miodesk version` 确认。
 
 ## 2. 选定工作区并配置 Core
 
@@ -57,7 +56,7 @@ $miodesk = "$env:LOCALAPPDATA\Programs\miodesk\miodesk.exe"
 ```
 
 所有明确传入 `--workspace` 的 `setup` 都不进入交互向导；
-开发版本还提供 `--non-interactive` 明确禁止提问。
+v0.2.3 起还提供 `--non-interactive` 明确禁止提问。
 新用户不要使用 `init` 的默认 home workspace 直接提供给不信任的 Agent。
 
 Core 默认端口是 `127.0.0.1:8787`。Tunnel 需要固定端口，

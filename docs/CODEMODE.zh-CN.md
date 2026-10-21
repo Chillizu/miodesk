@@ -52,9 +52,8 @@ async () => {
 
 - **独立进程：** 每次脚本在短生命周期的 JavaScript Worker 中执行，
   不是直接在 Core 主进程中。
-- **Linux 资源限制：** `main` 已把每个 Worker 的
-  `RLIMIT_DATA` 上限调整为 **256 MiB**；
-  **已发布 v0.2.2 仍为 128 MiB**。禁用 core dump。
+- **Linux 资源限制：** `v0.2.3` 起每个 Worker 的
+  `RLIMIT_DATA` 上限为 **256 MiB**（v0.2.2 为 128 MiB）。禁用 core dump。
 - **执行配额：** 每次最多 16 次内部工具调用；代码源码最多 16 KiB，
   中间响应累计最多 512 KiB，最终结果最多 32 KiB；
   JS 执行上限 2 秒，子进程整体截止 4 秒，最多并发 2 个 Worker。

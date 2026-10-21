@@ -1,6 +1,6 @@
 # Release checklist
 
-The public installer downloads the latest **published GitHub Release**, not the
+The public installers download the latest **published GitHub Release**, not the
 tip of `main`. This checklist applies to future versions; historical release
 notes and artifacts remain available from
 [GitHub Releases](https://github.com/Chillizu/miodesk/releases).
@@ -9,10 +9,10 @@ The release tag is immutable: **do not rewrite an already published tag**.
 ## 1. Decide the version and verify source
 
 Set a new version before following the commands below. For example, after
-`v0.2.2`, the next patch release could be `0.2.3`.
+`v0.2.3`, the next patch release could be `0.2.4`.
 
 ```sh
-VERSION=0.2.3
+VERSION=0.2.4
 git status --short --branch
 git fetch origin
 git diff --exit-code
@@ -42,7 +42,7 @@ scripts/build-release.sh "$VERSION"
 ```
 
 `dist/` contains binaries for Linux amd64/arm64, macOS amd64/arm64 and
-Windows amd64, plus `install.sh`, `checksums.txt` and `manifest.json`.
+Windows amd64, plus `install.sh`, `install.ps1`, `checksums.txt` and `manifest.json`.
 The scripts do not publish anything. Cross-compiled binaries are compile
 checked, but hardware-specific native testing is still recommended.
 
@@ -61,7 +61,7 @@ git tag -a "v$VERSION" -m "miodesk v$VERSION"
 git push origin main
 git push origin "v$VERSION"
 gh release create "v$VERSION" \
-  dist/miodesk-* dist/install.sh dist/checksums.txt dist/manifest.json \
+  dist/miodesk-* dist/install.sh dist/install.ps1 dist/checksums.txt dist/manifest.json \
   --repo Chillizu/miodesk --verify-tag \
   --title "miodesk v$VERSION" \
   --notes-file /path/to/reviewed-release-notes.md --latest
@@ -74,7 +74,7 @@ effect of `scripts/build-release.sh`.
 ## 4. Verify the **published** release
 
 1. Check the GitHub Release is public, latest (when appropriate), and
-   contains all eight assets.
+   contains all nine assets (five binaries, both installers, checksums and manifest).
 2. Compare each uploaded asset's GitHub SHA-256 digest and size with
    `dist/`. Check `checksums.txt` by an actual public download.
 3. Re-run the default `scripts/install.sh` **without** any release-base
@@ -82,7 +82,7 @@ effect of `scripts/build-release.sh`.
    `miodesk setup --workspace /absolute/path` and `miodesk doctor`.
 4. Check the downloaded binary reports the new version and commit; run the
    MCP smoke on the candidate if necessary.
-5. Refresh the README version claims and any separately packaged plugin
+5. Refresh the README version claims, feedback links and any separately packaged plugin
    manifests. A GitHub Release does **not** automatically republish a ChatGPT
    plugin or refresh a registered MCP action schema.
 
