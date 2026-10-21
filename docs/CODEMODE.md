@@ -63,7 +63,7 @@ descriptors, the shell, Node.js modules, provider credentials, or network APIs.
    not in the long-running Core process. The child is launched using a hidden
    internal command, with a cleared environment, neutral working directory and
    private stdin/stdout pipes.
-2. The child has Linux `RLIMIT_DATA = 128 MiB` and `RLIMIT_CORE = 0` resource
+2. The child has Linux `RLIMIT_DATA = 256 MiB` and `RLIMIT_CORE = 0` resource
    limits. A separate Core-side deadline kills the child even if JavaScript
    cancellation fails. Concurrent Code Mode requests are limited to two workers.
 3. The parent Core alone resolves workspace paths and executes allowlisted

@@ -31,7 +31,7 @@ full agent on this machine.
 
 The `[codemode] enabled = true` setting is an explicit opt-in that adds a
 read-only `code` MCP tool to Core. JavaScript executes in a short-lived Linux
-child process under a 128 MiB data/mmap resource limit; the parent has a
+child process under a 256 MiB data/mmap resource limit; the parent has a
 4-second deadline and accepts at most two workers concurrently. Worker
 stdin/stdout contain size-limited JSON protocol messages, and its environment
 is cleared. **Only** `read`, literal `search`, and `list` can be invoked from

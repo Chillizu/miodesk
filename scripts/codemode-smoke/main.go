@@ -97,8 +97,14 @@ func main() {
 		{`async () => ["a", "b"]`, `["a","b"]`},
 	} {
 		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "code", Arguments: map[string]any{"source": tc.source}})
-		if err != nil || res.IsError {
-			panic(fmt.Sprintf("JSON result %q: %v / %+v", tc.source, err, res))
+		if err != nil || res == nil || res.IsError {
+			// Print the actual diagnostic text, not addresses of MCP content
+			// pointers. Fixture scripts here do not use real workspace data.
+			var detail []byte
+			if res != nil {
+				detail, _ = json.Marshal(res.Content)
+			}
+			panic(fmt.Sprintf("JSON result %q: %v / %s", tc.source, err, detail))
 		}
 		data, err := json.Marshal(res.StructuredContent)
 		if err != nil {

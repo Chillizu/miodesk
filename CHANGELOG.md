@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Increased the Experimental Linux Code Mode worker's RLIMIT_DATA from
+  128 MiB to 256 MiB to allow for allocator/runtime differences on CI runners
+  while retaining a finite per-process budget; made MCP smoke errors show
+  actual diagnostic text rather than Go pointer addresses.
 - Documentation cleanup: removed completed historical planning/review files
   (preserved in Git history), consolidated ChatGPT setup guidance, refreshed
   release maintenance instructions and API references, and added CI checks
