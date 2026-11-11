@@ -5,6 +5,9 @@
 - Added a local-only `/panel/` dashboard with logo-coordinated light/dark/system
   themes, responsive connection cards, tool usage and readable filtered logs.
   Core, Bridge authorization and Tunnel readiness are shown separately.
+- Refined Panel navigation and Chinese copy: focused overview, collapsed
+  diagnostics/settings/tool details, newest-first logs, stable log expansion
+  and keyboard focus during refresh, and token copying without on-screen reveal.
 - Added explicit mioweave token import/reveal/copy/update using a private XDG
   credentials file. Writes are confined with directory-relative filesystem
   operations; remote Core modes never bypass panel Host/peer/Origin/CSRF checks.

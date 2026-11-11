@@ -77,9 +77,9 @@ Core now serves MCP at `http://127.0.0.1:8787/mcp` on your machine. Leave that t
 ### Local control panel (Unreleased source builds)
 
 Open **http://127.0.0.1:8787/panel/** after starting HTTP Core. The panel
-shows the actual Core endpoint, workspace, tool usage, mioweave authorization,
-and optional Tunnel health/readiness, with light/dark/system themes.
-Connection and token settings are collapsed by default.
+separates a focused overview (`概览`) from filtered, newest-first logs (`日志`).
+Light/dark/system themes are supported. Connection settings, tool details and
+diagnostics are collapsed by default.
 
 mioweave's Bridge token is **not** the Core bearer token or OpenAI runtime key.
 The panel can import/update it in the private XDG

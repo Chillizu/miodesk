@@ -111,8 +111,8 @@ MCP 本地地址为 `http://127.0.0.1:8787/mcp`，
 ### 本地控制面板（Unreleased 源码版本）
 
 HTTP Core 启动后打开 **http://127.0.0.1:8787/panel/**：
-统一查看 Core 地址、工作区、工具调用、mioweave 授权和可选的 Tunnel
-健康／就绪状态，支持浅色、深色和跟随系统主题。连接与 Token 设置默认折叠。
+概览聚焦本地服务、mioweave 和远程连接；日志独立显示，支持筛选并优先显示最新记录。
+支持浅色、深色和跟随系统主题，连接设置、工具明细与诊断默认折叠。
 
 mioweave Bridge token **不是** Core Bearer token，也不是 OpenAI runtime key。
 Panel 可在私有 XDG `miodesk/credentials/mioweave-token` 文件中导入／更新，

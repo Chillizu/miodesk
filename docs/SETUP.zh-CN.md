@@ -172,8 +172,8 @@ Unreleased 源码版本在现有 HTTP Core 上提供
 v0.2.3 发行二进制尚无此功能。Panel 分开显示 Core 可用、mioweave
 已授权和 Tunnel 就绪；仍不能替代 ChatGPT 中真实的工具调用。
 
-在“连接与 Token 设置”导入现有 Bridge token，然后让 Bridge 服务的
-`WEBMCP_BRIDGE_TOKEN_FILE` 指向界面显示的私有 XDG
+在“mioweave 连接设置”导入现有 Bridge Token；在“接入说明”中查看文件路径。
+让 Bridge 服务的 `WEBMCP_BRIDGE_TOKEN_FILE` 指向私有 XDG
 `miodesk/credentials/mioweave-token` 文件。显式的
 `WEBMCP_BRIDGE_TOKEN` 优先级更高，应先清除。改变服务环境后重启 Bridge
 一次；此后文件式 token 更新无需重启，但每次轮转都需同步扩展中的 token。

@@ -232,8 +232,8 @@ HTTP MCP, without another miodesk listener. This is not part of v0.2.3.
 The panel distinguishes Core availability, mioweave authorization and Tunnel
 readiness; none substitutes for a real ChatGPT tool call.
 
-For mioweave, open the connection/token disclosure (`连接与 Token 设置`), import
-the existing Bridge token, then point the Bridge service's
+For mioweave, open `mioweave 连接设置` and import the existing Bridge token.
+Expand `接入说明` for the token path, then point the Bridge service's
 `WEBMCP_BRIDGE_TOKEN_FILE` at the displayed private XDG
 `miodesk/credentials/mioweave-token` path. Clear any explicit
 `WEBMCP_BRIDGE_TOKEN`, which otherwise takes precedence. Restart Bridge once

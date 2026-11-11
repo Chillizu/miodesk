@@ -1,154 +1,571 @@
-(() => {
-  'use strict';
-  const $ = (id) => document.getElementById(id);
-  const state = { status: null, timer: 0, toast: 0, secretTimer: 0, secret: '', secretEpoch: 0, statusController: null, logsController: null, statusBusy: false, logsBusy: false };
-  const text = (id, value) => { $(id).textContent = value == null || value === '' ? '—' : String(value); };
-  const safe = (value) => value == null ? '' : String(value);
-  const safeError = (error) => { let message = safe(error && error.message) || '请求失败'; for (const secret of [state.secret, $('new-token')?.value]) if (secret) message = message.split(secret).join('[已隐藏]'); return message; };
-  const number = (value) => Number.isFinite(Number(value)) ? Number(value).toLocaleString('zh-CN') : '0';
-  const setPill = (id, labelId, label, kind) => { const pill = $(id); pill.className = `status-pill ${kind}`; text(labelId, label); };
-  const toast = (message) => { const box = $('toast'); box.textContent = message; box.classList.add('show'); clearTimeout(state.toast); state.toast = setTimeout(() => box.classList.remove('show'), 1800); };
-  async function fetchJSON(url, options = {}, slot) {
-    if (slot === 'status' && state.statusController) state.statusController.abort();
-    if (slot === 'logs' && state.logsController) state.logsController.abort();
-    const controller = new AbortController();
-    if (slot === 'status') state.statusController = controller;
-    if (slot === 'logs') state.logsController = controller;
-    const timeout = setTimeout(() => controller.abort(), 9000);
-    try {
-      const response = await fetch(url, { ...options, signal: controller.signal, cache: 'no-store', credentials: 'same-origin', redirect: 'error' });
-      let data;
-      try { data = await response.json(); } catch (_) { throw new Error(`服务器返回无效响应 (${response.status})`); }
-      if (!response.ok) throw new Error(safe(data && data.error) || `请求失败 (${response.status})`);
-      return data;
-    } finally { clearTimeout(timeout); }
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const state = {
+  view: "overview",
+  status: null,
+  savedURL: "",
+  saving: false,
+  secret: "",
+  secretEpoch: 0,
+  secretTimer: null,
+  tokenBusy: false,
+  statusGeneration: 0,
+  logsGeneration: 0,
+  statusController: null,
+  logsController: null,
+  tokenController: null,
+  queryTimer: null,
+  toolsSignature: "",
+  logsSignature: "",
+  logsFilter: "",
+};
+
+function text(id, value) {
+  $(id).textContent = value ?? "—";
+}
+
+function message(id, value, tone = "") {
+  text(id, value);
+  $(id).hidden = !value;
+  $(id).dataset.tone = tone;
+}
+
+function element(tag, className, value) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (value != null) node.textContent = value;
+  return node;
+}
+
+function pill(id, value, tone) {
+  text(id, value);
+  $(id).dataset.tone = tone;
+}
+
+let toastTimer;
+function toast(value) {
+  clearTimeout(toastTimer);
+  message("toast", value);
+  toastTimer = setTimeout(() => message("toast", ""), 2400);
+}
+
+async function copy(value) {
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    toast("已复制");
+  } catch {
+    throw new Error("无法访问剪贴板，请手动选择并复制。");
   }
-  function renderStatus(data) {
-    state.status = data;
-    const core = data.core || {};
-    const connected = !!(core.endpoint || core.kind || core.name);
-    setPill('core-status', 'core-status-text', connected ? '运行中' : '不可用', connected ? 'ok' : 'bad');
-    text('core-kind', core.platform || 'Core');
-    text('core-endpoint', core.endpoint);
-    text('core-workspace', core.workspace);
-    const accessModes = { local: '本机（local）', token: '令牌访问（token）', unsafe: '不安全开放（unsafe）' };
-    text('core-access', accessModes[core.remote] || safe(core.remote) || '未知');
-    const up = Number(core.uptime_seconds);
-    const uptime = Number.isFinite(up) && up >= 0 ? (up >= 86400 ? `${Math.floor(up / 86400)} 天 ${Math.floor(up % 86400 / 3600)} 小时` : up >= 3600 ? `${Math.floor(up / 3600)} 小时 ${Math.floor(up % 3600 / 60)} 分` : `${Math.floor(up / 60)} 分钟`) : '—';
-    text('core-version-uptime', [core.version, uptime].filter(Boolean).join(' · ') || '—');
-    const tools = Array.isArray(core.tools) ? core.tools : [];
-    text('core-tool-count', tools.length);
-    const calls = core.stats && core.stats.calls || {};
-    const total = core.stats && core.stats.total;
-    text('core-call-count', number(total));
-    text('core-call-stats', Object.entries(calls).length ? Object.entries(calls).map(([name, count]) => `${name}: ${number(count)}`).join(' · ') : '暂无');
-    const list = $('tools-list'); list.replaceChildren();
-    if (!tools.length) { const p = document.createElement('p'); p.className = 'muted'; p.textContent = '当前没有可用工具信息'; list.append(p); }
-    tools.forEach((tool) => { const article = document.createElement('article'); article.className = 'tool-item'; const name = document.createElement('strong'); name.textContent = safe(tool.name) || '未命名工具'; const desc = document.createElement('p'); desc.textContent = safe(tool.description) || '无描述'; article.append(name, desc); list.append(article); });
-    text('tools-total', `${tools.length} 项`);
-    const bridge = data.mioweave || {};
-    const isConfigured = !!bridge.token_configured || !!bridge.url;
-    setPill('bridge-status', 'bridge-status-text', bridge.authorized ? '已授权' : bridge.connected ? '已连接' : isConfigured ? '未连接' : '未配置（可选）', bridge.authorized ? 'ok' : bridge.connected ? 'warn' : 'pending');
-    text('bridge-connected', bridge.connected ? '可连接' : '未连接'); text('bridge-authorized', bridge.authorized ? '已授权' : bridge.connected ? '未授权' : '—'); text('bridge-tools', Number.isFinite(Number(bridge.tools)) ? `${number(bridge.tools)} 项` : '—');
-    text('bridge-url', bridge.url); text('bridge-token-file', bridge.token_file || '未配置'); text('bridge-token-source', bridge.token_source || '—');
-    $('reveal-token').disabled = !bridge.token_configured;
-    const bridgeError = $('bridge-error'); bridgeError.textContent = safe(bridge.error); bridgeError.hidden = !bridge.error;
-    if (!$('bridge-url-input').value) $('bridge-url-input').value = safe(bridge.url);
-    $('token-file-input').value = safe(bridge.token_file);
-    const tunnel = data.tunnel || {};
-    const tunnelKind = tunnel.ready ? 'ok' : tunnel.connected ? 'warn' : tunnel.configured ? 'bad' : 'pending';
-    const tunnelLabel = !tunnel.configured ? '未配置（可选）' : tunnel.ready ? '已就绪' : tunnel.connected ? '已连接，未就绪' : '不可用';
-    setPill('tunnel-status', 'tunnel-status-text', tunnelLabel, tunnelKind);
-    text('tunnel-configured', tunnel.configured ? '已配置' : '未配置'); text('tunnel-health', tunnel.connected ? `健康 · ${tunnel.ready ? '就绪' : '未就绪'}` : '未连接'); text('tunnel-transport', tunnel.admin_transport === 'unix' ? `Unix socket · ${tunnel.socket_path || '已配置'}` : '未配置'); text('tunnel-version', tunnel.version || '—'); text('tunnel-notice', [tunnel.notice, tunnel.error].filter(Boolean).map(safe).join(' · '));
-    const channels = $('tunnel-channels'); channels.replaceChildren();
-    (Array.isArray(tunnel.channels) ? tunnel.channels : []).forEach((channel) => { const item = document.createElement('span'); item.className = `channel ${channel.enabled ? 'enabled' : 'disabled'}`; item.textContent = `${safe(channel.name) || '通道'} · ${channel.enabled ? '启用' : '停用'}${channel.transport_kind ? ` · ${safe(channel.transport_kind)}` : ''}${channel.reason ? ` · ${safe(channel.reason)}` : ''}`; channels.append(item); });
-    text('config-path', data.config_path ? `配置：${data.config_path}` : '');
-    const logging = data.logging || {}; if (logging.level && $('log-level').dataset.initialized !== 'yes') { const available = [...$('log-level').options].some((o) => o.value === logging.level); if (available) $('log-level').value = logging.level; $('log-level').dataset.initialized = 'yes'; }
-    $('status-error').hidden = true; text('last-updated', `状态更新：${new Date().toLocaleTimeString('zh-CN')}`);
+}
+
+async function request(path, { body, signal } = {}) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 8000);
+  try {
+    const options = { cache: "no-store", signal: controller.signal, credentials: "same-origin" };
+    if (body !== undefined) {
+      options.method = "POST";
+      options.headers = { "Content-Type": "application/json", "X-Miodesk-Panel": "1" };
+      options.body = JSON.stringify(body);
+    }
+    const response = await fetch(path, options);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return data;
+  } catch (error) {
+    if (timedOut) throw new Error("请求超时，请重试。");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
-  async function loadStatus() {
-    if (state.statusBusy || document.hidden) return;
-    state.statusBusy = true;
-    try { renderStatus(await fetchJSON('/api/panel/status', {}, 'status')); }
-    catch (error) { if (error.name !== 'AbortError') { const box = $('status-error'); box.textContent = '无法读取状态，请检查 miodesk Core 是否运行后重试。'; box.hidden = false; setPill('core-status', 'core-status-text', '状态读取失败', 'bad'); } }
-    finally { state.statusBusy = false; }
+}
+
+function errorText(error) {
+  const value = String(error.message || error);
+  const translations = [
+    [/direct loopback|same-origin/, "请通过本机地址直接打开面板后重试。"],
+    [/Bridge uses an environment token/, "Bridge 正在使用环境变量 Token。请改用 Token 文件并重启 Bridge，再在此更新。"],
+    [/single value of at most 4096 bytes/, "Token 必须为单行，且不超过 4096 字节。"],
+    [/Cannot read the Bridge token/, "无法读取 Token 文件，请检查文件路径与权限，或导入已有 Token。"],
+    [/private XDG credentials directory/, "Token 只能保存在 miodesk 的私有凭据目录。"],
+    [/Cannot prepare private miodesk credentials/, "无法写入私有凭据目录。请检查权限，并确保目录和文件不是符号链接。"],
+    [/configuration rollback failed/, "Token 更新及配置回滚均失败，请在终端修复 config.toml。"],
+    [/previous configuration restored/, "Token 更新失败，已恢复原配置。"],
+    [/Cannot save miodesk configuration/, "配置保存失败，Token 未更改。请检查配置文件权限。"],
+    [/Cannot read miodesk configuration/, "无法读取配置，请在终端检查 config.toml。"],
+    [/loopback HTTP|loopback URL|Bridge URL|mioweave URL/, "Bridge 地址需为本机 HTTP 地址，且不包含路径、查询或凭据。"],
+    [/Bridge port must be/, "Bridge 端口需在 1–65535 之间。"],
+    [/Invalid log source, level, time range, or query/, "筛选条件无效，请缩短搜索关键字后重试。"],
+    [/Failed to fetch|NetworkError|Load failed/, "无法连接本地服务，请检查服务后重试。"],
+  ];
+  for (const [pattern, translated] of translations) {
+    if (pattern.test(value)) return translated;
   }
-  function clearSecret() { state.secretEpoch++; clearTimeout(state.secretTimer); state.secretTimer = 0; state.secret = ''; $('token-display').value = ''; $('token-display').type = 'password'; $('copy-token').disabled = true; $('reveal-token').textContent = '显示'; $('reveal-token').disabled = !state.status?.mioweave?.token_configured; }
-  async function revealToken() {
-    if (document.hidden || !state.status?.mioweave?.token_configured) return;
-    if (state.secret) { clearSecret(); return; }
-    const epoch = ++state.secretEpoch;
-    $('reveal-token').disabled = true;
-    try {
-      const result = await fetchJSON('/api/panel/mioweave/token', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Miodesk-Panel': '1' }, body: '{}' });
-      if (epoch !== state.secretEpoch || document.hidden) return;
-      state.secret = safe(result.token); $('token-display').value = state.secret; $('token-display').type = 'text'; $('copy-token').disabled = !state.secret; $('reveal-token').textContent = '隐藏'; state.secretTimer = setTimeout(clearSecret, 30000);
-    } catch (_) {
-      if (epoch === state.secretEpoch && !document.hidden) toast('无法读取 Token，请检查本机桥接设置。');
-    } finally {
-      if (epoch === state.secretEpoch) $('reveal-token').disabled = !state.status?.mioweave?.token_configured;
+  let safe = value;
+  for (const secret of [state.secret, $("new-token").value.trim()]) {
+    if (secret) safe = safe.split(secret).join("[已隐藏]");
+  }
+  return safe;
+}
+
+function setTheme(value) {
+  const dark = value === "dark" || (value === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+}
+let theme = "system";
+try {
+  const saved = localStorage.getItem("miodesk-panel-theme");
+  if (["system", "light", "dark"].includes(saved)) theme = saved;
+} catch { /* Theme persistence is optional. */ }
+$("theme-select").value = theme;
+setTheme(theme);
+$("theme-select").addEventListener("change", () => {
+  theme = $("theme-select").value;
+  setTheme(theme);
+  try { localStorage.setItem("miodesk-panel-theme", theme); } catch { /* Use this tab only. */ }
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => setTheme(theme));
+
+function selectView(view) {
+  if (view === state.view) return;
+  clearSensitive();
+  state.view = view;
+  for (const name of ["overview", "logs"]) {
+    const selected = name === view;
+    $("view-" + name).setAttribute("aria-selected", String(selected));
+    $("view-" + name).tabIndex = selected ? 0 : -1;
+    $(name + "-view").hidden = !selected;
+  }
+  clearTimeout(state.queryTimer);
+  state.queryTimer = null;
+  state.logsGeneration++;
+  state.logsController?.abort();
+  if (view === "logs") loadLogs();
+}
+for (const view of ["overview", "logs"]) {
+  $("view-" + view).addEventListener("click", () => selectView(view));
+  $("view-" + view).addEventListener("keydown", (event) => {
+    let next;
+    if (event.key === "Home") next = "overview";
+    else if (event.key === "End") next = "logs";
+    else if (["ArrowLeft", "ArrowRight"].includes(event.key)) next = view === "logs" ? "overview" : "logs";
+    if (!next) return;
+    event.preventDefault();
+    selectView(next);
+    $("view-" + next).focus();
+  });
+}
+
+function clock(date = new Date()) {
+  return date.toLocaleTimeString("zh-CN", { hour12: false });
+}
+
+function duration(seconds) {
+  if (seconds < 60) return "不足 1 分钟";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds % 3600 / 60)} 分钟`;
+  return `${Math.floor(seconds / 86400)} 天 ${Math.floor(seconds % 86400 / 3600)} 小时`;
+}
+
+const toolDescriptions = {
+  read: "读取文件", search: "搜索文件内容", list: "浏览目录", write: "创建或覆盖文件",
+  edit: "批量原子编辑", delete: "删除文件或目录", exec_command: "执行命令",
+  write_stdin: "继续、输入或终止命令", context: "跨会话交接与检查点", status: "查看服务状态",
+  code: "组合只读工具 · 实验性",
+};
+
+function renderTools(core) {
+  const tools = core.tools || [];
+  const calls = core.stats?.calls || {};
+  const signature = JSON.stringify([tools, calls]);
+  text("tools-total", `${tools.length} 个`);
+  if (signature === state.toolsSignature) return;
+  state.toolsSignature = signature;
+  const rows = tools.map((tool) => {
+    const row = element("div", "tool-row");
+    const name = element("code", "", tool.name);
+    const description = element("p", "", toolDescriptions[tool.name] || tool.description);
+    row.append(name, description, element("span", "tool-calls", `${calls[tool.name] || 0} 次调用`));
+    return row;
+  });
+  $("tools-list").replaceChildren(...(rows.length ? rows : [element("p", "empty-state", "暂无可用工具")]));
+}
+
+function renderStatus(data) {
+  const { core, mioweave: bridge, tunnel } = data;
+  if (!state.status || $("bridge-url-input").value === state.savedURL) $("bridge-url-input").value = bridge.url || "";
+  state.savedURL = bridge.url || "";
+  state.status = data;
+  pill("core-status", "运行中", "success");
+  text("core-endpoint", core.endpoint);
+  text("core-workspace", core.workspace);
+  $("copy-endpoint").disabled = !core.endpoint;
+  $("copy-workspace").disabled = !core.workspace;
+  text("core-access", { local: "仅本机", token: "Token 验证", unsafe: "开放访问" }[core.remote] || core.remote);
+  text("core-tool-count", core.tools?.length ?? 0);
+  text("core-call-count", core.stats?.total ?? 0);
+  renderTools(core);
+
+  const authorized = bridge.connected && bridge.authorized;
+  pill("bridge-status", authorized ? "已连接" : bridge.connected ? "待授权" : "未连接", authorized ? "success" : bridge.connected ? "warning" : "neutral");
+  text("bridge-summary", authorized ? `${bridge.tools} 个上游工具` : bridge.connected ? "Bridge 可用，尚未授权" : "可选的浏览器工具连接");
+  text("bridge-url", bridge.url || "未配置");
+  text("bridge-token-state", bridge.token_configured ? "已配置" : "未配置");
+  const bridgeHint = authorized ? "" : !bridge.connected ? "检查 Bridge 是否启动，或在下方设置连接。" : !bridge.token_configured ? "导入 Bridge 已有 Token 以完成授权。" : "授权未完成，请确认 Bridge 与扩展使用同一 Token。";
+  message("bridge-hint", bridgeHint);
+  text("bridge-diagnostic", bridge.error || "无异常");
+
+  const unchecked = tunnel.configured && tunnel.admin_transport !== "unix";
+  pill("tunnel-status", !tunnel.configured ? "未启用" : unchecked ? "未检查" : !tunnel.connected ? "离线" : tunnel.ready ? "就绪" : "未就绪", !tunnel.configured || unchecked ? "neutral" : !tunnel.connected ? "error" : tunnel.ready ? "success" : "warning");
+  text("tunnel-summary", !tunnel.configured ? "用于远程 MCP 客户端" : { openai: "OpenAI Secure MCP Tunnel", custom: "自有 HTTPS 端点" }[core.tunnel] || "远程 MCP 隧道");
+  $("tunnel-details").hidden = !tunnel.configured;
+  message("tunnel-hint", !tunnel.configured ? "本机工具不受影响。" : unchecked ? "配置私有 Socket 后可查看隧道状态。" : !tunnel.connected ? "检查隧道服务与 Socket 配置。" : tunnel.ready ? "请在 ChatGPT 中调用工具确认连接。" : "在诊断详情中查看通道状态。");
+  text("tunnel-transport", tunnel.admin_transport === "unix" ? "私有 Unix Socket" : "未配置");
+  text("tunnel-socket", tunnel.socket_path || "未配置");
+  text("tunnel-version", tunnel.version || "未知");
+  message("tunnel-error", tunnel.error || "");
+  $("tunnel-channels").replaceChildren(...(tunnel.channels || []).map((channel) => {
+    const row = element("div", "channel-row");
+    row.append(element("code", "", channel.name), element("span", "", channel.enabled ? "已启用" : "未启用"));
+    row.append(element("p", "", [channel.transport_kind, channel.reason].filter(Boolean).join(" · ")));
+    return row;
+  }));
+
+  $("token-file-input").value = bridge.token_file || "";
+  $("copy-token-path").disabled = !bridge.token_file;
+  $("token-display").placeholder = bridge.token_configured ? "点击显示后查看" : "尚未配置";
+  message("token-source-warning", bridge.token_source === "environment" ? "Bridge 正在使用环境变量；此处显示的是文件值，不代表正在使用的凭据。" : bridge.token_source === "unknown" && bridge.token_configured ? "尚未确认 Bridge 的凭据来源，此处仅显示文件值。" : "");
+  tokenControls();
+  updateSave();
+  text("core-version", `${core.version} · ${core.platform}`);
+  text("core-uptime", duration(core.uptime_seconds));
+  text("config-path", data.config_path);
+  text("logging-config", `${data.logging.level} · ${data.logging.format}`);
+  text("last-updated", `更新于 ${clock()}`);
+  $("status-error").hidden = true;
+  $("connection-cards").dataset.stale = "false";
+}
+
+async function loadStatus() {
+  if (document.hidden || state.saving) return;
+  state.statusController?.abort();
+  const controller = new AbortController();
+  state.statusController = controller;
+  const generation = ++state.statusGeneration;
+  try {
+    const data = await request("/api/panel/status", { signal: controller.signal });
+    if (generation === state.statusGeneration && !document.hidden) renderStatus(data);
+  } catch (error) {
+    if (error.name === "AbortError" || generation !== state.statusGeneration) return;
+    text("status-error-text", state.status ? "无法更新状态，以下为上次结果。" : errorText(error));
+    $("status-error").hidden = false;
+    $("connection-cards").dataset.stale = "true";
+    if (!state.status) {
+      for (const id of ["core-status", "bridge-status", "tunnel-status"]) pill(id, "未读取", "neutral");
+    }
+  } finally {
+    if (generation === state.statusGeneration) state.statusController = null;
+  }
+}
+$("retry-status").addEventListener("click", loadStatus);
+$("copy-endpoint").addEventListener("click", () => copy(state.status?.core.endpoint).catch((e) => toast(errorText(e))));
+$("copy-workspace").addEventListener("click", () => copy(state.status?.core.workspace).catch((e) => toast(errorText(e))));
+$("copy-token-path").addEventListener("click", () => copy($("token-file-input").value).catch((e) => toast(errorText(e))));
+
+function tokenControls() {
+  const disabled = !state.status?.mioweave.token_configured || state.tokenBusy || state.saving;
+  $("reveal-token").disabled = disabled;
+  $("copy-token").disabled = disabled;
+  text("reveal-token", state.secret ? "隐藏" : "显示");
+}
+
+function hideToken() {
+  state.secretEpoch++;
+  state.tokenController?.abort();
+  state.tokenController = null;
+  state.tokenBusy = false;
+  clearTimeout(state.secretTimer);
+  state.secret = "";
+  $("token-display").value = "";
+  $("token-display").type = "password";
+  tokenControls();
+}
+
+function clearSensitive() {
+  // Clear known secrets from a pending search before discarding the secret itself.
+  const query = $("log-query");
+  for (const secret of [state.secret, $("new-token").value.trim()]) {
+    if (secret && query.value.includes(secret)) query.value = "";
+  }
+  hideToken();
+  $("new-token").value = "";
+  message("token-message", "");
+  updateSave();
+}
+
+async function useToken(action) {
+  if (action === "reveal" && state.secret) {
+    hideToken();
+    return;
+  }
+  if (state.tokenBusy || state.saving || !$("bridge-settings").open) return;
+  const epoch = ++state.secretEpoch;
+  const controller = new AbortController();
+  state.tokenController = controller;
+  state.tokenBusy = true;
+  tokenControls();
+  message("token-message", "");
+  try {
+    const data = state.secret ? { token: state.secret } : await request("/api/panel/mioweave/token", { body: {}, signal: controller.signal });
+    if (epoch !== state.secretEpoch || document.hidden || state.view !== "overview" || !$("bridge-settings").open) return;
+    if (action === "copy") await copy(data.token);
+    else {
+      state.secret = data.token;
+      $("token-display").type = "text";
+      $("token-display").value = data.token;
+      clearTimeout(state.secretTimer);
+      state.secretTimer = setTimeout(hideToken, 30000);
+    }
+  } catch (error) {
+    if (epoch === state.secretEpoch && error.name !== "AbortError") message("token-message", errorText(error), "error");
+  } finally {
+    if (epoch === state.secretEpoch) {
+      state.tokenBusy = false;
+      state.tokenController = null;
+      tokenControls();
     }
   }
-  async function copyText(value) { if (!value) return; try { await navigator.clipboard.writeText(value); toast('已复制'); } catch (_) { toast('复制失败，请检查浏览器权限'); } }
-  async function saveBridge(event) {
-    event.preventDefault(); const button = $('save-bridge'); button.disabled = true; clearSecret();
-    const body = { url: $('bridge-url-input').value.trim(), token_file: $('token-file-input').value };
-    const token = $('new-token').value; if (token) body.token = token;
-    const message = $('bridge-form-message'); message.textContent = '正在保存…';
-    try { const result = await fetchJSON('/api/panel/mioweave', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Miodesk-Panel': '1' }, body: JSON.stringify(body) }); $('new-token').value = ''; message.textContent = safe(result.notice) || '已保存'; await loadStatus(); }
-    catch (error) { message.textContent = `保存失败：${safeError(error)}`; }
-    finally { button.disabled = false; }
+}
+$("reveal-token").addEventListener("click", () => useToken("reveal"));
+$("copy-token").addEventListener("click", () => useToken("copy"));
+$("bridge-settings").addEventListener("toggle", () => { if (!$("bridge-settings").open) clearSensitive(); });
+$("manage-bridge").addEventListener("click", () => {
+  $("bridge-settings").open = true;
+  $("bridge-url-input").focus();
+});
+
+function updateSave() {
+  const dirty = $("bridge-url-input").value.trim() !== state.savedURL || !!$("new-token").value.trim();
+  $("save-bridge").disabled = !state.status || !dirty || state.saving;
+}
+for (const id of ["bridge-url-input", "new-token"]) {
+  $(id).addEventListener("input", () => {
+    updateSave();
+    message("bridge-form-message", "");
+  });
+}
+$("bridge-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if ($("save-bridge").disabled) return;
+  const body = { url: $("bridge-url-input").value.trim(), token_file: state.status.mioweave.token_file };
+  const token = $("new-token").value.trim();
+  if (token) body.token = token;
+  const source = state.status.mioweave.token_source;
+  state.saving = true;
+  state.statusGeneration++;
+  state.statusController?.abort();
+  hideToken();
+  $("bridge-fields").disabled = true;
+  updateSave();
+  text("save-bridge", "保存中…");
+  message("bridge-form-message", "");
+  try {
+    const result = await request("/api/panel/mioweave", { body });
+    $("new-token").value = "";
+    state.savedURL = body.url;
+    const notice = result.restart_required ? `已保存。将 Bridge 指向此 Token 文件并重启。${token ? "请同步扩展 Token。" : ""}` : token ? source === "file" ? "Token 已更新，请同步到扩展。" : "Token 已保存。请确认 Bridge 使用此文件，并同步扩展。" : "已保存";
+    message("bridge-form-message", notice, result.restart_required ? "warning" : "success");
+  } catch (error) {
+    // The request's token may already have been cleared by a view/visibility change.
+    const safe = token ? errorText(error).split(token).join("[已隐藏]") : errorText(error);
+    message("bridge-form-message", safe, "error");
+  } finally {
+    state.saving = false;
+    $("bridge-fields").disabled = false;
+    text("save-bridge", "保存更改");
+    tokenControls();
+    updateSave();
+    loadStatus();
   }
-  function renderLogs(records) {
-    const list = $('logs-list'); list.replaceChildren();
-    if (!records.length) { const p = document.createElement('p'); p.className = 'muted'; p.textContent = '此筛选条件下没有日志记录。'; list.append(p); }
-    records.forEach((record) => {
-      const article = document.createElement('article'); article.className = 'log-entry'; const line = document.createElement('div'); line.className = 'log-line';
-      const time = document.createElement('time'); time.className = 'log-time'; const originalTime = safe(record.time); const parsedTime = new Date(originalTime); time.dateTime = originalTime; time.title = originalTime; time.textContent = originalTime && !Number.isNaN(parsedTime.getTime()) ? parsedTime.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }) : originalTime || '时间未知';
-      const source = document.createElement('span'); source.className = 'log-source'; source.textContent = safe(record.source) || 'unknown';
-      const level = document.createElement('span'); level.className = `log-level ${safe(record.level).toLowerCase()}`; level.textContent = safe(record.level) || 'info';
-      const message = document.createElement('div'); message.className = 'log-message'; message.textContent = safe(record.message);
-      line.append(time, source, level, message); article.append(line);
-      if (record.fields && typeof record.fields === 'object' && Object.keys(record.fields).length) { const details = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = '展开字段'; const pre = document.createElement('pre'); try { pre.textContent = JSON.stringify(record.fields, null, 2); } catch (_) { pre.textContent = '[字段无法显示]'; } details.append(summary, pre); article.append(details); }
-      list.append(article);
-    });
+});
+
+function filterSummary() {
+  const select = $("log-since");
+  text("filter-summary", `${select.options[select.selectedIndex].text} · ${$("log-lines").value} 条`);
+}
+
+function resetFilters() {
+  $("log-source").value = "all";
+  $("log-level").value = "info";
+  $("log-since").value = "10m";
+  $("log-lines").value = "100";
+  $("log-query").value = "";
+  filterSummary();
+  $("log-query").focus({ preventScroll: true });
+  loadLogs();
+}
+
+function renderLogs(records, filtered, unavailable) {
+  const signature = JSON.stringify([records, filtered, unavailable]);
+  if (signature === state.logsSignature) return;
+  state.logsSignature = signature;
+  const open = new Set([...$("logs-list").querySelectorAll("details[open]")].map((node) => node.dataset.key));
+  const focused = document.activeElement?.closest(".log-entry")?.dataset.key;
+  const occurrences = new Map();
+  let focusTarget;
+  const rows = [...records].reverse().map((record) => {
+    const fields = record.fields && Object.keys(record.fields).length > 0;
+    const entry = element(fields ? "details" : "div", "log-entry");
+    const identity = JSON.stringify(record);
+    const occurrence = (occurrences.get(identity) || 0) + 1;
+    occurrences.set(identity, occurrence);
+    entry.dataset.key = identity + "#" + occurrence;
+    if (fields) entry.open = open.has(entry.dataset.key);
+    const line = element(fields ? "summary" : "div", "log-line");
+    const date = new Date(record.time);
+    const validDate = !Number.isNaN(date.getTime());
+    const time = element("time", "", validDate ? date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : record.time || "时间未知");
+    if (validDate) time.dateTime = record.time;
+    time.title = record.time || "";
+    const level = element("span", "log-level", (record.level || "info").toUpperCase());
+    level.dataset.level = record.level;
+    line.append(time, element("span", "log-source", { core: "miodesk", tunnel: "Tunnel", mioweave: "mioweave" }[record.source] || record.source), level, element("span", "log-message", record.message));
+    entry.append(line);
+    if (fields) entry.append(element("pre", "log-fields", JSON.stringify(record.fields, null, 2)));
+    if (fields && entry.dataset.key === focused) focusTarget = line;
+    return entry;
+  });
+  if (!rows.length) {
+    const empty = element("div", "empty-state", unavailable ? "无法读取日志，请检查系统日志服务。" : filtered ? "没有符合筛选条件的日志。" : "此时间范围内没有日志。");
+    if (filtered && !unavailable) {
+      const reset = element("button", "text-button", "重置筛选");
+      reset.type = "button";
+      reset.addEventListener("click", resetFilters);
+      empty.append(element("br"), reset);
+    }
+    rows.push(empty);
   }
-  async function loadLogs() {
-    if (state.logsBusy || document.hidden || $('logs-view').hidden) return;
-    state.logsBusy = true; let query = $('log-query').value; for (const secret of [state.secret, $('new-token').value]) if (secret) query = query.split(secret).join(''); const params = new URLSearchParams({ source: $('log-source').value, level: $('log-level').value, since: $('log-since').value, lines: $('log-lines').value, query });
-    try { const result = await fetchJSON(`/api/panel/logs?${params.toString()}`, {}, 'logs'); const records = Array.isArray(result.records) ? result.records : []; renderLogs(records); text('log-count', `${records.length} 条记录`); const msg = $('logs-message'); msg.textContent = safe(result.notice); msg.hidden = !result.notice; text('log-updated', `更新于 ${new Date().toLocaleTimeString('zh-CN')}`); }
-    catch (error) { if (error.name !== 'AbortError') { const msg = $('logs-message'); msg.textContent = '日志读取失败，请确认本机日志服务可用后重试。'; msg.hidden = false; text('log-count', '读取失败'); } }
-    finally { state.logsBusy = false; }
+  $("logs-list").replaceChildren(...rows);
+  focusTarget?.focus({ preventScroll: true });
+}
+
+async function loadLogs(automatic = false) {
+  if (state.view !== "logs" || document.hidden) return;
+  if (automatic && (state.logsController || state.queryTimer)) return;
+  clearTimeout(state.queryTimer);
+  state.queryTimer = null;
+  state.logsController?.abort();
+  const generation = ++state.logsGeneration;
+  const query = $("log-query").value.trim();
+  for (const secret of [state.secret, $("new-token").value.trim()]) {
+    if (secret && query.includes(secret)) {
+      message("logs-message", "请移除搜索中的 Token 后重试。", "error");
+      return;
+    }
   }
-  function restartPolling() { clearInterval(state.timer); state.timer = setInterval(() => { if (!document.hidden && !$('pause-logs').checked && !$('logs-view').hidden) loadLogs(); if (!document.hidden) loadStatus(); }, 15000); }
-  const themeSelect = $('theme-select'); try { const theme = localStorage.getItem('miodesk-panel-theme'); if (['light', 'dark', 'system'].includes(theme)) themeSelect.value = theme; } catch (_) {}
-  const applyTheme = () => { document.documentElement.dataset.theme = themeSelect.value === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : themeSelect.value; try { localStorage.setItem('miodesk-panel-theme', themeSelect.value); } catch (_) {} };
-  themeSelect.addEventListener('change', applyTheme); matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { if (themeSelect.value === 'system') applyTheme(); }); applyTheme();
-  const selectView = (view) => {
-    clearSecret();
-    $('new-token').value = '';
-    const logs = view === 'logs';
-    document.querySelector('.overview').hidden = logs;
-    $('bridge-settings').hidden = logs;
-    if (logs) $('bridge-settings').open = false;
-    else state.logsController?.abort();
-    $('tools-view').hidden = logs;
-    $('logs-view').hidden = !logs;
-    $('view-tools').classList.toggle('active', !logs);
-    $('view-logs').classList.toggle('active', logs);
-    $('view-tools').setAttribute('aria-selected', String(!logs));
-    $('view-logs').setAttribute('aria-selected', String(logs));
-  };
-  $('view-tools').addEventListener('click', () => selectView('tools')); $('view-logs').addEventListener('click', () => { selectView('logs'); if (!$('pause-logs').checked) loadLogs(); });
-  $('copy-endpoint').addEventListener('click', () => copyText(state.status?.core?.endpoint)); $('copy-workspace').addEventListener('click', () => copyText(state.status?.core?.workspace));
-  $('reveal-token').addEventListener('click', revealToken); $('copy-token').addEventListener('click', () => copyText(state.secret)); $('bridge-form').addEventListener('submit', saveBridge);
-  $('bridge-settings').addEventListener('toggle', () => { if (!$('bridge-settings').open) { clearSecret(); $('new-token').value = ''; } });
-  $('refresh-logs').addEventListener('click', loadLogs); $('pause-logs').addEventListener('change', restartPolling);
-  $('log-filters').addEventListener('submit', (event) => { event.preventDefault(); loadLogs(); });
-  ['log-source', 'log-level', 'log-since', 'log-lines'].forEach((id) => $(id).addEventListener('change', loadLogs));
-  let queryTimer = 0; $('log-query').addEventListener('input', () => { clearTimeout(queryTimer); queryTimer = setTimeout(loadLogs, 300); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { state.statusController?.abort(); state.logsController?.abort(); clearSecret(); $('new-token').value = ''; } else { loadStatus(); if (!$('pause-logs').checked && !$('logs-view').hidden) loadLogs(); } });
-  const clearPageSecrets = () => { clearSecret(); $('new-token').value = ''; };
-  window.addEventListener('pagehide', clearPageSecrets); window.addEventListener('beforeunload', clearPageSecrets);
-  applyTheme(); loadStatus(); restartPolling();
-})();
+  const params = new URLSearchParams({ source: $("log-source").value, level: $("log-level").value, since: $("log-since").value, lines: $("log-lines").value, query });
+  const filter = params.toString();
+  const changed = filter !== state.logsFilter;
+  const filtered = params.get("source") !== "all" || params.get("level") !== "info" || params.get("since") !== "10m" || params.get("lines") !== "100" || !!query;
+  const controller = new AbortController();
+  state.logsController = controller;
+  $("logs-list").setAttribute("aria-busy", "true");
+  if (changed) {
+    $("logs-list").replaceChildren(element("p", "empty-state", "读取中…"));
+    state.logsSignature = "";
+    text("log-count", "读取中…");
+    text("log-updated", "");
+    message("logs-message", "");
+  }
+  try {
+    const data = await request("/api/panel/logs?" + filter, { signal: controller.signal });
+    if (generation !== state.logsGeneration || document.hidden || state.view !== "logs") return;
+    state.logsFilter = filter;
+    const unavailable = !!data.notice && !data.notice.includes("1 MiB limit");
+    const notice = unavailable ? "部分日志不可用。请检查 systemd 用户日志；前台服务请查看终端。" : data.notice ? "日志已达响应上限，请缩短时间范围或增加筛选。" : "";
+    message("logs-message", notice, unavailable ? "error" : "");
+    $("logs-message").classList.toggle("error", unavailable);
+    renderLogs(data.records || [], filtered, unavailable);
+    text("log-count", `${data.records?.length || 0} 条${unavailable ? " · 部分来源不可用" : ""}`);
+    text("log-updated", `更新于 ${clock()}`);
+  } catch (error) {
+    if (error.name === "AbortError" || generation !== state.logsGeneration) return;
+    message("logs-message", errorText(error), "error");
+    $("logs-message").classList.add("error");
+    if (changed || !state.logsSignature) {
+      renderLogs([], filtered, true);
+      text("log-count", "读取失败");
+    } else text("log-count", "更新失败 · 显示上次结果");
+  } finally {
+    if (generation === state.logsGeneration) {
+      state.logsController = null;
+      $("logs-list").setAttribute("aria-busy", "false");
+    }
+  }
+}
+
+function scheduleLogs() {
+  clearTimeout(state.queryTimer);
+  state.logsGeneration++;
+  state.logsController?.abort();
+  state.logsController = null;
+  state.queryTimer = setTimeout(() => {
+    state.queryTimer = null;
+    loadLogs();
+  }, 250);
+}
+$("log-query").addEventListener("input", scheduleLogs);
+for (const id of ["log-source", "log-level", "log-since", "log-lines"]) {
+  $(id).addEventListener("change", () => { filterSummary(); loadLogs(); });
+}
+$("log-filters").addEventListener("submit", (event) => { event.preventDefault(); loadLogs(); });
+$("reset-filters").addEventListener("click", resetFilters);
+$("refresh-logs").addEventListener("click", () => loadLogs());
+$("auto-logs").addEventListener("change", () => {
+  if ($("auto-logs").checked) loadLogs();
+  else {
+    state.logsGeneration++;
+    state.logsController?.abort();
+    state.logsController = null;
+    $("logs-list").setAttribute("aria-busy", "false");
+  }
+});
+
+function suspend() {
+  clearSensitive();
+  clearTimeout(state.queryTimer);
+  state.queryTimer = null;
+  state.statusGeneration++;
+  state.logsGeneration++;
+  state.statusController?.abort();
+  state.logsController?.abort();
+  state.statusController = null;
+  state.logsController = null;
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) suspend();
+  else {
+    loadStatus();
+    if (state.view === "logs" && $("auto-logs").checked) loadLogs();
+  }
+});
+window.addEventListener("pagehide", suspend);
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) {
+    loadStatus();
+    if (state.view === "logs") loadLogs();
+  }
+});
+setInterval(loadStatus, 15000);
+setInterval(() => { if ($("auto-logs").checked) loadLogs(true); }, 5000);
+loadStatus();

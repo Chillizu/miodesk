@@ -4,67 +4,128 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>miodesk · 本地控制面板</title>
+  <title>miodesk · 本地面板</title>
   <link rel="stylesheet" href="/panel/panel.css">
   <script defer src="/panel/panel.js"></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/panel/" aria-label="miodesk 本地控制面板">
-      <img src="/panel/logo.png" width="38" height="38" alt="">
-      <span><strong>miodesk</strong><small>本地控制面板</small></span>
-    </a>
-    <div class="top-actions"><span class="local-badge"><span class="dot"></span>仅限本机</span>
-      <label class="theme-control" for="theme-select">外观<select id="theme-select" aria-label="外观"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+    <div class="header-inner">
+      <a class="brand" href="/panel/" aria-label="miodesk 首页">
+        <img src="/panel/logo.png" width="38" height="38" alt="">
+        <strong>miodesk</strong>
+      </a>
+      <nav class="view-nav" role="tablist" aria-label="面板视图">
+        <button type="button" id="view-overview" role="tab" aria-controls="overview-view" aria-selected="true">概览</button>
+        <button type="button" id="view-logs" role="tab" aria-controls="logs-view" aria-selected="false" tabindex="-1">日志</button>
+      </nav>
+      <div class="header-actions">
+        <span class="local-label">仅本机</span>
+        <label class="theme-control"><span class="sr-only">主题</span>
+          <select id="theme-select"><option value="system">系统</option><option value="light">浅色</option><option value="dark">深色</option></select>
+        </label>
+      </div>
     </div>
   </header>
   <main class="shell">
-    <div class="local-notice" role="note"><strong>本地管理界面</strong><span>此面板仅用于管理本机服务。请勿将页面或本机服务暴露到公共网络。</span></div>
-    <nav class="view-nav" aria-label="面板视图"><button type="button" id="view-tools" aria-controls="tools-view" aria-selected="true" class="active">工具</button><button type="button" id="view-logs" aria-controls="logs-view" aria-selected="false">运行日志</button></nav>
-    <section class="overview" aria-labelledby="overview-title">
-      <div class="section-heading"><div><p class="eyebrow">CONNECTION OVERVIEW</p><h1 id="overview-title">连接概览</h1></div><div id="core-status" class="status-pill pending"><span class="dot"></span><span id="core-status-text">正在连接…</span></div></div>
-      <div id="status-error" class="notice error" role="alert" hidden></div>
-      <div class="overview-grid">
-        <article class="card core-card"><div class="card-heading"><div><span class="eyebrow">CORE</span><h2>miodesk Core</h2></div><span id="core-kind" class="tag">—</span></div>
+    <section id="overview-view" role="tabpanel" aria-labelledby="view-overview">
+      <div class="page-heading"><h1>连接</h1><span id="last-updated" class="muted"></span></div>
+      <div id="status-error" class="notice error" role="status" hidden><span id="status-error-text"></span><button type="button" id="retry-status">重试</button></div>
+      <div class="overview-grid" id="connection-cards">
+        <article class="card">
+          <div class="card-heading"><h2>本地服务</h2><span id="core-status" class="status-pill" data-tone="neutral">读取中</span></div>
           <dl class="facts">
-            <div><dt>服务端点</dt><dd><span id="core-endpoint">—</span><button class="icon-button" id="copy-endpoint" type="button" aria-label="复制服务端点">复制</button></dd></div>
-            <div><dt>工作区</dt><dd><span id="core-workspace">—</span><button class="icon-button" id="copy-workspace" type="button" aria-label="复制工作区路径">复制</button></dd></div>
-            <div><dt>访问模式</dt><dd id="core-access">—</dd></div>
-            <div><dt>版本 / 运行时间</dt><dd id="core-version-uptime">—</dd></div>
+            <div><dt>MCP 地址</dt><dd class="copy-row"><span id="core-endpoint" class="mono">—</span><button id="copy-endpoint" class="text-button" type="button" aria-label="复制 MCP 地址" disabled>复制</button></dd></div>
+            <div><dt>工作区</dt><dd class="copy-row"><span id="core-workspace" class="mono">—</span><button id="copy-workspace" class="text-button" type="button" aria-label="复制工作区路径" disabled>复制</button></dd></div>
+            <div class="inline-fact"><dt>访问模式</dt><dd id="core-access">—</dd></div>
           </dl>
-          <div class="stats-row"><div><strong id="core-tool-count">—</strong><span>可用工具</span></div><div><strong id="core-call-count">—</strong><span>累计调用</span></div><div class="calls-stat"><strong id="core-call-stats">—</strong><span>工具调用统计</span></div></div>
+          <div class="stats-row"><div><strong id="core-tool-count">—</strong><span>工具</span></div><div><strong id="core-call-count">—</strong><span>累计调用</span></div></div>
         </article>
-        <article class="card bridge-card"><div class="card-heading"><div><span class="eyebrow">MIOWEAVE BRIDGE</span><h2>mioweave</h2></div><span id="bridge-status" class="status-pill pending"><span class="dot"></span><span id="bridge-status-text">未检查</span></span></div>
-          <p class="muted">连接、授权与上游工具是不同状态；Core 可在未配置桥接时正常工作。</p>
-          <div class="bridge-states"><div><span>可连接</span><strong id="bridge-connected">—</strong></div><div><span>已授权</span><strong id="bridge-authorized">—</strong></div><div><span>上游工具</span><strong id="bridge-tools">—</strong></div></div>
-          <dl class="facts compact"><div><dt>桥接地址</dt><dd id="bridge-url">—</dd></div><div><dt>Token 文件</dt><dd id="bridge-token-file">未配置</dd></div><div><dt>Token 来源</dt><dd id="bridge-token-source">—</dd></div></dl>
-          <p id="bridge-error" class="notice error" role="status" hidden></p>
+        <article class="card">
+          <div class="card-heading"><h2>mioweave</h2><span id="bridge-status" class="status-pill" data-tone="neutral">读取中</span></div>
+          <p id="bridge-summary" class="card-summary">—</p>
+          <dl class="facts">
+            <div><dt>Bridge 地址</dt><dd id="bridge-url" class="mono">—</dd></div>
+            <div class="inline-fact"><dt>Token</dt><dd id="bridge-token-state">—</dd></div>
+          </dl>
+          <p id="bridge-hint" class="context-hint" hidden></p>
+          <button id="manage-bridge" class="text-button card-action" type="button">管理连接</button>
         </article>
-        <article class="card tunnel-card"><div class="card-heading"><div><span class="eyebrow">OPTIONAL TUNNEL</span><h2>安全隧道</h2></div><span id="tunnel-status" class="status-pill pending"><span class="dot"></span><span id="tunnel-status-text">未检查</span></span></div>
-          <p class="muted">隧道为可选组件。服务就绪不代表 ChatGPT 已成功调用工具。</p><dl class="facts compact">
-            <div><dt>配置</dt><dd id="tunnel-configured">—</dd></div><div><dt>健康 / 就绪</dt><dd id="tunnel-health">—</dd></div><div><dt>管理通道</dt><dd id="tunnel-transport">—</dd></div><div><dt>版本</dt><dd id="tunnel-version">—</dd></div>
-          </dl><div id="tunnel-channels" class="channel-list" aria-label="隧道通道"></div><p id="tunnel-notice" class="muted"></p>
+        <article class="card">
+          <div class="card-heading"><h2>远程连接</h2><span id="tunnel-status" class="status-pill" data-tone="neutral">读取中</span></div>
+          <p id="tunnel-summary" class="card-summary">—</p>
+          <p id="tunnel-hint" class="context-hint" hidden></p>
+          <details class="nested-details card-action" id="tunnel-details">
+            <summary>诊断详情</summary>
+            <dl class="facts compact">
+              <div><dt>管理通道</dt><dd id="tunnel-transport">—</dd></div>
+              <div><dt>Socket</dt><dd id="tunnel-socket" class="mono">—</dd></div>
+              <div><dt>版本</dt><dd id="tunnel-version">—</dd></div>
+            </dl>
+            <div id="tunnel-channels" class="channel-list"></div>
+            <p id="tunnel-error" class="technical-note" hidden></p>
+          </details>
         </article>
       </div>
-      <details id="bridge-settings" class="settings-disclosure">
-        <summary>连接与 Token 设置</summary>
+      <details id="bridge-settings" class="disclosure">
+        <summary>mioweave 连接设置</summary>
         <div class="settings-content">
-          <div class="token-box"><label for="token-display">Token 文件中的值（仅主动查看时读取）</label><div class="input-row"><input id="token-display" type="password" readonly autocomplete="off" placeholder="默认隐藏"><button id="reveal-token" type="button">显示</button><button id="copy-token" type="button" disabled>复制</button></div><small>仅保存在此页面内存中，约 30 秒后自动清除；环境变量来源时，此值不代表运行中的凭据。</small></div>
-          <form id="bridge-form"><label for="bridge-url-input">mioweave 地址</label><input id="bridge-url-input" name="url" type="url" placeholder="http://127.0.0.1:8790" autocomplete="url">
-            <label for="token-file-input">Token 文件路径（由 miodesk 管理）</label><input id="token-file-input" name="token_file" type="text" readonly autocomplete="off" spellcheck="false"><small>凭据存放于 miodesk 私有 XDG 凭据目录。Bridge 必须通过 WEBMCP_BRIDGE_TOKEN_FILE 使用此路径。首次接入若要沿用现有 Bridge Token，请将其复制到下方新 Token 导入；也可主动查看当前配置文件值。</small>
-            <label for="new-token">新 Token（可选）</label><input id="new-token" name="token" type="password" autocomplete="new-password" placeholder="留空以保留现有 Token">
-            <div class="form-actions"><button class="primary" type="submit" id="save-bridge">保存桥接设置</button><span id="bridge-form-message" role="status"></span></div>
+          <div class="token-box">
+            <label for="token-display">当前 Token</label>
+            <div class="input-row"><input id="token-display" type="password" readonly autocomplete="off" placeholder="点击显示后查看"><button id="reveal-token" type="button" disabled>显示</button><button id="copy-token" type="button" disabled>复制</button></div>
+            <small id="token-help">显示后 30 秒自动隐藏。</small>
+            <p id="token-source-warning" class="context-hint" hidden></p>
+            <p id="token-message" class="form-message" role="status" hidden></p>
+          </div>
+          <form id="bridge-form">
+            <fieldset id="bridge-fields">
+              <label for="bridge-url-input">Bridge 地址</label>
+              <input id="bridge-url-input" name="url" type="url" required placeholder="http://127.0.0.1:8790" autocomplete="off" spellcheck="false">
+              <label for="new-token">新 Token <span class="muted">· 可选</span></label>
+              <input id="new-token" name="token" type="password" autocomplete="new-password" placeholder="留空不修改">
+              <div class="form-actions"><button class="primary" type="submit" id="save-bridge" disabled>保存更改</button><span id="bridge-form-message" class="form-message" role="status"></span></div>
+            </fieldset>
           </form>
+          <details class="nested-details setup-guide">
+            <summary>接入说明</summary>
+            <label for="token-file-input">Token 文件</label>
+            <div class="input-row"><input id="token-file-input" type="text" readonly autocomplete="off" spellcheck="false"><button id="copy-token-path" type="button" disabled>复制</button></div>
+            <p>Bridge 使用 <code>WEBMCP_BRIDGE_TOKEN_FILE</code> 读取此文件。首次接入时设置此路径并重启 Bridge；已有 Token 可从上方导入。</p>
+            <p>更新 Token 后，也需同步到扩展。这里的 Token 不用于 Core 或 OpenAI。</p>
+          </details>
+        </div>
+      </details>
+      <details id="tools-details" class="disclosure">
+        <summary>工具 <span id="tools-total" class="summary-meta"></span></summary>
+        <div class="disclosure-content">
+          <p class="context-hint">文件操作受工作区限制；命令以当前系统用户权限运行。</p>
+          <div id="tools-list" class="tools-list"><p class="empty-state">读取中…</p></div>
         </div>
       </details>
     </section>
-    <section id="tools-view" class="tools-section" aria-labelledby="tools-title"><div class="section-heading"><div><p class="eyebrow">AVAILABLE TOOLS</p><h2 id="tools-title">工具</h2></div><span id="tools-total" class="muted"></span></div><div id="tools-list" class="tools-list"><p class="muted">正在加载…</p></div></section>
-    <section id="logs-view" class="logs-section" aria-labelledby="logs-title" hidden><div class="section-heading"><div><p class="eyebrow">LOCAL JOURNAL</p><h2 id="logs-title">运行日志</h2></div><div class="log-actions"><button id="refresh-logs" type="button">立即刷新</button><label class="check-label"><input id="pause-logs" type="checkbox">暂停自动刷新</label></div></div>
-      <form id="log-filters" class="filters"><label>来源<select id="log-source"><option value="all">全部</option><option value="core">Core</option><option value="tunnel">隧道</option><option value="mioweave">mioweave</option></select></label><label>级别<select id="log-level"><option value="debug">Debug 及以上</option><option value="info" selected>Info 及以上</option><option value="warn">Warn 及以上</option><option value="error">Error</option></select></label><label>时间范围<select id="log-since"><option value="10m">最近 10 分钟</option><option value="1h">最近 1 小时</option><option value="1d">最近 24 小时</option></select></label><label class="query-label">搜索<input id="log-query" type="search" placeholder="搜索日志内容" autocomplete="off"></label><label>条数<select id="log-lines"><option>50</option><option selected>100</option><option>250</option><option>500</option></select></label></form>
-      <div class="log-meta"><span id="log-count" role="status">尚未加载</span><span id="log-updated"></span></div><div id="logs-message" class="notice" role="status" hidden></div><div id="logs-list" class="logs-list" aria-live="polite"><p class="muted">正在加载日志…</p></div>
+    <section id="logs-view" role="tabpanel" aria-labelledby="view-logs" hidden>
+      <div class="page-heading"><h1>日志</h1><div class="log-actions"><label class="check-label"><input id="auto-logs" type="checkbox" checked>自动刷新</label><button id="refresh-logs" type="button">刷新</button></div></div>
+      <form id="log-filters" class="filters" role="search" aria-label="筛选日志">
+        <div class="primary-filters">
+          <label>来源<select id="log-source"><option value="all">全部来源</option><option value="core">miodesk</option><option value="tunnel">Tunnel</option><option value="mioweave">mioweave</option></select></label>
+          <label class="query-label"><span class="sr-only">搜索日志</span><input id="log-query" type="search" placeholder="搜索日志" autocomplete="off"></label>
+          <label>最低级别<select id="log-level"><option value="debug">调试</option><option value="info" selected>信息</option><option value="warn">警告</option><option value="error">错误</option></select></label>
+        </div>
+        <details class="more-filters nested-details"><summary>更多筛选 <span id="filter-summary" class="summary-meta">最近 10 分钟 · 100 条</span></summary>
+          <div class="secondary-filters"><label>时间范围<select id="log-since"><option value="10m">最近 10 分钟</option><option value="1h">最近 1 小时</option><option value="1d">最近 24 小时</option></select></label><label>最多显示<select id="log-lines"><option value="50">50 条</option><option value="100" selected>100 条</option><option value="200">200 条</option><option value="500">500 条</option></select></label><button id="reset-filters" class="text-button" type="button">重置筛选</button></div>
+        </details>
+      </form>
+      <div class="log-meta"><span id="log-count" role="status">尚未加载</span><span id="log-updated"></span></div>
+      <div id="logs-message" class="notice" role="status" hidden></div>
+      <div id="logs-list" class="logs-list" aria-label="日志记录"><p class="empty-state">读取中…</p></div>
     </section>
-    <footer><span id="config-path"></span><span id="last-updated"></span></footer>
+    <footer>
+      <details class="nested-details" id="panel-help"><summary>安全与诊断</summary>
+        <p>面板仅供本机管理，请勿发布或反向代理到公网。</p>
+        <dl class="facts compact diagnostics"><div><dt>miodesk</dt><dd id="core-version">—</dd></div><div><dt>运行时间</dt><dd id="core-uptime">—</dd></div><div><dt>配置文件</dt><dd id="config-path" class="mono">—</dd></div><div><dt>日志配置</dt><dd id="logging-config">—</dd></div><div><dt>Bridge 诊断</dt><dd id="bridge-diagnostic">—</dd></div></dl>
+      </details>
+    </footer>
   </main>
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>
