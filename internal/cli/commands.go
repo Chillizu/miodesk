@@ -10,10 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -222,6 +220,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	okf(stdout, "MCP server: %s", s.MCPURL())
+	infof(stdout, "local panel: %s/panel/", s.URL())
 	switch s.AccessMode() {
 	case server.AccessToken:
 		okf(stdout, "access: token authentication")
@@ -506,6 +505,7 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 	if alive {
 		okf(stdout, "server running (pid %d): %s", st.PID, st.URL)
 		infof(stdout, "remote access: %s", remote)
+		infof(stdout, "local panel: %s/panel/", strings.TrimRight(st.URL, "/"))
 		infof(stdout, "tunnel: %s (service %s)", tunnelProvider, tunnelService)
 	} else {
 		warnf(stdout, "stale or unreachable state: server at %s is not responding", st.URL)
@@ -748,18 +748,17 @@ func runUpdate(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runLogs shows miodesk's own logs. Foreground servers print to
-// stdout/stderr (nothing to collect); the systemd user service logs to the
-// journal, which this command reads. The configured bearer token is
-// redacted from the output.
+// runLogs reads normalized records from the systemd user journal.
 func runLogs(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("logs", stderr)
 	follow := fs.Bool("follow", false, "keep streaming new log lines")
-	n := fs.Int("n", 100, "number of lines to show")
-	jsonFlag := fs.Bool("json", false, "print journal records as JSON")
+	n := fs.Int("n", 100, "number of records to show (0 means no historical records)")
+	jsonFlag := fs.Bool("json", false, "print normalized records as NDJSON")
 	since := fs.String("since", "", "journal start time, e.g. 10m or today")
 	until := fs.String("until", "", "journal end time")
-	grep := fs.String("grep", "", "journal message pattern to filter")
+	grep := fs.String("grep", "", "case-insensitive literal substring in message or fields")
+	source := fs.String("source", "all", "journal source: all, core, tunnel, or mioweave")
+	level := fs.String("level", "info", "minimum severity: debug, info, warn, or error")
 	if help, err := parseFlags(fs, args); help {
 		return 0
 	} else if err != nil {
@@ -769,38 +768,33 @@ func runLogs(args []string, stdout, stderr io.Writer) int {
 	if !requireNoPositional(fs, stderr) {
 		return 2
 	}
-	if *n < 0 {
-		errf(stderr, "logs line count must not be negative")
-		hintf(stderr, "use `miodesk logs -n 0` for no historical lines")
+	if *n < 0 || *n > 5000 {
+		errf(stderr, "logs line count must be between 0 and 5000")
 		return 2
 	}
-	if !service.Supported() || !service.Installed() {
-		infof(stdout, "no collected logs: foreground servers print to stdout/stderr")
-		infof(stdout, "run `miodesk service install && miodesk service start` to collect logs")
-		return 0
+	var secrets []string
+	cfg, configPath, ok := loadConfig(stderr)
+	if !ok {
+		return 1
 	}
-
-	journalArgs := []string{"--user", "-u", service.Name}
-	if service.TunnelInstalled() {
-		journalArgs = append(journalArgs, "-u", service.TunnelName)
+	if cfg.Remote.Token != "" {
+		secrets = append(secrets, cfg.Remote.Token)
 	}
-	journalArgs = append(journalArgs, "-n", strconv.Itoa(*n), "--no-pager")
-	if *jsonFlag {
-		journalArgs = append(journalArgs, "-o", "json-pretty")
-	} else {
-		journalArgs = append(journalArgs, "-o", "short-iso")
-	}
-	if *since != "" {
-		journalArgs = append(journalArgs, "--since", normalizeJournalTime(*since))
-	}
-	if *until != "" {
-		journalArgs = append(journalArgs, "--until", normalizeJournalTime(*until))
-	}
-	if *grep != "" {
-		journalArgs = append(journalArgs, "-g", *grep)
-	}
-	if *follow {
-		journalArgs = append(journalArgs, "--follow")
+	if tokenFile := cfg.Clients.Mioweave.TokenFile; tokenFile != "" {
+		if !filepath.IsAbs(tokenFile) {
+			tokenFile = filepath.Join(filepath.Dir(configPath), tokenFile)
+		}
+		token, err := os.ReadFile(tokenFile)
+		if err != nil {
+			errf(stderr, "cannot read configured mioweave token file")
+			return 1
+		}
+		secret := strings.TrimSpace(string(token))
+		if secret == "" {
+			errf(stderr, "configured mioweave token file is empty")
+			return 1
+		}
+		secrets = append(secrets, secret)
 	}
 	var ctx context.Context
 	var stop context.CancelFunc
@@ -810,67 +804,21 @@ func runLogs(args []string, stdout, stderr io.Writer) int {
 		ctx, stop = context.WithTimeout(context.Background(), 30*time.Second)
 	}
 	defer stop()
-	cmd := exec.CommandContext(ctx, "journalctl", journalArgs...)
-	stdoutRedactor := &redactingWriter{w: stdout}
-	stderrRedactor := &redactingWriter{w: stderr}
-	cmd.Stdout = stdoutRedactor
-	cmd.Stderr = stderrRedactor
-
-	// Defense in depth: the token never reaches the terminal, even if
-	// something logged it.
-	if cfg, _, ok := loadConfig(stderr); ok && cfg.Remote.Token != "" {
-		secret := cfg.Remote.Token
-		stdoutRedactor.secret = secret
-		stderrRedactor.secret = secret
+	err := logging.ReadJournal(ctx, logging.JournalOptions{
+		Source: *source, Lines: *n, Since: *since, Until: *until,
+		Match: *grep, Level: *level, Follow: *follow,
+	}, secrets, func(record logging.Record) error {
+		return logging.WriteRecord(stdout, record, *jsonFlag)
+	})
+	if err == nil || errors.Is(err, context.Canceled) {
+		return 0
 	}
-	if err := cmd.Run(); err != nil {
-		_ = stdoutRedactor.Flush()
-		_ = stderrRedactor.Flush()
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return 0
-		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			errf(stderr, "journalctl timed out after 30s")
-			return 1
-		}
-		errf(stderr, "journalctl: %v (is the systemd user session available?)", err)
+	if errors.Is(err, context.DeadlineExceeded) {
+		errf(stderr, "journal read timed out after 30s")
 		return 1
 	}
-	if err := stdoutRedactor.Flush(); err != nil {
-		errf(stderr, "write logs: %v", err)
-		return 1
-	}
-	if err := stderrRedactor.Flush(); err != nil {
-		errf(stderr, "write log diagnostics: %v", err)
-		return 1
-	}
-	return 0
-}
-
-// normalizeJournalTime makes the convenient CLI form "10m" work with
-// journalctl, whose relative-time grammar expects "10 minutes ago".
-func normalizeJournalTime(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return value
-	}
-	if strings.HasSuffix(value, "d") {
-		if n, err := strconv.Atoi(strings.TrimSuffix(value, "d")); err == nil && n > 0 {
-			return fmt.Sprintf("%d days ago", n)
-		}
-	}
-	duration, err := time.ParseDuration(value)
-	if err != nil || duration <= 0 {
-		return value
-	}
-	switch {
-	case duration%time.Hour == 0:
-		return fmt.Sprintf("%d hours ago", int(duration/time.Hour))
-	case duration%time.Minute == 0:
-		return fmt.Sprintf("%d minutes ago", int(duration/time.Minute))
-	default:
-		return fmt.Sprintf("%d seconds ago", int(duration/time.Second))
-	}
+	errf(stderr, "%v", err)
+	return 1
 }
 
 func configureLogging(cfg *config.Config, stderr io.Writer) {
@@ -885,50 +833,6 @@ func configureLogging(cfg *config.Config, stderr io.Writer) {
 		warnf(stderr, "logging configuration ignored: %v", err)
 		_ = logging.Configure(logging.Settings{Level: "info", Format: "text"}, stderr)
 	}
-}
-
-type redactingWriter struct {
-	w       io.Writer
-	secret  string
-	pending string
-}
-
-func (r *redactingWriter) Write(p []byte) (int, error) {
-	if r.secret == "" {
-		return r.w.Write(p)
-	}
-	combined := r.pending + string(p)
-	safeLen := len(combined)
-	// Retain only a suffix that could become the beginning of the secret in
-	// the next write. Complete occurrences are safe to emit now.
-	firstCandidate := len(combined) - len(r.secret) + 1
-	if firstCandidate < 0 {
-		firstCandidate = 0
-	}
-	for i := firstCandidate; i < len(combined); i++ {
-		suffix := combined[i:]
-		if len(suffix) < len(r.secret) && strings.HasPrefix(r.secret, suffix) {
-			safeLen = i
-			break
-		}
-	}
-	emit := combined[:safeLen]
-	r.pending = combined[safeLen:]
-	if emit == "" {
-		return len(p), nil
-	}
-	_, err := io.WriteString(r.w, strings.ReplaceAll(emit, r.secret, "[redacted]"))
-	return len(p), err
-}
-
-func (r *redactingWriter) Flush() error {
-	if r.pending == "" {
-		return nil
-	}
-	pending := strings.ReplaceAll(r.pending, r.secret, "[redacted]")
-	r.pending = ""
-	_, err := io.WriteString(r.w, pending)
-	return err
 }
 
 func runConfigPath(args []string, stdout, stderr io.Writer) int {

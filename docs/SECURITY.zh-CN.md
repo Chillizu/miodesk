@@ -56,6 +56,25 @@ Tunnel 是**独立的出站连接组件**：只将请求转发到本机 Core，
 ChatGPT 自定义 MCP 的文档化认证方式可能与该模式不同，
 应参考 OpenAI 官方文档与实际工作区设置。
 
+## 本地管理 Panel（Unreleased）
+
+`/panel/` 和 `/api/panel/*` 不是远程 MCP API。无论 Core 使用
+local、token 还是 unsafe，都独立检查 loopback 对端、明确的本机 Host、
+浏览器 Origin 和 Fetch Metadata，并拒绝转发／代理头。写入与显示 token
+仅接受同源 POST、JSON 和专用请求头；GET 不返回凭据。
+**不要将这些路径发布或反向代理到公网。** 同一 OS 用户下的恶意进程不在此边界内。
+
+Panel 只向私有 XDG `miodesk/credentials/mioweave-token` 写入凭据，
+不接受任意文件覆盖。目录相对的 `os.Root` 操作限制替换范围，拒绝凭据目录及
+文件符号链接，目录 0700、文件 0600；读取时校验打开的文件描述符、文件身份及权限。
+历史配置引用的外部 token 文件可只读查看；更新时导入受管目录，不覆盖外部文件。
+
+mioweave token 与 Core Bearer／OpenAI runtime key 分离。
+只有主动显示／复制才读入页面内存，不写浏览器存储，响应不可缓存；
+隐藏、折叠设置、切换视图、离开页面或显示超时后清除。
+轮转后仍需更新扩展里的 token。可通过私有 Unix socket 汇总 Tunnel
+健康／就绪状态；它与 Core 健康检查都不能代替 ChatGPT 中真实的工具调用。
+
 ## 密钥、权限与日志
 
 - 不在聊天、命令参数、Git 仓库、截图或公共日志中粘贴

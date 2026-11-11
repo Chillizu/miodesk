@@ -74,6 +74,31 @@ miodesk serve
 
 Core now serves MCP at `http://127.0.0.1:8787/mcp` on your machine. Leave that terminal running; press **Ctrl-C** to stop. Run `miodesk status` from another terminal to inspect the connection.
 
+### Local control panel (Unreleased source builds)
+
+Open **http://127.0.0.1:8787/panel/** after starting HTTP Core. The panel
+shows the actual Core endpoint, workspace, tool usage, mioweave authorization,
+and optional Tunnel health/readiness, with light/dark/system themes.
+Connection and token settings are collapsed by default.
+
+mioweave's Bridge token is **not** the Core bearer token or OpenAI runtime key.
+The panel can import/update it in the private XDG
+`miodesk/credentials/mioweave-token` file and explicitly reveal/copy its value;
+it never writes a caller-selected arbitrary file. Point the Bridge's
+`WEBMCP_BRIDGE_TOKEN_FILE` at that same file. After rotation, update the
+extension token too. See [setup](docs/SETUP.md#local-panel-and-private-tunnel-diagnostics).
+
+```sh
+miodesk logs --source core --level warn --since 1h
+miodesk logs --source mioweave --follow
+miodesk logs --source tunnel --json
+```
+
+Logs have explicit sources and severity; `--json` emits normalized NDJSON,
+and `--grep` is a case-insensitive literal filter. The panel stays local-only
+even in token/unsafe Core mode; do not publish or reverse-proxy it.
+These changes are not included in the v0.2.3 release binary.
+
 ### Connect a local MCP client
 
 Many clients can launch miodesk over **stdio**, without running the HTTP service. Point the client's MCP server configuration at the installed binary:

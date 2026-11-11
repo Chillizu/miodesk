@@ -104,7 +104,35 @@ send headers. Never combine it with a long-lived tunnel.
 - It is never included in `/api/status`, `miodesk status`, `miodesk doctor`,
   error messages, or debug output — enforced by tests.
 - Requests are compared with a constant-time comparison.
-- `/healthz` is the only unauthenticated endpoint and returns no data.
+- On the Core APIs, `/healthz` is the only endpoint exempt from bearer checks
+  in token mode. The native Panel has the separate local-only boundary below.
+
+## Local management panel (Unreleased)
+
+`/panel/` and `/api/panel/*` are **not remote MCP APIs**. They use independent
+checks in every Core access mode, including unsafe: loopback peer, literal
+loopback/localhost Host, same-origin browser Origin, Fetch Metadata and rejection
+of forwarded/proxy headers. Writes and token reveal require POST, same-origin
+Origin, JSON and a custom panel header; GET never reveals a credential.
+Do not expose/reverse-proxy these routes. A hostile process running as the same
+OS user is outside this boundary, just as it is for command tools.
+
+Panel token writes target only the private XDG
+`miodesk/credentials/mioweave-token` file, never an arbitrary client-selected path.
+Directory-relative `os.Root` operations confine replacement; credential-directory
+and final-file symlinks are refused, directories are secured to 0700, and new
+files to 0600. Reads validate the opened descriptor, file identity and private
+permissions. A legacy configured external token file may be read, but Panel
+imports replacement credentials into its managed directory rather than
+overwriting the external file.
+
+The mioweave token is separate from Core bearer and OpenAI runtime credentials.
+Only an explicit reveal/copy reads it into browser memory, with no-store
+responses and no browser token storage; hiding/closing settings, changing views,
+leaving the page or the reveal timeout clears it. Rotation does not update the
+extension's storage. Tunnel status is an allowlisted, non-secret summary read
+over an optional private Unix socket; neither readiness nor Core health proves
+a live ChatGPT MCP connection.
 
 ## Data surfaces
 
@@ -115,7 +143,8 @@ local diagnostics such as workspace paths and usage counters.
 access mode: local/origin validation, bearer-token authentication, or the
 explicitly unsafe mode. MCP tool results can also contain workspace content
 requested by the client, such as file reads or command output. When a tunnel is
-active, every reachable surface follows the active trust level.
+active, Core data surfaces follow the active trust level; Panel routes retain
+their independent local-management checks.
 
 ## Logging
 
@@ -128,8 +157,10 @@ set `[logging].format = "json"` for machine-readable records or
 HTTP request logs contain metadata, not request bodies. MCP tool logging omits
 raw arguments and result payloads; failure entries can still include an error
 summary. Logs do not include file contents, command lines, bearer tokens, or
-Authorization headers. `miodesk logs` also redacts the configured bearer token
-defensively before displaying journal output.
+Authorization headers. Both `miodesk logs` and Panel log output additionally
+redact configured Core/Bridge credentials and credential-shaped fields before
+filtering or display. Journal sources are restricted to the three known local
+user services; no arbitrary unit or shell command can be requested by Panel.
 
 ## Reporting
 

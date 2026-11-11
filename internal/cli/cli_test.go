@@ -496,23 +496,6 @@ func TestConnectRejectsIncompatibleFlags(t *testing.T) {
 	}
 }
 
-func TestRedactingWriterHandlesSplitSecret(t *testing.T) {
-	var out bytes.Buffer
-	r := &redactingWriter{w: &out, secret: "secret-token"}
-	if _, err := r.Write([]byte("before secret-")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Write([]byte("token after")); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(out.String(), "secret-token") || !strings.Contains(out.String(), "[redacted]") {
-		t.Errorf("redacted output = %q", out.String())
-	}
-}
-
 func TestServiceArgValidation(t *testing.T) {
 	isolatedEnv(t)
 	if code, _, errOut := run(t, "service"); code != 2 || !strings.Contains(errOut, "missing verb") {
@@ -608,20 +591,6 @@ func TestStatusJSONRemovesInvalidState(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("invalid state should be removed, stat error=%v", err)
-	}
-}
-
-func TestNormalizeJournalTime(t *testing.T) {
-	for input, want := range map[string]string{
-		"10m":   "10 minutes ago",
-		"2h":    "2 hours ago",
-		"3d":    "3 days ago",
-		"45s":   "45 seconds ago",
-		"today": "today",
-	} {
-		if got := normalizeJournalTime(input); got != want {
-			t.Errorf("normalizeJournalTime(%q) = %q, want %q", input, got, want)
-		}
 	}
 }
 

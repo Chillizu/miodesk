@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Added a local-only `/panel/` dashboard with logo-coordinated light/dark/system
+  themes, responsive connection cards, tool usage and readable filtered logs.
+  Core, Bridge authorization and Tunnel readiness are shown separately.
+- Added explicit mioweave token import/reveal/copy/update using a private XDG
+  credentials file. Writes are confined with directory-relative filesystem
+  operations; remote Core modes never bypass panel Host/peer/Origin/CSRF checks.
+  File-backed mioweave Bridge credentials can reload without restarting Bridge;
+  the extension still needs its token updated after rotation.
+- `logs` now selects `core`, `tunnel`, `mioweave` or `all`, filters minimum
+  severity and literal text, and emits normalized NDJSON with `--json` rather
+  than raw journal wrappers. Credentials are redacted before filtering/output.
+- Optional Tunnel diagnostics can use a private Unix socket, keeping one local
+  panel entry point without a separate TCP admin listener such as 10721.
+
+
 ## 0.2.3 — 2026-10-21
 
 - **Feedback improvements:** bilingual GitHub Issue forms for bugs and UX ideas,

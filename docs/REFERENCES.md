@@ -317,3 +317,26 @@ or the primary CLI's connection discovery.
   records with MCP tool records; payloads, command lines, Authorization values,
   and bearer tokens are excluded or redacted.
 - Checked: 2026-09-07
+
+## Native local Panel and Unix Tunnel administration
+
+- URLs:
+  - https://github.com/openai/tunnel-client/blob/main/docs/configuration.md
+  - https://pkg.go.dev/os#Root
+  - https://pkg.go.dev/net/http#Request
+- Version: installed official `tunnel-client` v0.0.14, Go 1.27 local toolchain.
+- Used by: `internal/server/panel.go`, native Panel assets, local service
+  configuration examples in `docs/SETUP.md` / `docs/SETUP.zh-CN.md`.
+- Decision: retain separate Core/Bridge/Tunnel processes but one browser Panel.
+  The installed client's `run --help` explicitly states that
+  `HEALTH_UNIX_SOCKET` / `--health.unix-socket` replaces the TCP health/admin
+  listener. Read only allowlisted health/readiness/status fields over that
+  socket; do not import the tunnel engine, rewrite its profile or expose raw
+  administration APIs. Runtime-key references remain untouched.
+- Decision: native Panel uses a separate loopback Host/peer/Origin/CSRF gate
+  independent of Core access mode. Only a fixed XDG credential file is writable,
+  through `os.Root` directory-relative operations, with descriptor-validated
+  private reads; no arbitrary credential destination.
+- Checked: 2026-11-11, official configuration docs, installed CLI help and
+  local Go API documentation; validated with real local Core/Bridge requests.
+

@@ -165,6 +165,46 @@ Windows/macOS 没有内置 miodesk systemd 服务管理器，
 默认关闭的 Linux [Code Mode（实验性）](CODEMODE.zh-CN.md)
 可以在连接后单独讨论；它不是首次安装必需的。
 
+## 本地 Panel与私有 Tunnel 诊断
+
+Unreleased 源码版本在现有 HTTP Core 上提供
+**http://127.0.0.1:8787/panel/**，不增加 miodesk 监听端口。
+v0.2.3 发行二进制尚无此功能。Panel 分开显示 Core 可用、mioweave
+已授权和 Tunnel 就绪；仍不能替代 ChatGPT 中真实的工具调用。
+
+在“连接与 Token 设置”导入现有 Bridge token，然后让 Bridge 服务的
+`WEBMCP_BRIDGE_TOKEN_FILE` 指向界面显示的私有 XDG
+`miodesk/credentials/mioweave-token` 文件。显式的
+`WEBMCP_BRIDGE_TOKEN` 优先级更高，应先清除。改变服务环境后重启 Bridge
+一次；此后文件式 token 更新无需重启，但每次轮转都需同步扩展中的 token。
+Panel 不覆盖旧仓库文件或任意外部路径。
+
+官方 `tunnel-client` 支持将健康／管理接口改为 Unix socket（本机已核实
+v0.0.14）。对已验证可用的 Linux 用户服务，可增加保留原有凭据的 drop-in：
+
+```ini
+[Service]
+RuntimeDirectory=miodesk-tunnel
+RuntimeDirectoryMode=0700
+UMask=0077
+Environment=HEALTH_UNIX_SOCKET=%t/miodesk-tunnel/admin.sock
+```
+
+在 `miodesk config` 所指文件中，将 `[panel].tunnel_socket`
+设置为对应的**真实绝对路径**，通常位于
+`$XDG_RUNTIME_DIR/miodesk-tunnel/admin.sock`；TOML 不展开环境变量。
+先检查已有 health 参数和环境：CLI 参数优先级更高。
+安排受控的 daemon-reload／Tunnel 重启，并重启 Core 加载诊断引用。
+不要覆盖原密钥、profile 或启动就绪配置。确认目录私有、原 TCP 管理端口
+（如 10721）不再监听，且 Panel 同时显示健康／就绪。Tunnel 仍是独立可选进程，
+Core 工具不依赖其管理 socket。
+
+日志可选 `--source core|tunnel|mioweave|all`、最低 `--level`、
+`--since 10m` 和大小写不敏感的字面 `--grep`；`--json` 输出
+`time/source/level/message/fields` 规范化 NDJSON。
+`-n 0 --follow` 只跟随新记录。前台日志仍在其终端，不会自动进入 Panel。
+不要把 Panel 发布或反向代理到公网。
+
 ## 6. 常见失败
 
 | 现象 | 检查 |

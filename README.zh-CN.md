@@ -108,6 +108,29 @@ Windows 则是 `& $miodesk serve`。保持这一个前台窗口运行，
 MCP 本地地址为 `http://127.0.0.1:8787/mcp`，
 健康检查为 `http://127.0.0.1:8787/healthz`。
 
+### 本地控制面板（Unreleased 源码版本）
+
+HTTP Core 启动后打开 **http://127.0.0.1:8787/panel/**：
+统一查看 Core 地址、工作区、工具调用、mioweave 授权和可选的 Tunnel
+健康／就绪状态，支持浅色、深色和跟随系统主题。连接与 Token 设置默认折叠。
+
+mioweave Bridge token **不是** Core Bearer token，也不是 OpenAI runtime key。
+Panel 可在私有 XDG `miodesk/credentials/mioweave-token` 文件中导入／更新，
+并在主动操作时显示／复制；不允许任意路径覆盖。Bridge 需通过
+`WEBMCP_BRIDGE_TOKEN_FILE` 读取同一文件；轮转后还要更新扩展里的 token。
+Tunnel 管理可改用私有 Unix socket，不必额外占用 10721，
+详见[设备配置](docs/SETUP.zh-CN.md#本地-panel与私有-tunnel-诊断)。
+
+```sh
+miodesk logs --source core --level warn --since 1h
+miodesk logs --source mioweave --follow
+miodesk logs --source tunnel --json
+```
+
+日志按来源、最低级别、时间和字面关键字筛选，`--json` 输出规范化 NDJSON。
+Panel 的本机访问检查独立于 Core token／unsafe 模式；不要把它发布或反向代理到公网。
+**以上功能尚未包含在 v0.2.3 发行二进制中。**
+
 ### 接入本地 MCP 客户端
 
 支持 stdio 的 MCP 客户端可自行启动 miodesk，通常无需额外启动

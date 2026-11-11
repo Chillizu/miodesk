@@ -225,6 +225,52 @@ to the local service and provide connector-compatible authentication. ChatGPT
 connectors document OAuth 2.1 and explicit no-auth testing; a miodesk bearer
 token is not a documented ChatGPT connector credential.
 
+## Local panel and private Tunnel diagnostics
+
+Unreleased source builds serve **http://127.0.0.1:8787/panel/** alongside
+HTTP MCP, without another miodesk listener. This is not part of v0.2.3.
+The panel distinguishes Core availability, mioweave authorization and Tunnel
+readiness; none substitutes for a real ChatGPT tool call.
+
+For mioweave, open the connection/token disclosure (`连接与 Token 设置`), import
+the existing Bridge token, then point the Bridge service's
+`WEBMCP_BRIDGE_TOKEN_FILE` at the displayed private XDG
+`miodesk/credentials/mioweave-token` path. Clear any explicit
+`WEBMCP_BRIDGE_TOKEN`, which otherwise takes precedence. Restart Bridge once
+after changing its environment. File-backed token replacements then reload
+without a restart; update the extension after rotation. Panel never overwrites
+the old repository token file or an arbitrary selected path.
+
+The official `tunnel-client` can serve its health/admin API over a Unix socket
+instead of TCP (confirmed with installed v0.0.14). For an already validated
+Linux user service, a credential-preserving drop-in can contain:
+
+```ini
+[Service]
+RuntimeDirectory=miodesk-tunnel
+RuntimeDirectoryMode=0700
+UMask=0077
+Environment=HEALTH_UNIX_SOCKET=%t/miodesk-tunnel/admin.sock
+```
+
+Set `[panel].tunnel_socket` in `miodesk config`'s file to the **absolute**
+corresponding path, normally `$XDG_RUNTIME_DIR/miodesk-tunnel/admin.sock`.
+TOML does not expand shell variables; use the actual value. Inspect existing
+health flags/environment first: explicit CLI flags have precedence. Apply the
+drop-in with a controlled daemon reload/Tunnel restart and restart Core to load
+the diagnostics reference. Do not replace credentials, the profile or
+startup-readiness drop-ins. Confirm the socket directory is private, the old
+TCP admin port (such as 10721) is no longer listening, and Panel reports both
+health and readiness. Tunnel stays separate and optional; Core tools do not
+depend on its admin socket.
+
+Logs select `--source core|tunnel|mioweave|all`, minimum
+`--level debug|info|warn|error`, `--since 10m`, and case-insensitive literal
+`--grep`. `--json` is normalized NDJSON (`time`, `source`, `level`, `message`,
+optional `fields`), not raw journal JSON. `-n 0 --follow` follows new records
+only. Foreground output remains in its terminal, not collected by Panel.
+Never publish/reverse-proxy Panel.
+
 ## Troubleshooting
 
 | symptom | check |

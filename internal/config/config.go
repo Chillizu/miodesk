@@ -82,6 +82,20 @@ type CodeMode struct {
 	Enabled bool `toml:"enabled"`
 }
 
+// Panel holds optional local diagnostics references, never runtime credentials.
+type Panel struct {
+	TunnelSocket string `toml:"tunnel_socket"`
+}
+
+type Mioweave struct {
+	URL       string `toml:"url"`
+	TokenFile string `toml:"token_file"`
+}
+
+type Clients struct {
+	Mioweave Mioweave `toml:"mioweave"`
+}
+
 type Config struct {
 	CodeMode  CodeMode  `toml:"codemode"`
 	Server    Server    `toml:"server"`
@@ -89,6 +103,8 @@ type Config struct {
 	Tunnel    Tunnel    `toml:"tunnel"`
 	Logging   Logging   `toml:"logging"`
 	Remote    Remote    `toml:"remote"`
+	Panel     Panel     `toml:"panel"`
+	Clients   Clients   `toml:"clients"`
 }
 
 // Default returns the built-in configuration. The workspace root defaults to
@@ -100,6 +116,7 @@ func Default() *Config {
 		Workspace: Workspace{Root: home},
 		Tunnel:    Tunnel{Provider: "local", OpenAI: OpenAITunnel{Profile: DefaultOpenAIProfile}},
 		Logging:   Logging{Level: "info", Format: "text"},
+		Clients:   Clients{Mioweave: Mioweave{URL: "http://127.0.0.1:8790"}},
 	}
 }
 
@@ -210,6 +227,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Logging.Format == "" {
 		c.Logging.Format = def.Logging.Format
+	}
+	if c.Clients.Mioweave.URL == "" {
+		c.Clients.Mioweave.URL = def.Clients.Mioweave.URL
 	}
 }
 

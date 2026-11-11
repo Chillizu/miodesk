@@ -76,6 +76,9 @@ type Server struct {
 	contextErr error
 
 	auth *Authorize
+
+	// Serializes management configuration and credential-file changes.
+	panelMu sync.Mutex
 }
 
 // ToolInfo describes one registered tool for local status output.
@@ -554,7 +557,7 @@ func (s *Server) Tools() []ToolInfo { return append([]ToolInfo(nil), s.tools...)
 // AccessMode reports the active trust level for CLI/doctor output.
 func (s *Server) AccessMode() AccessMode { return s.auth.Mode() }
 
-// Handler serves MCP, health, status JSON, and recent edits JSON.
+// Handler serves MCP, diagnostics, and the separately guarded local panel.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// The current MCP HTTP protocol (2026-07-28) is sessionless. JSON responses
@@ -583,7 +586,15 @@ func (s *Server) Handler() http.Handler {
 		}
 		_ = json.NewEncoder(w).Encode(edits)
 	})
-	return s.requestLogger(s.auth.Middleware(mux))
+	panel := s.panelHandler()
+	core := s.auth.Middleware(mux)
+	return s.requestLogger(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/panel" || strings.HasPrefix(r.URL.Path, "/panel/") || strings.HasPrefix(r.URL.Path, "/api/panel/") {
+			panel.ServeHTTP(w, r)
+			return
+		}
+		core.ServeHTTP(w, r)
+	}))
 }
 
 type responseRecorder struct {
@@ -647,7 +658,7 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 				slog.Error("http_request", attrs...)
 			case rw.status >= 400:
 				slog.Warn("http_request", attrs...)
-			case r.URL.Path == "/healthz":
+			case r.URL.Path == "/healthz" || strings.HasPrefix(r.URL.Path, "/panel") || strings.HasPrefix(r.URL.Path, "/api/panel/"):
 				slog.Debug("http_request", attrs...)
 			default:
 				slog.Info("http_request", attrs...)
