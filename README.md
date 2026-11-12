@@ -227,3 +227,7 @@ bash scripts/onboarding-test.sh
 ```
 
 See [Agent-guided setup](docs/AGENT_SETUP.md), [Security](docs/SECURITY.md), [device setup](docs/SETUP.md), [ChatGPT-specific notes](docs/CHATGPT.md), [release checklist](docs/RELEASE.md), and the [changelog](CHANGELOG.md). Chinese: [README.zh-CN.md](README.zh-CN.md). Licensed under [MPL-2.0](LICENSE).
+
+## External MCP plugins
+
+Optional owner-controlled stdio plugins can extend Core without importing application-specific dependencies. Disabled by default. See [docs/EXTERNAL_PLUGINS.md](docs/EXTERNAL_PLUGINS.md).

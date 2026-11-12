@@ -28,6 +28,7 @@ import (
 	"github.com/Chillizu/miodesk/internal/codemode"
 	"github.com/Chillizu/miodesk/internal/config"
 	"github.com/Chillizu/miodesk/internal/contextstore"
+	"github.com/Chillizu/miodesk/internal/extplugins"
 	"github.com/Chillizu/miodesk/internal/logging"
 	"github.com/Chillizu/miodesk/internal/tools"
 	"github.com/Chillizu/miodesk/internal/workspace"
@@ -52,12 +53,13 @@ func newHTTPServer(handler http.Handler, readTimeout time.Duration) *http.Server
 
 // Server hosts miodesk's MCP tools for HTTP and stdio clients.
 type Server struct {
-	cfg     *config.Config
-	ws      *workspace.Workspace
-	mcp     *mcp.Server
-	tools   []ToolInfo
-	port    atomic.Int32
-	started time.Time
+	external *extplugins.Manager
+	cfg      *config.Config
+	ws       *workspace.Workspace
+	mcp      *mcp.Server
+	tools    []ToolInfo
+	port     atomic.Int32
+	started  time.Time
 
 	// Real runtime stats: calls per tool since process start.
 	statsMu sync.Mutex
@@ -127,6 +129,10 @@ func New(cfg *config.Config, ws *workspace.Workspace) *Server {
 	}
 	s.auth = auth
 
+	if cfg.Plugins.Enabled {
+		s.external = extplugins.Load(context.Background(), cfg.Plugins.Directory, cfg.Plugins.AllowWrites)
+	}
+
 	s.mcp = mcp.NewServer(
 		&mcp.Implementation{
 			Name:        "miodesk",
@@ -139,6 +145,7 @@ func New(cfg *config.Config, ws *workspace.Workspace) *Server {
 		},
 	)
 	registerTools(s)
+	registerExternalTools(s)
 	adapter.RegisterStatus(s.mcp, func(ctx context.Context) (out any, err error) {
 		finish := s.beginTool(ctx, "status")
 		defer func() { finish(err) }()
@@ -754,6 +761,9 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	select {
 	case err := <-serveErr:
 		s.commands.Shutdown()
+		if s.external != nil {
+			s.external.Close()
+		}
 		s.clearState()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("server_exit", "error", err.Error())
@@ -764,6 +774,9 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		defer cancel()
 		_ = hs.Shutdown(shutCtx)
 		s.commands.Shutdown()
+		if s.external != nil {
+			s.external.Close()
+		}
 		s.clearState()
 		slog.Info("server_stopped", "reason", "context_cancelled")
 		return nil
@@ -774,6 +787,11 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 // use stdout; anything human-facing must go to stderr.
 func (s *Server) RunStdio(ctx context.Context) error {
 	defer s.commands.Shutdown()
+	defer func() {
+		if s.external != nil {
+			s.external.Close()
+		}
+	}()
 	slog.Info("server_started", "transport", "stdio", "access_mode", s.AccessMode())
 	err := s.mcp.Run(ctx, &mcp.StdioTransport{})
 	if err != nil {

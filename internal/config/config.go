@@ -83,6 +83,14 @@ type CodeMode struct {
 }
 
 // Panel holds optional local diagnostics references, never runtime credentials.
+// Plugins configures external, explicitly trusted stdio MCP servers.
+// Executables run with miodesk's OS permissions. Disabled by default.
+type Plugins struct {
+	Enabled     bool   `toml:"enabled"`
+	Directory   string `toml:"directory"`
+	AllowWrites bool   `toml:"allow_writes"`
+}
+
 type Panel struct {
 	TunnelSocket string `toml:"tunnel_socket"`
 }
@@ -97,6 +105,7 @@ type Clients struct {
 }
 
 type Config struct {
+	Plugins   Plugins   `toml:"plugins"`
 	CodeMode  CodeMode  `toml:"codemode"`
 	Server    Server    `toml:"server"`
 	Workspace Workspace `toml:"workspace"`
