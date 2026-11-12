@@ -38,10 +38,9 @@ Install a plugin declaration there, for example `dsh.json`:
     "--state-dir", "/home/you/.local/state/miodesk-dsh"
   ],
   "tools": [
-    { "name": "dsh_status", "permission": "read" },
-    { "name": "dsh_sessions", "permission": "read" },
-    { "name": "dsh_read", "permission": "read" },
-    { "name": "dsh_turn_status", "permission": "read" }
+    { "name": "list_sessions", "permission": "read" },
+    { "name": "get_session", "permission": "read" },
+    { "name": "get_execution_status", "permission": "read" }
   ]
 }
 ```
@@ -55,3 +54,13 @@ Use `miodesk doctor` and `plugins_status` after a safe restart. The MCP action i
 This provides process modularity and explicit MCP exposure, **not per-plugin filesystem sandboxing**. The child process inherits the OS UID and can open files that UID can open. For untrusted plugins, run a separate OS account/container with least privileges and connect using an independently secured transport rather than launching it from the Core.
 
 Future extension candidates: per-plugin OS sandbox policy and subprocess privilege reduction, safe hot-reload with replacement generations, bounded restart/backoff for crashed processes, plugin signature checks, separate local-UI management, and external authenticated Streamable HTTP client support. None is silently implied by this MVP.
+
+## DSH adapter public names (2026-11-12)
+
+The independent `miodesk-dsh` adapter has consolidated its initial tools:
+`list_sessions` discovers accessible workspaces and sessions,
+`get_session` combines recent messages with Session state and history pagination,
+`send_message` performs explicitly authorized idle-checked idempotent submission,
+and `get_execution_status` reports session activity or a specific submission.
+Core prefixes these with `dsh__`, while privileged `cancel_execution` is optional.
+Legacy prototype tool names are deliberately not installed as aliases.

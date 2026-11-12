@@ -142,3 +142,16 @@ Completion requires a real isolated no-browser send and durable terminal read, p
 5. Later: model/preset selection UX, user approvals, exact phase Host instrumentation, events, cancellation, attachments and optional packaging.
 
 Compatibility caution: DSH is a developer preview with breaking changes. Pin the tested DSH minor/RC, perform startup capability/protocol checks, and **fail closed** on unexpected response/schema changes.
+
+## Public-tool consolidation (2026-11-12)
+
+The independent connector exposes four cohesive workflow tools:
+
+| Public stdio MCP name | Consolidates |
+| --- | --- |
+| `list_sessions` | old status/sessions discovery; workspace membership and aggregate status |
+| `get_session` | read/history and Session inspection; recent message text, event cursor, optional event metadata |
+| `send_message` | formerly `dsh_send`, unchanged explicit write gating, idle check and native `requestId` idempotency |
+| `get_execution_status` | formerly `dsh_turn_status`, plus session-level running/last-terminal state without a submission ID |
+
+The miodesk Core namespace is `dsh__<tool>`. `cancel_execution` remains separately privileged and opt-in. The public tool count stays small; internal RPC helpers and history/event transport are not separate daily-use tools. Native real-Host **send** acceptance and terminal tracking remain outstanding.
