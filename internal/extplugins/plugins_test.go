@@ -2,6 +2,7 @@ package extplugins
 
 import (
 	"encoding/json"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,4 +66,30 @@ func TestNoPluginStartupWhenDirectoryInsecure(t *testing.T) {
 		t.Fatal("unsafe directory loaded")
 	}
 	mgr.Close()
+}
+
+func TestReadGrantRequiresReadOnlyAdvertisement(t *testing.T) {
+	read := Grant{Name: "scan", Permission: "read"}
+	write := Grant{Name: "send", Permission: "write"}
+	if grantMatchesTool(read, &mcp.Tool{Name: "scan"}) {
+		t.Fatal("missing annotation accepted")
+	}
+	if grantMatchesTool(read, &mcp.Tool{Name: "scan", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false}}) {
+		t.Fatal("mutating tool exposed as read")
+	}
+	if !grantMatchesTool(read, &mcp.Tool{Name: "scan", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}) {
+		t.Fatal("valid read hint rejected")
+	}
+	if !grantMatchesTool(write, &mcp.Tool{Name: "send"}) {
+		t.Fatal("write grant rejected despite global approval")
+	}
+}
+func TestNamespacedToolAliasesMustBeUnique(t *testing.T) {
+	manager := &Manager{Tools: []Tool{{Name: "a__b__c"}}}
+	if !manager.hasAlias("a__b__c") {
+		t.Fatal("duplicate tool name permitted")
+	}
+	if manager.hasAlias("a__other") {
+		t.Fatal("different tool name rejected")
+	}
 }

@@ -208,13 +208,35 @@ func (mgr *Manager) loadOne(ctx context.Context, m Manifest) {
 			slog.Warn("plugin_missing_tool", "plugin", m.ID, "tool", g.Name)
 			continue
 		}
+		// A read grant cannot downgrade a remotely advertised mutating tool.
+		// Remote annotations may veto a read grant but never confer privilege.
+		if !grantMatchesTool(g, t) {
+			slog.Warn("plugin_read_grant_refused", "plugin", m.ID, "tool", g.Name)
+			continue
+		}
 		exposed := m.ID + "__" + g.Name
+		if mgr.hasAlias(exposed) {
+			slog.Warn("plugin_tool_name_collision", "plugin", m.ID, "tool", g.Name)
+			continue
+		}
 		mgr.Tools = append(mgr.Tools, Tool{PluginID: m.ID, Name: exposed, Grant: g, Source: t, Session: session})
 		exported.Tools = append(exported.Tools, exposed)
 	}
 	sort.Strings(exported.Tools)
 	mgr.Plugins = append(mgr.Plugins, exported)
 }
+func grantMatchesTool(g Grant, t *mcp.Tool) bool {
+	return g.Permission == "write" || (t.Annotations != nil && t.Annotations.ReadOnlyHint)
+}
+func (mgr *Manager) hasAlias(name string) bool {
+	for _, t := range mgr.Tools {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (mgr *Manager) Close() {
 	mgr.mu.Lock()
 	sessions := mgr.sessions
@@ -225,9 +247,9 @@ func (mgr *Manager) Close() {
 	}
 }
 
-// Call forwards only allowlisted tools; no mutation dispatch occurs through
-// a read grant even if a remote server advertises misleading annotations.
-// Manifest authors must review plugin source; this is NOT process isolation.
+// Call forwards only allowlisted tools. Both the manifest grant and the
+// plugin's advertised read-only hint are checked before read tool exposure.
+// This checks declared behavior, NOT process isolation: review plugin source.
 func (t Tool) Call(ctx context.Context, args json.RawMessage) (*mcp.CallToolResult, error) {
 	if len(args) > 64<<10 {
 		return nil, errors.New("plugin arguments exceed 64 KiB")
