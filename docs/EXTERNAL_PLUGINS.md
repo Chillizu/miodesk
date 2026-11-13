@@ -64,3 +64,8 @@ The independent `miodesk-dsh` adapter has consolidated its initial tools:
 and `get_execution_status` reports session activity or a specific submission.
 Core prefixes these with `dsh__`, while privileged `cancel_execution` is optional.
 Legacy prototype tool names are deliberately not installed as aliases.
+
+
+## Verified integration status (2026-11-13)
+
+An isolated Core instance on a random loopback port successfully loaded the independent `miodesk-dsh` process, exposed only its four explicitly permitted namespaced MCP tools, read a real DSH Session's two human-facing messages, verified a completed native turn and deduplicated a replay through Core's write-gated path. The production Core on port 8787 remains unchanged and does not load the new plugin. A rotation-aware DSH credential broker and review of opt-in privileges remain prerequisites for unattended rollout.

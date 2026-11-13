@@ -71,7 +71,7 @@ Tool | Permission | Behavior
 `dsh_cancel` | cancel | Explicitly cancel a known **active** turn after identity and permission checks; never kill a process or service.
 Service restart | separate privileged action | Not part of normal session adapter; guard service identity, task state and user authorization.
 
-Recommended MVP register only `dsh_sessions`, `dsh_read`, `dsh_send`, and `dsh_turn_status`, plus optional `dsh_status`. Add others after successful flow.
+The implemented MVP exports `list_sessions`, `get_session`, `get_execution_status` and (only when authorized) `send_message`; privileged `cancel_execution` remains optional. Keep lower-level event transport internal to the connector.
 
 ## 5. Identity and idempotency
 
@@ -123,22 +123,22 @@ Exact `model vs tool vs approval` live phase is a **follow-up capability** if no
 ## 8. MVP acceptance procedure
 
 1. In an isolated test workspace, pair to an existing DSH Host through an approved local credential source; open non-browser API Peer.
-2. `dsh_sessions` resolves exact workspace and target session; `dsh_read` obtains a durable follow cursor.
+2. `list_sessions` resolves exact workspace and target session; `get_session` obtains current status, messages and a durable follow cursor.
 3. Confirm idle from fresh Host state; acquire per-session adapter lock. If busy, return a structured conflict rather than steering.
 4. Persist idempotency `requestId` before sending; optionally `selectModel` once on the same validated Session; call `session/prompt` with `mode:"queue"`.
-5. Return `accepted` and adapter `turn_handle`, with native turn marked pending. Correlate `user/message.source.rpcId` and later `turn/start` to resolve the native turn.
+5. Return `accepted` and adapter `turn_handle`, with native turn marked pending. Correlate `agent/inbox/spliced[].source.rpcId` or `user/message.source.rpcId` and subsequent `turn/start` to resolve the native turn. Some startup errors end a turn before a normal `user/message` is appended.
 6. Consume `follow` event stream, persist latest contiguous seq, recover gaps via native snapshot/page, resolve `turn/end`, and return full bounded transcript/result with explicit truncation/pagination flags.
 7. Induce a response-loss test: retry using the same `requestId`, verify exactly one message was admitted. Also test busy session, wrong workspace, failed/aborted turn, WS drop, Host restart, credential expiry, permission denial.
 8. Compare final Git/testing/service facts **independently** via miodesk's existing tools; DSH's self-report is not external verification.
 
-Completion requires a real isolated no-browser send and durable terminal read, plus automated protocol/permission/reconnect tests. **The current investigation does not yet meet the send/retry acceptance criterion.**
+The isolated real-Host send, durable terminal read and idempotent retry criterion **was met on 2026-11-13**. Automated mock-host coverage includes permissions, early errors and response-loss replay; production credential rotation, forced live WebSocket drop, approval/busy races and wider version compatibility still need dedicated acceptance tests.
 
 ## 9. Implementation slices and remaining blockers
 
 1. **Complete:** verify current DSH native API authentication, HTTP list/projections/page, WebSocket follow and persistence boundaries.
 2. **Partial:** opt-in Go stdio adapter and owner-only token-file pairing implemented in separate `miodesk-dsh` repo. A rotation-aware broker remains future work; do not scrape the journal in the adapter.
-3. **Implemented:** initial MCP read-only tools, workspace membership checks, query limits and mock DSH fixtures; live production re-validation remains.
-4. **Mock-tested only:** `dsh_send` with durable ledger and `dsh_turn_status`; still requires isolated real-Host send/turn completion test (never use a long-running user session).
+3. **Validated:** MCP read-only tools, workspace membership checks, message filtering, query limits, mock fixtures, and a real DSH 0.2.1-rc.5 Host acceptance test.
+4. **Validated in isolated live sessions:** `send_message` with durable ledger and `get_execution_status` with accurate running/completed/error states and an end-to-end replay through the Core stdio plugin bridge. No long-running user session was modified.
 5. Later: model/preset selection UX, user approvals, exact phase Host instrumentation, events, cancellation, attachments and optional packaging.
 
 Compatibility caution: DSH is a developer preview with breaking changes. Pin the tested DSH minor/RC, perform startup capability/protocol checks, and **fail closed** on unexpected response/schema changes.
@@ -154,4 +154,18 @@ The independent connector exposes four cohesive workflow tools:
 | `send_message` | formerly `dsh_send`, unchanged explicit write gating, idle check and native `requestId` idempotency |
 | `get_execution_status` | formerly `dsh_turn_status`, plus session-level running/last-terminal state without a submission ID |
 
-The miodesk Core namespace is `dsh__<tool>`. `cancel_execution` remains separately privileged and opt-in. The public tool count stays small; internal RPC helpers and history/event transport are not separate daily-use tools. Native real-Host **send** acceptance and terminal tracking remain outstanding.
+The miodesk Core namespace is `dsh__<tool>`. `cancel_execution` remains separately privileged and opt-in. The public tool count stays small; internal RPC helpers and history/event transport are not separate daily-use tools. Native real-Host send acceptance, terminal tracking and a full readback have now passed isolated acceptance testing; production deployment and rotating service credentials remain outstanding.
+
+## 2026-11-13 — Live DSH adapter acceptance
+
+The independent connector (`Chillizu/miodesk-dsh` commit `9a72ed7`) passed a real Web Host test against installed `@deepseek-ai/dsh@0.2.1-rc.5`.
+
+- Owner-approved, temporary 0600 pairing credentials were used for a real authenticated API Peer; no browser automation or Chrome profile was used.
+- A fresh test-only Workspace and two fresh Session IDs were created through native Host RPCs; no existing conversation was prompted.
+- First isolated submission was admitted and the Host emitted `turn/end reason.kind=error` **before** emitting a normal `user/message`, because the installed `miopiik-iui:render-contract` section treated literal `{{badge:...}}` as a prompt variable. The adapter's regression fix now correlates the `agent/inbox/spliced` source `rpcId` and recognizes `failed/error`. The IUI section was corrected locally by setting `interpolate: false` (MiOpIIk local commit `0499c10`); DSH restarted with no active Agent turns.
+- Second isolated submission succeeded: accepted, repeated identical `idempotency_key` deduplicated to the same ID, observed `running → completed` with native turn 1, and returned exactly `MIODESK_DSH_E2E_OK`.
+- The real DSH log distinguished human messages (`source.kind=user`) from synthetic `agent-instructions`, `runtime-context`, `skill-catalog` and `time-context` user-role messages. `get_session` now reports only the human user prompt and Assistant answer, with `messages_has_more=false`.
+- An **isolated** miodesk Core instance on a random loopback port (not the production 8787 service) loaded the plugin through a private manifest and allowed only the four expected namespaced tools. Over genuine MCP HTTP, it resolved the session/workspace, retrieved both messages, confirmed completed execution and deduplicated another authorized send without a second model call.
+- Both test Session records were archived, the disposable Workspace was deleted, transient API credentials and temporary Core config were removed, and the isolated Core was stopped. The original miodesk and DSH systemd user services remain active. **The production miodesk service was not rebuilt, restarted or enabled for external plugins.**
+
+Operational follow-up: implement owner-only automatic pairing/credential rotation across DSH restarts; review the trust boundary and opt-in write grant before production enablement. Never use persistent journal scraping as the credential strategy.
