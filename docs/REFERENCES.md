@@ -340,3 +340,21 @@ or the primary CLI's connection discovery.
 - Checked: 2026-11-11, official configuration docs, installed CLI help and
   local Go API documentation; validated with real local Core/Bridge requests.
 
+## DeepSeek Harness native non-browser Gateway (2026-11-12)
+
+- URLs:
+  - https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/client/connection/README.md
+  - https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/api/session-controller/README.md
+  - https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/api/gateway/README.md
+  - https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/web-client.md
+- Version: locally installed `@deepseek-ai/dsh@0.2.1-rc.5` (developer preview).
+- Used by: `docs/DSH_ADAPTER_RFC.md`; prospective optional miodesk DSH Adapter.
+- Decision: use a separately authenticated DSH API Peer through `/connect`,
+  native session HTTP RPC, and the `/api/remote.mux` WebSocket to access
+  the **existing Web Host**. Avoid browser automation and separate SDK-owned
+  Sessions. Native prompt `requestId` is idempotent, but acceptance does not
+  return a native turn ID. Live exact phase and credential rotation remain
+  unsolved; do not advertise a completed send adapter.
+- Checked: 2026-11-12 against installed generated TypeScript declarations
+  and an actual authenticated **read-only** list/page/follow connection.
+
